@@ -122,7 +122,7 @@ class ImplicitMPM:
             dim=2,
             bound=self.cfg.get("bound", 2)
         )
-        self.particles = Particles(self.grid.size, self.cfg.get("init_pos_range", [0.3, 0.7]), self.cfg.get("init_vel_y", -1))
+        self.particles = Particles(self.cfg, self.grid.size)
         self.implicit = self.cfg.get("implicit", True)
         self.max_iter = self.cfg.get("max_iter", 1)
         self.dt = self.cfg.get("dt", 2e-3)
