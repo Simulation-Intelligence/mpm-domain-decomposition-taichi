@@ -1,21 +1,11 @@
 import taichi as ti
-import json
-
-
-
-
-
-
 
 # ------------------ 粒子模块 ------------------
 @ti.data_oriented
 class Particles:
-    def __init__(self, config, grid_size):
+    def __init__(self, grid_size,init_pos_range,init_vel_y):
         self.dim = 2
         self.n_particles = grid_size**self.dim // 2**(self.dim - 1)
-        self.p_rho = config.get("p_rho", 1)
-        self.p_vol = (1.0/grid_size)**self.dim
-        self.p_mass = self.p_vol * self.p_rho
         
         self.x = ti.Vector.field(self.dim, ti.f32, self.n_particles)
         self.v = ti.Vector.field(self.dim, ti.f32, self.n_particles)
@@ -26,8 +16,8 @@ class Particles:
         self.wip=ti.field(ti.f32, (self.n_particles, 3,3))
         self.dwip=ti.Vector.field(self.dim, ti.f32, (self.n_particles, 3,3))
         
-        self.init_pos_range = config.get("initial_position_range", [0.3, 0.6])
-        self.init_vel_y = config.get("initial_velocity_y", -1)
+        self.init_pos_range = init_pos_range
+        self.init_vel_y = init_vel_y
 
     @ti.kernel
     def initialize(self):
