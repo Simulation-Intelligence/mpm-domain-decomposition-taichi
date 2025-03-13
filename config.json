@@ -1,6 +1,6 @@
 {
-    "grid_size": 16,
-    "dt": 5e-4,
+    "grid_size": 32,
+    "dt": 1e-3,
     "max_iter": 1,
     "solve_max_iter": 50,
     "E": 400,

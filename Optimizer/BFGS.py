@@ -7,7 +7,7 @@ ti.init(arch=ti.vulkan)
  
 @ti.data_oriented  
 class BFGS:
-    def __init__(self, energy_fn, dim=3, alpha=0.5, beta=0.6, eta=1e-3):
+    def __init__(self, energy_fn, dim=3, alpha=0.5, beta=0.6, eta=1e-2):
         self.dim  = dim 
         self.energy  = energy_fn 
         self.alpha  = alpha 

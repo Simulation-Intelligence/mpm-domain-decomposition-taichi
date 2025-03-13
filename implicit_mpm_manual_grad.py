@@ -47,18 +47,83 @@ class ImplicitSolver:
         self.optimizer.minimize(self.solve_max_iter)
         self.update_velocity()
 
-    
+
+    @ti.kernel
+    def manual_particle_energy_grad(self, v_flat: ti.template(), grad_flat: ti.template()):
+        for p in range(self.particles.n_particles):
+            # 计算速度梯度
+            vel_grad = ti.Matrix.zero(ti.f32, 2, 2)
+            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
+            fx = self.particles.x[p] * self.grid.inv_dx - base.cast(float)
+            w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
+
+            # 遍历周围网格点
+            for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
+                grid_idx = (base + offset) % self.grid.size
+                weight = 1.0
+                for d in ti.static(range(2)):
+                    weight *= w[offset[d]][d]
+
+                # 获取网格点速度
+                vidx = grid_idx.x * self.grid.size * 2 + grid_idx.y * 2
+                v = ti.Vector([v_flat[vidx], v_flat[vidx+1]])
+
+                # 计算速度梯度贡献
+                vel_grad += 4 * self.dt * v.outer_product((offset - fx) * self.grid.inv_dx) * weight
+
+            # 计算变形梯度导数
+            F = self.particles.F[p]
+            new_F = (ti.Matrix.identity(ti.f32, 2) + vel_grad) @ F
+            J = new_F.determinant()
+            F_inv = new_F.inverse()
+            F_inv_T = F_inv.transpose()
+
+            # 导数
+            dE_dvel_grad =(self.mu * (new_F - F_inv_T)*F.transpose() + self.lam * ti.log(J) * F_inv_T * F.transpose())*self.particles.p_vol
+
+            # 将梯度分配到网格点
+            for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
+                grid_idx = (base + offset) % self.grid.size
+                weight = 1.0
+                for d in ti.static(range(2)):
+                    weight *= w[offset[d]][d]
+
+                # 计算当前offset的权重梯度
+                dw_dv = 4 * self.dt * (offset - fx) * self.grid.inv_dx * weight
+
+                # 累加梯度
+                vidx = grid_idx.x * self.grid.size * 2 + grid_idx.y * 2
+                grad_flat[vidx] += dE_dvel_grad[0,0] * dw_dv[0]
+                grad_flat[vidx] += dE_dvel_grad[0,1] * dw_dv[1]
+                grad_flat[vidx+1] += dE_dvel_grad[1,0] * dw_dv[0]
+                grad_flat[vidx+1] += dE_dvel_grad[1,1] * dw_dv[1]
+
+    @ti.kernel
+    def manual_grid_energy_grad(self, v_flat: ti.template(), grad_flat: ti.template()):
+        for i, j in ti.ndrange(self.grid.size, self.grid.size):
+            vidx = i * self.grid.size * 2 + j * 2
+            v = ti.Vector([v_flat[vidx], v_flat[vidx+1]])
+            grad = self.grid.m[i,j] * (v - self.grid.v_prev[i,j])
+
+            grad_flat[vidx] += grad[0]
+            grad_flat[vidx+1] += grad[1]
+
     @ti.kernel
     def compute_particle_energy(self, v_flat: ti.template()):
         for p in range(self.particles.n_particles):
             vel_grad = ti.Matrix.zero(ti.f32, 2, 2)
             base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
+            fx = self.particles.x[p] * self.grid.inv_dx - base.cast(float)
+            w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
 
             for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
                 grid_idx = (base + offset) % self.grid.size
+                weight = 1.0
+                for d in ti.static(range(self.grid.dim)):
+                    weight *= w[offset[d]][d]
                 vidx = grid_idx.x * self.grid.size * 2 + grid_idx.y * 2
                 vel = ti.Vector([v_flat[vidx], v_flat[vidx+1]])
-                vel_grad += 4 * self.dt * vel.outer_product(self.particles.dwip[p, offset]) 
+                vel_grad += 4 * self.dt * vel.outer_product((offset - fx) * self.grid.inv_dx) * weight
 
             new_F = (ti.Matrix.identity(ti.f32, self.grid.dim) + vel_grad) @ self.particles.F[p]
             J = new_F.determinant()
@@ -67,14 +132,11 @@ class ImplicitSolver:
             energy = 0.5*self.mu*(new_F.norm_sqr() - self.grid.dim) - self.mu*logJ + 0.5*self.lam*logJ**2
             self.total_energy[None] += energy * self.particles.p_vol
 
-
-
     @ti.kernel
     def compute_grid_energy(self, v_flat: ti.template()):
         for i, j in ti.ndrange(self.grid.size, self.grid.size):
             vidx = i * self.grid.size * 2 + j * 2
-            self.total_energy[None] += 0.5 * self.grid.m[i,j] * (ti.Vector([v_flat[vidx], v_flat[vidx+1]]) - 
-                                 self.grid.v_prev[i,j]).norm_sqr()
+            self.total_energy[None] += 0.5 * self.grid.m[i,j] * (ti.Vector([v_flat[vidx], v_flat[vidx+1]]) -self.grid.v_prev[i,j]).norm_sqr()
 
 
     def compute_energy_grad(self, v_flat: ti.template(), grad_flat: ti.template()) -> ti.f32:
@@ -85,13 +147,14 @@ class ImplicitSolver:
         
         copy_field(self.v_grad,v_flat)
 
-        with ti.ad.Tape(self.total_energy):
-            self.total_energy[None] = 0.0
-            self.compute_particle_energy(self.v_grad)
-            self.compute_grid_energy(self.v_grad)
+#        with ti.ad.Tape(self.total_energy):
+        self.total_energy[None] = 0.0
+        self.compute_particle_energy(self.v_grad)
+        self.compute_grid_energy(self.v_grad)
+        self.manual_particle_energy_grad(self.v_grad,grad_flat)
+        self.manual_grid_energy_grad(self.v_grad,grad_flat)
 
-
-        copy_field(grad_flat,self.v_grad.grad)
+        #copy_field(grad_flat,self.v_grad.grad)
 
         return self.total_energy[None]  
 
@@ -137,28 +200,9 @@ class ImplicitMPM:
         
         self.particles.initialize()
 
-    @ti.kernel
-    def build_neighbor_list(self):
-        for i, j in ti.ndrange(self.grid.size, self.grid.size):
-            self.grid.particle_count[i,j] = 0
-            
-        for p in range(self.particles.n_particles):
-            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
-            fx = self.particles.x[p] * self.grid.inv_dx - base.cast(float)
-            w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
-            
-            for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
-                weight = 1.0
-                for d in ti.static(range(self.grid.dim)):
-                    weight *= w[offset[d]][d]
-                dpos = (offset - fx) * self.grid.inv_dx
-                self.particles.wip[p, offset] = weight
-                self.particles.dwip[p, offset] = weight * dpos
-
     def step(self):
         for _ in range(self.max_iter):
             self.grid.clear()
-            self.build_neighbor_list()
             self.p2g()
             if self.implicit:
                 self.solver.solve()
@@ -173,13 +217,17 @@ class ImplicitMPM:
         for p in range(self.particles.n_particles):
             base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
             fx = self.particles.x[p] * self.grid.inv_dx - base.cast(float)
+            w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
             
             for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
                 grid_idx = (base + offset) % self.grid.size
+                weight = 1.0
+                for d in ti.static(range(self.grid.dim)):
+                    weight *= w[offset[d]][d]
                 dpos = (offset - fx) * self.grid.dx
-                self.grid.m[grid_idx] += self.particles.wip[p,offset] * self.particles.p_mass
-                self.grid.v[grid_idx] += self.particles.wip[p,offset] * self.particles.p_mass * (self.particles.v[p] + self.particles.C[p] @ dpos)
-
+                ti.atomic_add(self.grid.m[grid_idx], weight * self.particles.p_mass)
+                ti.atomic_add(self.grid.v[grid_idx], weight * self.particles.p_mass * 
+                             (self.particles.v[p] + self.particles.C[p] @ dpos))
         
         for i, j in ti.ndrange(self.grid.size, self.grid.size):
             if self.grid.m[i,j] > 1e-10:
@@ -190,18 +238,24 @@ class ImplicitMPM:
         for p in self.particles.x:
             Xp = self.particles.x[p] / self.grid.dx
             base = (Xp - 0.5).cast(int)
-
+            fx = Xp - base.cast(float)
+            w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
+            
             new_v = ti.Vector.zero(ti.f32, 2)
             new_C = ti.Matrix.zero(ti.f32, 2, 2)
             
             for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
                 grid_idx = base + offset
+                weight = 1.0
+                for d in ti.static(range(self.grid.dim)):
+                    weight *= w[offset[d]][d]
+                dpos = (offset - fx) * self.grid.dx
                 g_v = self.grid.v[grid_idx]
-                new_v += g_v*self.particles.wip[p, offset]
-                new_C += 4*  g_v.outer_product(self.particles.dwip[p, offset])
+                new_v += weight * g_v
+                new_C += 4 * weight * g_v.outer_product(dpos) / self.grid.dx**2
                 
             self.particles.v[p] = new_v
-            self.particles.F[p] = (ti.Matrix.identity(ti.f32, self.grid.dim) + self.dt * self.particles.C[p]) @ self.particles.F[p]
+            self.particles.F[p] = (ti.Matrix.identity(ti.f32, 2) + self.dt * self.particles.C[p]) @ self.particles.F[p]
             self.particles.C[p] = new_C
 
     @ti.kernel
@@ -209,6 +263,8 @@ class ImplicitMPM:
         for p in range(self.particles.n_particles):
             Xp = self.particles.x[p] / self.grid.dx
             base = (Xp - 0.5).cast(int)
+            fx = Xp - base.cast(float)
+            w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
 
             U, sig, V = ti.svd(self.particles.F[p])
             if sig.determinant() < 0:
@@ -218,11 +274,15 @@ class ImplicitMPM:
             J = self.particles.F[p].determinant()
             logJ = ti.log(J)
             cauchy = self.mu * (self.particles.F[p] @ self.particles.F[p].transpose()) + ti.Matrix.identity(ti.f32, 2) * (self.lam * logJ - self.mu)
-            stress = -(self.particles.p_vol ) * cauchy
+            stress = -(self.dt * self.particles.p_vol * 4 / self.grid.dx**2) * cauchy
 
             for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
                 grid_idx = base + offset
-                self.grid.v[grid_idx] +=4* self.dt * stress @ self.particles.dwip[p,offset] / self.grid.m[grid_idx] 
+                weight = 1.0
+                for d in ti.static(range(self.grid.dim)):
+                    weight *= w[offset[d]][d]
+                dpos = (offset - fx) * self.grid.dx
+                self.grid.v[grid_idx] += weight * stress @ dpos / self.grid.m[grid_idx]
 
 # 使用示例
 if __name__ == "__main__":

@@ -22,6 +22,9 @@ class Particles:
         self.F = ti.Matrix.field(2, 2, ti.f32, self.n_particles)
         self.C = ti.Matrix.field(2, 2, ti.f32, self.n_particles)
         self.temp_P = ti.Matrix.field(2, 2, ti.f32, self.n_particles)
+
+        self.wip=ti.field(ti.f32, (self.n_particles, 3,3))
+        self.dwip=ti.Vector.field(self.dim, ti.f32, (self.n_particles, 3,3))
         
         self.init_pos_range = config.get("initial_position_range", [0.3, 0.6])
         self.init_vel_y = config.get("initial_velocity_y", -1)

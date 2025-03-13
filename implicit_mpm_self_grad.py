@@ -85,7 +85,7 @@ class Particles:
 # ------------------ 隐式求解器模块 ------------------
 @ti.data_oriented
 class ImplicitSolver:
-    def __init__(self, grid, particles, config):
+    def __init__(self, grid, particles:Particles, config):
         self.grid = grid
         self.particles = particles
         self.dt = config.get("dt", 2e-3)
@@ -154,8 +154,9 @@ class ImplicitSolver:
             new_F = (ti.Matrix.identity(ti.f32, 2) + vel_grad) @ self.particles.F[p]
             J = new_F.determinant()
             logJ = ti.log(J)
-            cauchy = self.mu * (new_F @ new_F.transpose()) + ti.Matrix.identity(ti.f32, 2) * (self.lam * logJ - self.mu)
-            self.particles.temp_P[p] = (self.particles.p_vol * 4) * cauchy
+            F_inv_T = new_F.inverse().transpose()
+            cauchy = self.mu * (new_F - F_inv_T)*self.particles.F[p].transpose() + self.lam * ti.log(J) * F_inv_T * self.particles.F[p].transpose()
+            self.particles.temp_P[p] = (self.particles.p_vol ) * cauchy
             
             energy = 0.5*self.mu*(new_F.norm_sqr() - 2) - self.mu*logJ + 0.5*self.lam*logJ**2
             total_energy += energy * self.particles.p_vol
@@ -172,7 +173,7 @@ class ImplicitSolver:
             energy_grad = ti.Vector.zero(ti.f32, 2)
             for k in range(self.grid.particle_count[i,j]):
                 p = self.grid.particles[i,j,k]
-                energy_grad += self.particles.temp_P[p] @ self.grid.dwip[i,j,k] * self.dt
+                energy_grad += 4*self.particles.temp_P[p] @ self.grid.dwip[i,j,k] * self.dt
             
             grad_flat[vidx] = momentum_grad[0] + energy_grad[0]
             grad_flat[vidx+1] = momentum_grad[1] + energy_grad[1]
