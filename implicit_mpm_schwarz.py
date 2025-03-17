@@ -1,5 +1,7 @@
 from implicit_mpm_auto_grad import *
 
+from Util.Recorder import *
+
 @ti.data_oriented
 class MPM_Schwarz:
     def __init__(self, main_config: Config):
@@ -19,6 +21,15 @@ class MPM_Schwarz:
         
         # 其他公共参数初始化
         self.max_schwarz_iter = main_config.get("max_schwarz_iter", 1)  # Schwarz迭代次数
+        if main_config.get("record_frames", 0) > 0:
+            self.recorder = ParticleRecorder(
+            palette=np.array([
+                0x068587,  # 域1普通粒子
+                0xED553B,  # 域2普通粒子 
+                0x66CCFF   # 边界粒子
+            ], dtype=np.uint32),
+            max_frames=main_config.get("record_frames", 60)
+        )
 
     @ti.kernel
     def exchange_boundary_conditions(self):
@@ -87,3 +98,35 @@ if __name__ == "__main__":
         gui.circles(mpm.Domain1.particles.x.to_numpy()[mpm.Domain1.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
         gui.circles(mpm.Domain2.particles.x.to_numpy()[mpm.Domain2.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
         gui.show()
+        # 合并两域粒子数据
+        if mpm.recorder is None:
+            continue
+        print("Frame", len(mpm.recorder.frame_data))
+        all_pos = np.concatenate([
+            mpm.Domain1.particles.x.to_numpy(),
+            mpm.Domain2.particles.x.to_numpy()
+        ])
+        
+        # 生成颜色索引 (0:域1普通, 1:域2普通, 2:边界)
+        d1_colors = np.where(
+            mpm.Domain1.particles.is_boundary_particle.to_numpy(),
+            2, 0
+        )
+        d2_colors = np.where(
+            mpm.Domain2.particles.is_boundary_particle.to_numpy(),
+            2, 1
+        )
+        all_colors = np.concatenate([d1_colors, d2_colors]).astype(np.uint32)
+        
+        # 捕获帧
+        mpm.recorder.capture(all_pos, all_colors)
+        
+        # 自动停止条件
+        if len(mpm.recorder.frame_data) >= mpm.recorder.max_frames:
+            break
+    
+    if mpm.recorder is None:
+        exit()
+    print("Playback finished.")
+    # 播放录制动画
+    mpm.recorder.play(loop=True, fps=60)
