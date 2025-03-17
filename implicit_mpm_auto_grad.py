@@ -11,9 +11,14 @@ ti.init(arch=ti.vulkan, random_seed=114514,log_level=ti.ERROR)
 
 # ------------------ 配置模块 ------------------
 class Config:
-    def __init__(self, path):
-        with open(path) as f:
-            self.data = json.load(f)
+    def __init__(self, path=None, data=None):
+        if path is not None:
+            with open(path) as f:
+                self.data = json.load(f)
+        elif data is not None:
+            self.data = data
+        else:
+            self.data = {}
     
     def get(self, key, default=None):
         return self.data.get(key, default)
@@ -119,8 +124,8 @@ class ImplicitSolver:
 # ------------------ 主模拟器 ------------------
 @ti.data_oriented
 class ImplicitMPM:
-    def __init__(self, config_path):
-        self.cfg = Config(config_path)
+    def __init__(self, config:Config):
+        self.cfg = config
         self.grid = Grid(
             size=self.cfg.get("grid_size", 16),
             dim=2,
@@ -156,10 +161,13 @@ class ImplicitMPM:
                 self.particles.wip[p, offset] = weight
                 self.particles.dwip[p, offset] = weight * dpos
 
+    def pre_p2g(self):
+        self.grid.clear()
+        self.build_neighbor_list()
+        
     def step(self):
         for _ in range(self.max_iter):
-            self.grid.clear()
-            self.build_neighbor_list()
+            self.pre_p2g()
             self.p2g()
             if self.implicit:
                 self.grid.apply_boundary_conditions_implicit()
@@ -182,6 +190,7 @@ class ImplicitMPM:
                 dpos = (offset - fx) * self.grid.dx
                 self.grid.m[grid_idx] += self.particles.wip[p,offset] * self.particles.p_mass
                 self.grid.v[grid_idx] += self.particles.wip[p,offset] * self.particles.p_mass * (self.particles.v[p] + self.particles.C[p] @ dpos)
+                self.grid.is_particle_boundary_grid[grid_idx] = self.particles.is_boundary_particle[p]
 
         
         for i, j in ti.ndrange(self.grid.size, self.grid.size):
@@ -229,7 +238,8 @@ class ImplicitMPM:
 
 # 使用示例
 if __name__ == "__main__":
-    mpm = ImplicitMPM("config.json")
+    cfg=Config("config/config.json")
+    mpm = ImplicitMPM(cfg)
     gui = ti.GUI("Implicit MPM", res=800)
     
     while gui.running:

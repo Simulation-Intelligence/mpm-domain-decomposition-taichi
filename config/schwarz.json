@@ -1,0 +1,51 @@
+{
+    "max_schwarz_iter": 1,
+    "Domain1": {
+        "grid_size": 32,
+        "dt": 1e-3,
+        "max_iter": 1,
+        "solve_max_iter": 50,
+        "E": 400,
+        "nu": 0.1,
+        "implicit": true,
+        "bound": 2,
+        "boundary_size": 0.01,
+        "p_rho": 1.0,
+        "initial_velocity_y": -2.0,
+        "initial_position_range": [
+            [
+                0.4,
+                0.6
+            ],
+            [
+                0.1,
+                0.4
+            ]
+        ],
+        "implicit_solver": "BFGS"
+    },
+    "Domain2": {
+        "grid_size": 32,
+        "dt": 1e-3,
+        "max_iter": 1,
+        "solve_max_iter": 50,
+        "E": 400,
+        "nu": 0.1,
+        "implicit": true,
+        "bound": 2,
+        "boundary_size": 0.01,
+        "p_rho": 1.0,
+        "initial_velocity_y": -2.0,
+        "initial_position_range": [
+            [
+                0.4,
+                0.6
+            ],
+            [
+                0.3,
+                0.6
+            ]
+        ],
+        "implicit_solver": "BFGS"
+    }
+}

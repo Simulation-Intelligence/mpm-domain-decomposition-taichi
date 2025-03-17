@@ -25,6 +25,7 @@ class Grid:
         # 边界条件
         self.is_boundary_grid = ti.Vector.field(dim, ti.i32, (size,)*dim)
         self.boundary_v = ti.Vector.field(dim, ti.f32, (size,)*dim)
+        self.is_particle_boundary_grid = ti.field(ti.i32, (size,)*dim)
 
     @ti.kernel
     def apply_boundary_conditions_explicit(self):
@@ -36,8 +37,9 @@ class Grid:
     def apply_boundary_conditions_implicit(self):
         for I in ti.grouped(self.v):
             cond = (I < self.bound) & (self.v[I] < 0) | (I > self.size - self.bound) & (self.v[I] > 0)
-            self.is_boundary_grid[I] = cond
-            self.boundary_v[I] = ti.select(cond, 0, self.v[I])
+            if cond[0] or cond[1]:
+                self.is_boundary_grid[I] = cond
+                self.boundary_v[I] = ti.select(cond, 0, self.v[I])
 
     @ti.kernel
     def set_boundary_v_grid(self,v_grad: ti.template()):
@@ -59,9 +61,11 @@ class Grid:
     def set_boundary_v(self):
         for I in ti.grouped(self.is_boundary_grid):
             self.v[I]=ti.select(self.is_boundary_grid[I],self.boundary_v[I],self.v[I])
-
+    
     @ti.kernel
     def clear(self):
         for I in ti.grouped(self.v):
             self.m[I] = 0.0
             self.v[I] = [0.0, 0.0]
+            self.is_particle_boundary_grid[I] = 0
+            self.is_boundary_grid[I] = [0]*self.dim

@@ -1,0 +1,89 @@
+from implicit_mpm_auto_grad import *
+
+@ti.data_oriented
+class MPM_Schwarz:
+    def __init__(self, main_config: Config):
+        """
+        基于Schwarz域分解的双域MPM求解器
+        
+        参数：
+            main_config: 包含Domain1和Domain2配置的全局配置
+        """
+        # 提取子域配置并创建独立配置对象
+        domain1_config = Config(data=main_config.get("Domain1", {}))
+        domain2_config = Config(data=main_config.get("Domain2", {}))
+        
+        # 初始化两个子域MPM实例
+        self.Domain1 = ImplicitMPM(domain1_config)
+        self.Domain2 = ImplicitMPM(domain2_config)
+        
+        # 其他公共参数初始化
+        self.max_schwarz_iter = main_config.get("max_schwarz_iter", 1)  # Schwarz迭代次数
+
+    @ti.kernel
+    def exchange_boundary_conditions(self):
+        """
+        设置边界条件
+        """
+        for I in ti.grouped(self.Domain1.grid.v):
+            if self.Domain1.grid.is_particle_boundary_grid[I] and self.Domain2.grid.m[I] > 0:
+                self.Domain1.grid.is_boundary_grid[I] = [1]*self.Domain1.grid.dim
+                self.Domain1.grid.boundary_v[I] = self.Domain2.grid.v[I]
+
+        for I in ti.grouped(self.Domain2.grid.v):
+            if self.Domain2.grid.is_particle_boundary_grid[I] and self.Domain1.grid.m[I] > 0:
+                self.Domain2.grid.is_boundary_grid[I] = [1]*self.Domain2.grid.dim
+                self.Domain2.grid.boundary_v[I] = self.Domain1.grid.v[I]
+    
+    
+    def step(self):
+        """
+        执行一步Schwarz迭代
+        """
+        self.Domain1.pre_p2g()
+        self.Domain2.pre_p2g()
+
+        # 1.P2G: 将粒子的质量和动量传递到网格上
+        self.Domain1.p2g()
+        self.Domain2.p2g()
+
+        # 2.迭代求解两个子域
+        for _ in range(self.max_schwarz_iter):
+           
+           self.exchange_boundary_conditions()
+
+           self.Domain1.grid.apply_boundary_conditions_implicit()
+           self.Domain2.grid.apply_boundary_conditions_implicit()
+
+           self.Domain1.solver.solve()
+           self.Domain2.solver.solve()
+
+        # 3.G2P: 将网格的速度传递回粒子上
+        self.Domain1.g2p()
+        self.Domain2.g2p()
+
+        # 4.粒子自由运动
+        self.Domain1.particles.advect(self.Domain1.dt)
+        self.Domain2.particles.advect(self.Domain2.dt)
+
+
+
+# ------------------ 主程序 ------------------
+if __name__ == "__main__":
+    # 读取配置文件
+    cfg = Config(path="config/schwarz.json")
+    
+    # 创建Schwarz域分解MPM实例
+    mpm = MPM_Schwarz(cfg)
+
+    gui = ti.GUI("Implicit MPM", res=800)
+    
+    while gui.running:
+        mpm.step()
+        gui.circles(mpm.Domain1.particles.x.to_numpy(), radius=1.5, color=0x068587)
+        gui.circles(mpm.Domain2.particles.x.to_numpy(), radius=1.5, color=0xED553B)
+
+        #绘制边界粒子
+        gui.circles(mpm.Domain1.particles.x.to_numpy()[mpm.Domain1.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
+        gui.circles(mpm.Domain2.particles.x.to_numpy()[mpm.Domain2.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
+        gui.show()
