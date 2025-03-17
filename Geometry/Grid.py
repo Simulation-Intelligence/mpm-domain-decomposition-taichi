@@ -22,11 +22,43 @@ class Grid:
         self.dwip = ti.Vector.field(dim, ti.f32, (size, size, 32))
         self.particle_count = ti.field(ti.i32, (size, size))
 
+        # 边界条件
+        self.is_boundary_grid = ti.Vector.field(dim, ti.i32, (size,)*dim)
+        self.boundary_v = ti.Vector.field(dim, ti.f32, (size,)*dim)
+
     @ti.kernel
-    def apply_boundary_conditions(self):
+    def apply_boundary_conditions_explicit(self):
         for I in ti.grouped(self.v):
             cond = (I < self.bound) & (self.v[I] < 0) | (I > self.size - self.bound) & (self.v[I] > 0)
             self.v[I] = ti.select(cond, 0, self.v[I])
+
+    @ti.kernel
+    def apply_boundary_conditions_implicit(self):
+        for I in ti.grouped(self.v):
+            cond = (I < self.bound) & (self.v[I] < 0) | (I > self.size - self.bound) & (self.v[I] > 0)
+            self.is_boundary_grid[I] = cond
+            self.boundary_v[I] = ti.select(cond, 0, self.v[I])
+
+    @ti.kernel
+    def set_boundary_v_grid(self,v_grad: ti.template()):
+        for I in ti.grouped(self.is_boundary_grid):
+            for d in ti.static(range(self.dim)):
+                if self.is_boundary_grid[I][d]:
+                    idx= I[0] * self.size * 2 + I[1] * 2 + d
+                    v_grad[idx] = self.boundary_v[I][d]
+            
+    @ti.kernel
+    def set_boundary_grad(self,grad: ti.template()):
+        for I in ti.grouped(self.is_boundary_grid):
+            for d in ti.static(range(self.dim)):
+                if self.is_boundary_grid[I][d]:
+                    idx= I[0] * self.size * 2 + I[1] * 2 + d
+                    grad[idx] = 0.0
+
+    @ti.kernel
+    def set_boundary_v(self):
+        for I in ti.grouped(self.is_boundary_grid):
+            self.v[I]=ti.select(self.is_boundary_grid[I],self.boundary_v[I],self.v[I])
 
     @ti.kernel
     def clear(self):

@@ -46,6 +46,7 @@ class ImplicitSolver:
         self.set_initial_guess()
         self.optimizer.minimize(self.solve_max_iter)
         self.update_velocity()
+        self.grid.set_boundary_v()
 
     
     @ti.kernel
@@ -85,13 +86,16 @@ class ImplicitSolver:
         
         copy_field(self.v_grad,v_flat)
 
+        self.grid.set_boundary_v_grid(self.v_grad)
+
         with ti.ad.Tape(self.total_energy):
             self.total_energy[None] = 0.0
             self.compute_particle_energy(self.v_grad)
             self.compute_grid_energy(self.v_grad)
 
-
         copy_field(grad_flat,self.v_grad.grad)
+
+        self.grid.set_boundary_grad(grad_flat)
 
         return self.total_energy[None]  
 
@@ -109,8 +113,8 @@ class ImplicitSolver:
     def update_velocity(self):
         for i, j in ti.ndrange(self.grid.size, self.grid.size):
             idx = i * self.grid.size * 2 + j * 2
-            self.grid.v[i,j][0] = self.optimizer.x[idx]
-            self.grid.v[i,j][1] = self.optimizer.x[idx+1]
+            for d in ti.static(range(self.grid.dim)):
+                self.grid.v[i,j][d] = self.optimizer.x[idx+d]
 
 # ------------------ 主模拟器 ------------------
 @ti.data_oriented
@@ -139,9 +143,6 @@ class ImplicitMPM:
 
     @ti.kernel
     def build_neighbor_list(self):
-        for i, j in ti.ndrange(self.grid.size, self.grid.size):
-            self.grid.particle_count[i,j] = 0
-            
         for p in range(self.particles.n_particles):
             base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
             fx = self.particles.x[p] * self.grid.inv_dx - base.cast(float)
@@ -161,10 +162,12 @@ class ImplicitMPM:
             self.build_neighbor_list()
             self.p2g()
             if self.implicit:
+                self.grid.apply_boundary_conditions_implicit()
                 self.solver.solve()
             else:
                 self.solve_explicit()
-            self.grid.apply_boundary_conditions()
+                self.grid.apply_boundary_conditions_explicit()
+            
             self.g2p()
             self.particles.advect(self.dt)
 

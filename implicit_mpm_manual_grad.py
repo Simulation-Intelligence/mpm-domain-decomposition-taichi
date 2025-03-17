@@ -208,7 +208,7 @@ class ImplicitMPM:
                 self.solver.solve()
             else:
                 self.solve_explicit()
-            self.grid.apply_boundary_conditions()
+            self.grid.apply_boundary_conditions_explicit()
             self.g2p()
             self.particles.advect(self.dt)
 
