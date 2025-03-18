@@ -24,9 +24,9 @@ class MPM_Schwarz:
         if main_config.get("record_frames", 0) > 0:
             self.recorder = ParticleRecorder(
             palette=np.array([
-                0x068587,  # 域1普通粒子
+                0x66CCFF,  # 域1普通粒子
                 0xED553B,  # 域2普通粒子 
-                0x66CCFF   # 边界粒子
+                0xFFFFFF   # 边界粒子
             ], dtype=np.uint32),
             max_frames=main_config.get("record_frames", 60)
         )

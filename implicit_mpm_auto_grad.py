@@ -7,6 +7,8 @@ from Geometry.Particles import Particles
 from Optimizer.BFGS import BFGS
 from Optimizer.LBFGS import LBFGS
 
+from Util.Recorder import *
+
 ti.init(arch=ti.vulkan, random_seed=114514,log_level=ti.ERROR)
 
 # ------------------ 配置模块 ------------------
@@ -143,7 +145,16 @@ class ImplicitMPM:
         
         if self.implicit:
             self.solver = ImplicitSolver(self.grid, self.particles, self.cfg)
-        
+        # 其他公共参数初始化
+        self.max_schwarz_iter = config.get("max_schwarz_iter", 1)  # Schwarz迭代次数
+        if config.get("record_frames", 0) > 0:
+            self.recorder = ParticleRecorder(
+            palette=np.array([
+                0x66CCFF,  # 域1普通粒子
+                0xFFFFFF
+            ], dtype=np.uint32),
+            max_frames=config.get("record_frames", 60)
+        )
         self.particles.initialize()
 
     @ti.kernel
@@ -246,3 +257,21 @@ if __name__ == "__main__":
         mpm.step()
         gui.circles(mpm.particles.x.to_numpy(), radius=1.5, color=0x66CCFF)
         gui.show()
+
+        if mpm.recorder is None:
+            continue
+
+        mpm.recorder.capture(
+            mpm.particles.x.to_numpy(),
+            mpm.particles.is_boundary_particle.to_numpy().astype(np.uint32)
+        )
+
+        # 自动停止条件
+        if len(mpm.recorder.frame_data) >= mpm.recorder.max_frames:
+            break
+
+    if mpm.recorder is None:
+        exit()
+    print("Playback finished.")
+    # 播放录制动画
+    mpm.recorder.play(loop=True, fps=60)

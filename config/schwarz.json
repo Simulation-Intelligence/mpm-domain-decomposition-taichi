@@ -1,16 +1,16 @@
 {
-    "max_schwarz_iter": 2,
+    "max_schwarz_iter": 5,
     "record_frames": 120,
     "Domain1": {
-        "grid_size": 32,
+        "grid_size": 64,
         "dt": 1e-3,
         "max_iter": 1,
         "solve_max_iter": 50,
         "E": 400,
-        "nu": 0.1,
+        "nu": 0.3,
         "implicit": true,
         "bound": 2,
-        "boundary_size": 0.02,
+        "boundary_size": 0.01,
         "p_rho": 1.0,
         "initial_velocity_y": -2.0,
         "initial_position_range": [
@@ -26,15 +26,15 @@
         "implicit_solver": "BFGS"
     },
     "Domain2": {
-        "grid_size": 32,
+        "grid_size": 64,
         "dt": 1e-3,
         "max_iter": 1,
         "solve_max_iter": 50,
         "E": 400,
-        "nu": 0.1,
+        "nu": 0.3,
         "implicit": true,
         "bound": 2,
-        "boundary_size": 0.02,
+        "boundary_size": 0.01,
         "p_rho": 1.0,
         "initial_velocity_y": -2.0,
         "initial_position_range": [
