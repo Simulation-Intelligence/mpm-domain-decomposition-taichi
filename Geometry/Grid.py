@@ -34,7 +34,7 @@ class Grid:
             self.v[I] = ti.select(cond, 0, self.v[I])
 
     @ti.kernel
-    def apply_boundary_conditions_implicit(self):
+    def apply_boundary_conditions(self):
         for I in ti.grouped(self.v):
             cond = (I < self.bound) & (self.v[I] < 0) | (I > self.size - self.bound) & (self.v[I] > 0)
             if cond[0] or cond[1]:

@@ -3,7 +3,7 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 
-ti.init(arch=ti.vulkan)
+
 
 @ti.data_oriented
 class LBFGS:
@@ -236,6 +236,8 @@ class LBFGS:
 # 测试示例（与BFGS相同）
 if __name__ == "__main__":
     dim = 9
+
+    ti.init(arch=ti.vulkan)
 
     @ti.kernel  
     def rosenbrock_energy(x: ti.template(),  grad: ti.template()) -> ti.f32:

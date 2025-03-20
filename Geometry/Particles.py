@@ -8,9 +8,12 @@ import json
 class Particles:
     def __init__(self, config, grid_size):
         self.dim = 2
-        self.n_particles = grid_size**self.dim // 2**(self.dim - 1)
+        self.init_pos_range = config.get("initial_position_range", [[0.3, 0.6], [0.3, 0.6]])
+        self.area = (self.init_pos_range[0][1]-self.init_pos_range[0][0]) * (self.init_pos_range[1][1]-self.init_pos_range[1][0])
+        self.particles_per_grid = config.get("particles_per_grid", 8)
+        self.n_particles = (int)(grid_size**self.dim * self.area * self.particles_per_grid)
         self.p_rho = config.get("p_rho", 1)
-        self.p_vol = (1.0/grid_size)**self.dim
+        self.p_vol = (1.0/grid_size)**self.dim / self.particles_per_grid
         self.p_mass = self.p_vol * self.p_rho
         self.boundary_size= config.get("boundary_size", 0.05)
         
@@ -23,7 +26,7 @@ class Particles:
         self.wip=ti.field(ti.f32, (self.n_particles, 3,3))
         self.dwip=ti.Vector.field(self.dim, ti.f32, (self.n_particles, 3,3))
         
-        self.init_pos_range = config.get("initial_position_range", [[0.3, 0.6], [0.3, 0.6]])
+        
         self.init_vel_y = config.get("initial_velocity_y", -1)
 
         self.is_boundary_particle = ti.field(ti.i32, self.n_particles)

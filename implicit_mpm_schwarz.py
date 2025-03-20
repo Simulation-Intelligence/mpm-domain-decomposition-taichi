@@ -1,6 +1,8 @@
-from implicit_mpm_auto_grad import *
+from implicit_mpm import *
 
 from Util.Recorder import *
+
+import matplotlib.pyplot as plt
 
 @ti.data_oriented
 class MPM_Schwarz:
@@ -21,6 +23,8 @@ class MPM_Schwarz:
         
         # 其他公共参数初始化
         self.max_schwarz_iter = main_config.get("max_schwarz_iter", 1)  # Schwarz迭代次数
+        self.steps=main_config.get("steps", 10)  # 迭代步数
+        self.recorder = None
         if main_config.get("record_frames", 0) > 0:
             self.recorder = ParticleRecorder(
             palette=np.array([
@@ -30,6 +34,8 @@ class MPM_Schwarz:
             ], dtype=np.uint32),
             max_frames=main_config.get("record_frames", 60)
         )
+            
+        self.residuals = []
 
     @ti.kernel
     def exchange_boundary_conditions(self):
@@ -45,37 +51,57 @@ class MPM_Schwarz:
             if self.Domain2.grid.is_particle_boundary_grid[I] and self.Domain1.grid.m[I] > 0:
                 self.Domain2.grid.is_boundary_grid[I] = [1]*self.Domain2.grid.dim
                 self.Domain2.grid.boundary_v[I] = self.Domain1.grid.v[I]
-    
+
+    @ti.kernel
+    def check_grid_v_residual(self) -> ti.f32:
+        """
+        计算残差
+        """
+        residual = 0.0
+        cnt = 0
+        for I in ti.grouped(self.Domain1.grid.v):
+            if self.Domain1.grid.m[I] > 0 and self.Domain2.grid.m[I] > 0:
+                residual += (self.Domain1.grid.v[I]-self.Domain2.grid.v[I]).norm()
+                cnt += 1
+        return residual / cnt
     
     def step(self):
-        """
-        执行一步Schwarz迭代
-        """
-        self.Domain1.pre_p2g()
-        self.Domain2.pre_p2g()
+        for _ in range(self.steps):
+            """
+            执行一步Schwarz迭代
+            """
+            self.Domain1.pre_p2g()
+            self.Domain2.pre_p2g()
 
-        # 1.P2G: 将粒子的质量和动量传递到网格上
-        self.Domain1.p2g()
-        self.Domain2.p2g()
+            # 1.P2G: 将粒子的质量和动量传递到网格上
+            self.Domain1.p2g()
+            self.Domain2.p2g()
 
-        # 2.迭代求解两个子域
-        for _ in range(self.max_schwarz_iter):
-           
-           self.exchange_boundary_conditions()
+            residuals=[]
 
-           self.Domain1.grid.apply_boundary_conditions_implicit()
-           self.Domain2.grid.apply_boundary_conditions_implicit()
+            # 2.迭代求解两个子域
+            for _ in range(self.max_schwarz_iter):
 
-           self.Domain1.solver.solve()
-           self.Domain2.solver.solve()
+                residuals.append(self.check_grid_v_residual())
+            
+                self.exchange_boundary_conditions()
 
-        # 3.G2P: 将网格的速度传递回粒子上
-        self.Domain1.g2p()
-        self.Domain2.g2p()
+                self.Domain1.grid.apply_boundary_conditions()
+                self.Domain2.grid.apply_boundary_conditions()
 
-        # 4.粒子自由运动
-        self.Domain1.particles.advect(self.Domain1.dt)
-        self.Domain2.particles.advect(self.Domain2.dt)
+                self.Domain1.solve()
+                self.Domain2.solve()
+                
+
+            self.residuals.append(residuals)
+
+            # 3.G2P: 将网格的速度传递回粒子上
+            self.Domain1.g2p()
+            self.Domain2.g2p()
+
+            # 4.粒子自由运动
+            self.Domain1.particles.advect(self.Domain1.dt)
+            self.Domain2.particles.advect(self.Domain2.dt)
 
 
 
@@ -125,6 +151,14 @@ if __name__ == "__main__":
         if len(mpm.recorder.frame_data) >= mpm.recorder.max_frames:
             break
     
+    
+    #绘制最后5组residuals
+    for i in range(5):
+        plt.plot(mpm.residuals[-i-1])
+    plt.ylabel('Residual')
+    plt.xlabel('Iteration')
+    plt.show()
+
     if mpm.recorder is None:
         exit()
     print("Playback finished.")

@@ -1,13 +1,16 @@
 {
-    "grid_size": 64,
+    "grid_size": 32,
+    "particles_per_grid": 8,
     "dt": 1e-3,
     "max_iter": 1,
-    "solve_max_iter": 50,
-    "E": 400,
+    "solve_max_iter": 500,
+    "solve_init_iter": 100,
+    "E": 1000,
     "nu": 0.3,
     "implicit": true,
+    "use_auto_diff": true,
     "bound": 2,
-    "boundary_size": 0.02,
+    "boundary_size": 0.01,
     "p_rho": 1.0,
     "initial_velocity_y": -2.0,
     "initial_position_range": [
@@ -21,5 +24,6 @@
         ]
     ],
     "implicit_solver": "BFGS",
+    "eta": 20,
     "record_frames": 120
 }
