@@ -125,7 +125,7 @@ if __name__ == "__main__":
     else:
         arch = ti.cpu
 
-    ti.init(arch=arch)
+    ti.init(arch=arch, device_memory_GB=20)
     
     # 创建Schwarz域分解MPM实例
     mpm = MPM_Schwarz(cfg)

@@ -155,9 +155,9 @@ class Newton:
 
 # 示例使用
 if __name__ == "__main__":
-    float_type = ti.f32
-    ti.init(arch=ti.cuda, default_fp=float_type)
-    dim =30000
+    float_type = ti.f64
+    ti.init(arch=ti.cpu, default_fp=float_type, device_memory_GB=20)
+    dim =300000
 
     @ti.kernel
     def quadratic_energy(x: ti.template()) -> float_type:
