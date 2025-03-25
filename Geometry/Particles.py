@@ -38,9 +38,9 @@ class Particles:
             for d in ti.static(range(self.dim)):
                 pos[d] = ti.random() * (self.init_pos_range[d][1]-self.init_pos_range[d][0]) + self.init_pos_range[d][0]
                 # test if the particle is in the boundary
-                if d==1:
-                    if pos[d] < self.init_pos_range[d][0]+self.boundary_size or pos[d] > self.init_pos_range[d][1] - self.boundary_size:
-                        self.is_boundary_particle[p] = 1
+                # if d==1:
+                if pos[d] < self.init_pos_range[d][0]+self.boundary_size or pos[d] > self.init_pos_range[d][1] - self.boundary_size:
+                    self.is_boundary_particle[p] = 1
             self.x[p] = pos
             self.v[p] = ti.Vector.zero(ti.f32, self.dim)
             self.v[p][1] = self.init_vel_y

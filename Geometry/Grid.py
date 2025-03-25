@@ -55,7 +55,17 @@ class Grid:
             for d in ti.static(range(self.dim)):
                 if self.is_boundary_grid[I][d]:
                     idx= I[0] * self.size * 2 + I[1] * 2 + d
-                    grad[idx] = 0.0
+                    grad[idx] = 0.0 
+
+    @ti.kernel
+    def set_boundary_hess(self,hess:ti.sparse_matrix_builder()):
+        for I in ti.grouped(self.is_boundary_grid):
+            for d in ti.static(range(self.dim)):
+                if self.is_boundary_grid[I][d]:
+                    idx= I[0] * self.size * 2 + I[1] * 2 + d
+                    for i in ti.static(range(self.dim)):
+                        for j in ti.static(range(self.dim)):
+                            hess[idx,i,j] = 0.0
 
     @ti.kernel
     def set_boundary_v(self):

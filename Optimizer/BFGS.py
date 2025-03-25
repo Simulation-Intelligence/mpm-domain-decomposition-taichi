@@ -7,7 +7,7 @@ import matplotlib.pyplot  as plt
  
 @ti.data_oriented  
 class BFGS:
-    def __init__(self, energy_fn,grad_fn, dim=3, alpha=0.01, beta=0.6, eta=20,grad_normalizer=1.0):
+    def __init__(self, energy_fn,grad_fn, dim=3, alpha=0.5, beta=0.6, eta=1e-2,grad_normalizer=1.0, float_type=ti.f32):
         self.dim  = dim 
         self.energy_fn  = energy_fn 
         self.grad_fn = grad_fn
@@ -15,29 +15,30 @@ class BFGS:
         self.beta  = beta 
         self.eta  = eta
         self.grad_normalizer=grad_normalizer
+        self.float_type = float_type
  
         # 全部改为标量场存储 
-        self.x = ti.field(ti.f32,  shape=dim)       # 参数向量 
-        self.grad  = ti.field(ti.f32,  shape=dim)    # 梯度向量
-        self.temp_x  = ti.field(ti.f32,  shape=dim)   # 临时参数向量
-        self.temp_grad  = ti.field(ti.f32,  shape=dim) # 临时梯度向量
-        self.grad_prev  = ti.field(ti.f32,  shape=dim) # 上一次梯度向量 
-        self.H = ti.field(ti.f32,  shape=(dim, dim)) # Hessian近似矩阵 
-        self.d = ti.field(ti.f32,  shape=dim)       # 搜索方向 
-        self.dx = ti.field(ti.f32,  shape=dim)      # 临时参数变化量
-        self.dg = ti.field(ti.f32,  shape=dim)      # 临时梯度变化量
+        self.x = ti.field(self.float_type,  shape=dim)       # 参数向量 
+        self.grad  = ti.field(self.float_type,  shape=dim)    # 梯度向量
+        self.temp_x  = ti.field(self.float_type,  shape=dim)   # 临时参数向量
+        self.temp_grad  = ti.field(self.float_type,  shape=dim) # 临时梯度向量
+        self.grad_prev  = ti.field(self.float_type,  shape=dim) # 上一次梯度向量 
+        self.H = ti.field(self.float_type,  shape=(dim, dim)) # Hessian近似矩阵 
+        self.d = ti.field(self.float_type,  shape=dim)       # 搜索方向 
+        self.dx = ti.field(self.float_type,  shape=dim)      # 临时参数变化量
+        self.dg = ti.field(self.float_type,  shape=dim)      # 临时梯度变化量
+        self.f0 = 0.0
  
         # 历史记录 
         self.f_his = []
         self.time_his  = []
 
         self.init_Hessian() 
-
     @ti.kernel  
     def update_hessian(self):
         
         # 计算 H * dg 
-        Hdg = ti.Vector.zero(ti.f32,  self.dim) 
+        Hdg = ti.Vector.zero(self.float_type,  self.dim) 
         for i in range(self.dim): 
             for j in range(self.dim): 
                 Hdg[i] += self.H[i, j] * self.dg[j]
@@ -63,25 +64,24 @@ class BFGS:
         for i, j in ti.ndrange(self.dim,  self.dim): 
             self.H[i, j] = 1.0 if i == j else 0.0 
  
-    def line_search(self) -> ti.f32:
+    def line_search(self):
         alpha = 1.0 
-        f0 = self.grad_fn(self.x,  self.grad)
         g0 = 0.0 
         @ti.kernel
-        def calc_g0()->ti.f32:
+        def calc_g0()->self.float_type:
             g = 0.0
             for i in range(self.dim):
                 g += self.grad[i] * self.d[i]
             return g
         g0=calc_g0()
         @ti.kernel
-        def calc_temp_x(a: ti.f32):
+        def calc_temp_x(a: self.float_type):
             for i in range(self.dim): 
                 self.temp_x[i] = self.x[i] + a* self.d[i]
         while alpha > 1e-6:
             calc_temp_x(alpha)
             f_new = self.energy_fn(self.temp_x)
-            if f_new <= f0 + self.alpha  * alpha * g0:
+            if f_new <= self.f0 + self.alpha  * alpha * g0:
                 break 
             alpha *= self.beta  
         return alpha 
@@ -89,23 +89,31 @@ class BFGS:
     def minimize(self,max_iter=200,init_iter=50):
         # 初始化参数 
         
-        # start_time = time.time() 
-        for _ in range(max_iter):
+        start_time = time.time() 
+        iter = 0
+        for iter in range(max_iter):
             # 计算当前能量和梯度 
-            f = self.grad_fn(self.x,  self.grad)
-            print ("Iteration:", _)
-            print(f"Energy: {f}")
+            self.f0 = self.grad_fn(self.x,  self.grad)
+            print ("Iteration:", iter)
+            print(f"Energy: {self.f0:.6f}")
             # 检查收敛  
             @ti.kernel
-            def calc_grad_norm() -> ti.f32:
+            def calc_grad_norm() -> self.float_type:
                 grad_norm = 0.0
                 for i in range(self.dim): 
                     grad_norm += self.grad[i]**2
                 return grad_norm
-            grad_norm=calc_grad_norm() / self.grad_normalizer ** 2 
+            
+            @ti.kernel
+            def calc_grad_inf_norm() -> self.float_type:
+                grad_norm = 0.0
+                for i in range(self.dim): 
+                    ti.atomic_max(grad_norm, ti.abs(self.grad[i]))
+                return grad_norm
+            grad_norm=calc_grad_norm() / self.grad_normalizer
             print(f"Grad norm: {ti.sqrt(grad_norm)}")
             if grad_norm < self.eta**2 :
-                print(f"Converged at iteration {_}")
+                print(f"Converged at iteration {iter}")
                 break 
             
             # 计算搜索方向 d = -H * grad 
@@ -144,11 +152,13 @@ class BFGS:
             # 更新Hessian 
             self.update_hessian() 
 
-            if _ % init_iter == 0:
+            if iter % init_iter == 0:
                 self.init_Hessian()
             # 记录历史 
-            # self.f_his.append(f) 
-            # self.time_his.append(time.time()  - start_time)
+            self.f_his.append(self.f0) 
+            self.time_his.append(time.time()  - start_time)
+
+        return iter
         
  
     def check_gradient(self, x_test=None, h=1e-5, tol=1e-5):
@@ -209,10 +219,22 @@ class BFGS:
             return True
 # 使用示例（需要修改能量函数接口）
 if __name__ == "__main__":
-    dim = 3
-    ti.init(arch=ti.cuda) 
+    dim = 12
+    float_type = ti.f64
+    ti.init(arch=ti.vulkan, default_fp=float_type)
+
+    @ti.kernel
+    def rosenbrock_energy(x: ti.template()) -> float_type:
+        """能量函数实现"""
+        f_term_total = 0.0
+        for i in range(x.shape[0]):
+            if i % 3 == 0:
+                x1, x2, x3 = x[i], x[i+1], x[i+2]
+                f_term = (3 - x1)**2 + 7*(x2 - x1**2)**2 + 9*(x3 - x1 - x2**2)**2
+                f_term_total += f_term
+        return f_term_total
     @ti.kernel  
-    def rosenbrock_energy(x: ti.template(),  grad: ti.template()) -> ti.f32:
+    def rosenbrock_energy_grad(x: ti.template(),  grad: ti.template()) -> float_type:
         """支持梯度引用传递的能量函数实现"""
         f_term_total = 0.0
         for i in range(x.shape[0]):
@@ -231,7 +253,7 @@ if __name__ == "__main__":
         return f_term_total 
     
     @ti.kernel
-    def quadratic_energy(x: ti.template(), grad: ti.template()) -> ti.f32:
+    def quadratic_energy(x: ti.template(), grad: ti.template()) -> float_type:
         """支持梯度引用传递的能量函数实现"""
         f_term_total = 0.0
         for i in range(x.shape[0]):
@@ -240,8 +262,8 @@ if __name__ == "__main__":
             f_term_total += f_term
         return f_term_total
  
-    bfgs = BFGS(rosenbrock_energy, dim=dim)
-    bfgs.check_gradient()
+    bfgs = BFGS(rosenbrock_energy,rosenbrock_energy_grad, dim=dim,float_type=float_type)
+    # bfgs.check_gradient()
     bfgs.minimize(max_iter=1000)
     
     print("Optimized result:", bfgs.x.to_numpy())

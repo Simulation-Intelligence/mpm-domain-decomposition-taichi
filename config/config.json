@@ -1,17 +1,18 @@
 {
-    "grid_size": 32,
+    "arch": "vulkan",
+    "grid_size": 64,
     "particles_per_grid": 8,
     "dt": 1e-3,
     "max_iter": 1,
     "solve_max_iter": 500,
     "solve_init_iter": 100,
-    "E": 1000,
+    "E": 1e6,
     "nu": 0.3,
     "implicit": true,
     "use_auto_diff": true,
     "bound": 2,
     "boundary_size": 0.01,
-    "p_rho": 1.0,
+    "p_rho": 1e3,
     "initial_velocity_y": -2.0,
     "initial_position_range": [
         [
@@ -19,11 +20,11 @@
             0.6
         ],
         [
-            0.1,
+            0.2,
             0.6
         ]
     ],
     "implicit_solver": "BFGS",
-    "eta": 20,
+    "eta": 1e-2,
     "record_frames": 120
 }
