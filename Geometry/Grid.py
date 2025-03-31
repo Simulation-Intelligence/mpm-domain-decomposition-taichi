@@ -5,26 +5,27 @@ import taichi as ti
 # ------------------ 网格模块 ------------------
 @ti.data_oriented
 class Grid:
-    def __init__(self, size, dim, bound):
+    def __init__(self, size, dim, bound,float_type=ti.f32):
         self.size = size
         self.dim = dim
         self.bound = bound
         self.dx = 1.0 / size
         self.inv_dx = size
+        self.float_type = float_type
         
-        self.v = ti.Vector.field(dim, ti.f32, (size,)*dim)
-        self.m = ti.field(ti.f32, (size,)*dim)
-        self.v_prev = ti.Vector.field(dim, ti.f32, (size,)*dim)
+        self.v = ti.Vector.field(dim, self.float_type, (size,)*dim)
+        self.m = ti.field(self.float_type, (size,)*dim)
+        self.v_prev = ti.Vector.field(dim, self.float_type, (size,)*dim)
         
         # 隐式求解相关
         self.particles = ti.field(ti.i32, (size, size, 32))
-        self.wip = ti.field(ti.f32, (size, size, 32))
-        self.dwip = ti.Vector.field(dim, ti.f32, (size, size, 32))
+        self.wip = ti.field(self.float_type, (size, size, 32))
+        self.dwip = ti.Vector.field(dim, self.float_type, (size, size, 32))
         self.particle_count = ti.field(ti.i32, (size, size))
 
         # 边界条件
         self.is_boundary_grid = ti.Vector.field(dim, ti.i32, (size,)*dim)
-        self.boundary_v = ti.Vector.field(dim, ti.f32, (size,)*dim)
+        self.boundary_v = ti.Vector.field(dim, self.float_type, (size,)*dim)
         self.is_particle_boundary_grid = ti.field(ti.i32, (size,)*dim)
 
     @ti.kernel

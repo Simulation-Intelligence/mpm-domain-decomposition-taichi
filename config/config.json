@@ -1,15 +1,17 @@
 {
-    "arch": "vulkan",
-    "grid_size": 64,
+    "arch": "cpu",
+    "float_type": "f64",
+    "grid_size": 32,
     "particles_per_grid": 8,
-    "dt": 1e-3,
+    "dt": 5e-4,
     "max_iter": 1,
-    "solve_max_iter": 500,
+    "solve_max_iter": 1000,
     "solve_init_iter": 100,
     "E": 1e6,
     "nu": 0.3,
     "implicit": true,
-    "use_auto_diff": true,
+    "use_auto_diff": false,
+    "compare_diff": false,
     "bound": 2,
     "boundary_size": 0.01,
     "p_rho": 1e3,
@@ -20,11 +22,11 @@
             0.6
         ],
         [
-            0.2,
-            0.6
+            0.1,
+            0.5
         ]
     ],
     "implicit_solver": "BFGS",
-    "eta": 1e-2,
-    "record_frames": 120
+    "eta": 5e-2,
+    "record_frames": 240
 }

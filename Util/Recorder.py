@@ -28,7 +28,6 @@ class ParticleRecorder:
         """
 
         # 数据校验
-        assert positions.dtype == np.float32, "Positions must be float32"
         assert color_indices.dtype == np.uint32, "Color indices must be uint32"
         assert positions.shape[0] == color_indices.shape[0], "Input arrays must have same length"
         

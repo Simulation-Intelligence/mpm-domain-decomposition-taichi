@@ -117,6 +117,7 @@ class MPM_Schwarz:
 if __name__ == "__main__":
     # 读取配置文件
     cfg = Config(path="config/schwarz.json")
+    float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64        
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":
         arch = ti.cuda
@@ -125,7 +126,7 @@ if __name__ == "__main__":
     else:
         arch = ti.cpu
 
-    ti.init(arch=arch, device_memory_GB=20)
+    ti.init(arch=arch, default_fp=float_type, device_memory_GB=20)
     
     # 创建Schwarz域分解MPM实例
     mpm = MPM_Schwarz(cfg)

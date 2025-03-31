@@ -2,10 +2,12 @@
     "max_schwarz_iter": 10,
     "record_frames": 95,
     "steps": 1,
-    "arch": "vulkan",
+    "arch": "cpu",
+    "float_type": "f64",
     "Domain1": {
         "grid_size": 64,
         "particles_per_grid": 8,
+        "float_type": "f64",
         "dt": 5e-4,
         "max_iter": 1,
         "solve_max_iter": 500,
@@ -14,14 +16,15 @@
         "nu": 0.3,
         "implicit": true,
         "use_auto_diff": true,
+        "compare_diff": false,
         "bound": 2,
         "boundary_size": 0.01,
         "p_rho": 1000,
         "initial_velocity_y": -2.0,
         "initial_position_range": [
             [
-                0.35,
-                0.65
+                0.2,
+                0.8
             ],
             [
                 0.1,
@@ -34,6 +37,7 @@
     "Domain2": {
         "grid_size": 64,
         "particles_per_grid": 8,
+        "float_type": "f64",
         "dt": 5e-4,
         "max_iter": 1,
         "solve_max_iter": 500,
@@ -42,6 +46,7 @@
         "nu": 0.3,
         "implicit": true,
         "use_auto_diff": true,
+        "compare_diff": false,
         "bound": 2,
         "boundary_size": 0.01,
         "p_rho": 1000,

@@ -17,12 +17,15 @@ class ImplicitMPM:
     def __init__(self, config:Config):
         self.cfg = config
 
+        self.float_type = ti.f32 if config.get("float_type", "f32") == "f32" else ti.f64
+    
         self.grid = Grid(
             size=self.cfg.get("grid_size", 16),
             dim=2,
-            bound=self.cfg.get("bound", 2)
+            bound=self.cfg.get("bound", 2),
+            float_type=self.float_type
         )
-        self.particles = Particles(self.cfg, self.grid.size)
+        self.particles = Particles(self.cfg)
         self.implicit = self.cfg.get("implicit", True)
         self.max_iter = self.cfg.get("max_iter", 1)
         self.dt = self.cfg.get("dt", 2e-3)
@@ -74,7 +77,7 @@ class ImplicitMPM:
 
     def pre_p2g(self):
         self.grid.clear()
-        self.build_neighbor_list()
+        self.particles.build_neighbor_list()
         
     def step(self):
         for _ in range(self.max_iter):
@@ -112,8 +115,8 @@ class ImplicitMPM:
             Xp = self.particles.x[p] / self.grid.dx
             base = (Xp - 0.5).cast(int)
 
-            new_v = ti.Vector.zero(ti.f32, 2)
-            new_C = ti.Matrix.zero(ti.f32, 2, 2)
+            new_v = ti.Vector.zero(self.float_type, 2)
+            new_C = ti.Matrix.zero(self.float_type, 2, 2)
             
             for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
                 grid_idx = base + offset
@@ -122,7 +125,7 @@ class ImplicitMPM:
                 new_C += 4*  g_v.outer_product(self.particles.dwip[p, offset])
                 
             self.particles.v[p] = new_v
-            self.particles.F[p] = (ti.Matrix.identity(ti.f32, self.grid.dim) + self.dt * self.particles.C[p]) @ self.particles.F[p]
+            self.particles.F[p] = (ti.Matrix.identity(self.float_type, self.grid.dim) + self.dt * self.particles.C[p]) @ self.particles.F[p]
             self.particles.C[p] = new_C
 
 
@@ -139,7 +142,7 @@ class ImplicitMPM:
             
             J = self.particles.F[p].determinant()
             logJ = ti.log(J)
-            cauchy = self.mu * (self.particles.F[p] @ self.particles.F[p].transpose()) + ti.Matrix.identity(ti.f32, 2) * (self.lam * logJ - self.mu)
+            cauchy = self.mu * (self.particles.F[p] @ self.particles.F[p].transpose()) + ti.Matrix.identity(self.float_type, 2) * (self.lam * logJ - self.mu)
             stress = -(self.particles.p_vol ) * cauchy
 
             for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
@@ -149,7 +152,8 @@ class ImplicitMPM:
 # 使用示例
 if __name__ == "__main__":
 
-    cfg=Config("config/config.json")        
+    cfg=Config("config/config.json")
+    float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64        
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":
         arch = ti.cuda
@@ -158,7 +162,7 @@ if __name__ == "__main__":
     else:
         arch = ti.cpu
 
-    ti.init(arch=arch)
+    ti.init(arch=arch, default_fp=float_type, device_memory_GB=20)
     mpm = ImplicitMPM(cfg)
     gui = ti.GUI("Implicit MPM", res=800)
     

@@ -110,7 +110,7 @@ class BFGS:
                 for i in range(self.dim): 
                     ti.atomic_max(grad_norm, ti.abs(self.grad[i]))
                 return grad_norm
-            grad_norm=calc_grad_norm() / self.grad_normalizer
+            grad_norm=calc_grad_inf_norm() / self.grad_normalizer
             print(f"Grad norm: {ti.sqrt(grad_norm)}")
             if grad_norm < self.eta**2 :
                 print(f"Converged at iteration {iter}")
