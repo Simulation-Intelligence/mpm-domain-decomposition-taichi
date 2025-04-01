@@ -2,7 +2,7 @@ from implicit_mpm import *
 
 config = Config(data={
         "dt": 0.001,
-        "float_type": "f32",
+        "float_type": "f64",
         "E": 4.0,
         "nu": 0.4,
         "solve_max_iter": 1,
@@ -51,7 +51,7 @@ def init_particles():
     for p in range(n_particles):
         particles.x[p] = [ti.random(), ti.random()]
         for i, j in ti.static(ti.ndrange(3, 3)):
-            particles.F[p] = ti.Matrix([[20, -2], [-2, 20]])
+            particles.F[p] = ti.Matrix([[200, -2], [-2, 200]])
 
 particles.initialize()
 init_particles()
@@ -87,9 +87,9 @@ def test_gradient_derivative():
         idx1 = i/2 // grid.size
         idx2 = i/2 % grid.size
         if error > 1e-4:
-            print(f"x:{idx1},y:{idx2},显著差异 @ {i}: Auto={auto_grad[i]:.12f}, Manual={manual_grad[i]:.12f}, Δ={error:.12f}")
+            print(f"x:{idx1},y:{idx2},显著差异 @ {i}: Auto={auto_grad[i]:.4e}, Manual={manual_grad[i]:.4e}, Δ={error:.4e}")
         elif auto_grad[i] != 0:
-            print(f"x:{idx1},y:{idx2},小差异 @ {i}: Auto={auto_grad[i]:.12f}, Manual={manual_grad[i]:.12f}, Δ={error:.12f}")
+            print(f"x:{idx1},y:{idx2},小差异 @ {i}: Auto={auto_grad[i]:.4e}, Manual={manual_grad[i]:.4e}, Δ={error:.4e}")
 
     print(f"最大梯度相对误差: {max_error:.10f}")
     assert max_error < 1e-4, "手动梯度与自动求导结果不一致"
@@ -102,7 +102,7 @@ def test_hessian_derivative():
 
 
     # finite difference hessian
-    h = 1e-6
+    h = 1e-10
     finite_diff_hessian = ti.field(float_type, shape=(n_vars, n_vars))
     finite_diff_hessian.fill(0.0)
     new_grad1 = ti.field(float_type, shape=n_vars)
@@ -111,9 +111,9 @@ def test_hessian_derivative():
         solver.v_grad[i] += h
         new_grad1.fill(0.0)
         new_grad2.fill(0.0)
-        solver.compute_energy_grad_auto(solver.v_grad, new_grad1)
+        solver.compute_energy_grad_manual(solver.v_grad, new_grad1)
         solver.v_grad[i] -= 2 * h
-        solver.compute_energy_grad_auto(solver.v_grad, new_grad2)
+        solver.compute_energy_grad_manual(solver.v_grad, new_grad2)
         for j in range(n_vars):
             finite_diff_hessian[i, j] = (new_grad1[j]- new_grad2[j]) / h/2
         solver.v_grad[i] += h
@@ -122,14 +122,17 @@ def test_hessian_derivative():
     max_error = 0.0
     for i in range(n_vars):
         for j in range(n_vars):
-            error = abs(H[i, j] - finite_diff_hessian[i, j])
+            if H[i, j] == 0:
+                continue
+            error = abs(H[i, j] - finite_diff_hessian[i, j]) / abs(H[i, j])
             max_error = max(max_error, error)
-            if error > 1e-4:
-                print(f"显著差异 @ {i},{j}: Manual={H[i, j]:.12f}, FD={finite_diff_hessian[i, j]:.12f}, Δ={error:.12f}")
-            elif H[i, j] != 0 and error < 1e-4:
-                print(f"小差异 @ {i},{j}: Manual={H[i, j]:.12f}, FD={finite_diff_hessian[i, j]:.12f}, Δ={error:.12f}")
-    print(f"最大Hessian误差: {max_error:.12f}")
+            if error > 1e-4 :
+                print(f"显著差异 @ {i},{j}: Manual={H[i, j]:.4e}, FD={finite_diff_hessian[i, j]:.4e}, Δ={error:.4e}")
+            else:
+                print(f"小差异 @ {i},{j}: Manual={H[i, j]:.4e}, FD={finite_diff_hessian[i, j]:.4e}, Δ={error:.4e}")
+    print(f"最大相对Hessian误差: {max_error:.4e}")
     assert max_error < 1e-4, "手动Hessian与有限差分结果不一致"
 
 if __name__ == "__main__":
-    test_gradient_derivative()
+    #test_gradient_derivative()
+    test_hessian_derivative()

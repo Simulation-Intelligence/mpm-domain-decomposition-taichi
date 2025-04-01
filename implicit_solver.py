@@ -80,7 +80,7 @@ class ImplicitSolver:
             e1=0.5*self.mu*(new_F.norm_sqr() - self.grid.dim)
             e2=-self.mu*logJ
             e3=0.5*self.lam*(logJ**2)
-            energy = e1+e2+e3
+            energy = e1 + e2 + e3
             self.total_energy[None] += energy * self.particles.p_vol
 
 
@@ -157,24 +157,25 @@ class ImplicitSolver:
 
             # 计算变形梯度导数
             F = self.particles.F[p]
-            new_F = (ti.Matrix.identity(self.float_type, 2) + vel_grad) @ F
+            new_F = (ti.Matrix.identity(self.float_type, self.grid.dim) + vel_grad) @ F
             J = new_F.determinant()
             F_inv = new_F.inverse()
             F_inv_T = F_inv.transpose()
+            
 
-            h2_pre = (self.mu+self.lam-self.lam*ti.log(J)) * F_inv_T
 
             for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
-                FTw=4 * self.dt * self.particles.F[p].transpose() @ self.particles.dwip[p, offset]
-                h1=self.mu *FTw.dot(FTw) @ti.Matrix.identity(self.float_type, self.grid.dim) 
-                h2=h2_pre @ FTw.outer_product(FTw) @ F_inv_T 
-                hessian=(h1+h2)*self.particles.p_vol
-
-                U ,sig, V = ti.svd(hessian)
-                for i in ti.static(range(self.grid.dim)):
-                    if sig[i,i] < 0:
-                        sig[i,i] = 0
-                hessian = U @ sig @ V.transpose()
+                FTw=4 * self.dt * F.transpose() @ self.particles.dwip[p, offset]
+                FWWF=F_inv_T @ FTw.outer_product(FTw) @ F_inv 
+                h1=self.mu *FTw.dot(FTw) * ti.Matrix.identity(self.float_type, self.grid.dim) 
+                h2=self.mu * FWWF 
+                h3=self.lam * (1-ti.log(J)) * FWWF
+                hessian=(h1+h2+h3)*self.particles.p_vol
+                # U ,sig, V = ti.svd(hessian)
+                # for i in ti.static(range(self.grid.dim)):
+                #     if sig[i,i] < 0:
+                #         sig[i,i] = 0
+                # hessian = U @ sig @ V.transpose()
 
                 grid_idx = (base + offset) % self.grid.size
                 vidx = grid_idx.x * self.grid.size * 2 + grid_idx.y * 2

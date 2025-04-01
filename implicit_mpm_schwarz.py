@@ -36,8 +36,6 @@ class MPM_Schwarz:
         )
             
         self.residuals = []
-        self.iter_history1 = []
-        self.iter_history2 = []
 
     @ti.kernel
     def exchange_boundary_conditions(self):
@@ -80,8 +78,6 @@ class MPM_Schwarz:
             self.Domain2.p2g()
 
             residuals=[]
-            iters1=[]
-            iters2=[]
 
             # 2.迭代求解两个子域
             for _ in range(self.max_schwarz_iter):
@@ -93,15 +89,11 @@ class MPM_Schwarz:
                 self.Domain1.grid.apply_boundary_conditions()
                 self.Domain2.grid.apply_boundary_conditions()
 
-                iter1=self.Domain1.solve()
-                iter2=self.Domain2.solve()
-
-                iters1.append(iter1)
-                iters2.append(iter2)
+                self.Domain1.solve()
+                self.Domain2.solve()
+                
 
             self.residuals.append(residuals)
-            self.iter_history1.append(iters1)
-            self.iter_history2.append(iters2)
 
             # 3.G2P: 将网格的速度传递回粒子上
             self.Domain1.g2p()
@@ -117,7 +109,6 @@ class MPM_Schwarz:
 if __name__ == "__main__":
     # 读取配置文件
     cfg = Config(path="config/schwarz.json")
-    float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64        
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":
         arch = ti.cuda
@@ -126,7 +117,7 @@ if __name__ == "__main__":
     else:
         arch = ti.cpu
 
-    ti.init(arch=arch, default_fp=float_type, device_memory_GB=20)
+    ti.init(arch=arch)
     
     # 创建Schwarz域分解MPM实例
     mpm = MPM_Schwarz(cfg)
@@ -170,31 +161,11 @@ if __name__ == "__main__":
             break
     
     
-    # 绘制最后5组residuals
+    #绘制最后5组residuals
     for i in range(5):
-        frame = len(mpm.residuals) - i - 1
-        plt.plot(mpm.residuals[-i-1], label=f'frame {frame}')
+        plt.plot(mpm.residuals[-i-1])
     plt.ylabel('Residual')
     plt.xlabel('Iteration')
-    plt.legend()
-    plt.show()
-
-    #iters1
-    for i in range(5):
-        frame = len(mpm.iter_history1) - i - 1
-        plt.plot(mpm.iter_history1[-i-1], label=f'frame {frame}')
-    plt.ylabel('Iterations1')
-    plt.xlabel('Iteration')
-    plt.legend()
-    plt.show()
-
-    #iters2
-    for i in range(5):
-        frame = len(mpm.iter_history2) - i - 1
-        plt.plot(mpm.iter_history2[-i-1], label=f'frame {frame}')
-    plt.ylabel('Iterations2')
-    plt.xlabel('Iteration')
-    plt.legend()
     plt.show()
 
     if mpm.recorder is None:
