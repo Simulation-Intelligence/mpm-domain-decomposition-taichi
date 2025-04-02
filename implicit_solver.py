@@ -49,14 +49,14 @@ class ImplicitSolver:
         elif solver_type == "LBFGS":
             self.optimizer = LBFGS(self.grad_fn, grid.size**grid.dim * grid.dim, eta=eta,float_type=self.float_type)
         elif solver_type == "Newton":
-            self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, dim=grid.size**grid.dim * grid.dim,grad_normalizer=self.dt*self.particles.area*self.particles.p_rho,eta= eta,float_type=self.float_type)
+            self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=self.set_hess_DBC,dim=grid.size**grid.dim * grid.dim,grad_normalizer=self.dt*self.particles.p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
     def solve(self):
         self.save_previous_velocity()
+        self.grid.set_boundary_v()
         self.set_initial_guess()
         iter=self.optimizer.minimize(self.solve_max_iter, self.solve_init_iter)
         self.iter_history.append(iter)
         self.update_velocity()
-        self.grid.set_boundary_v()
         return iter
 
     
@@ -171,11 +171,11 @@ class ImplicitSolver:
                 h2=self.mu * FWWF 
                 h3=self.lam * (1-ti.log(J)) * FWWF
                 hessian=(h1+h2+h3)*self.particles.p_vol
-                # U ,sig, V = ti.svd(hessian)
-                # for i in ti.static(range(self.grid.dim)):
-                #     if sig[i,i] < 0:
-                #         sig[i,i] = 0
-                # hessian = U @ sig @ V.transpose()
+                U ,sig, V = ti.svd(hessian)
+                for i in ti.static(range(self.grid.dim)):
+                    if sig[i,i] < 0:
+                        sig[i,i] = 0
+                hessian = U @ sig @ V.transpose()
 
                 grid_idx = (base + offset) % self.grid.size
                 vidx = grid_idx.x * self.grid.size * 2 + grid_idx.y * 2
@@ -265,6 +265,15 @@ class ImplicitSolver:
 
         self.manual_particle_energy_hess(v_flat, hess)
         self.manual_grid_energy_hess(hess)
+
+    def set_hess_DBC(self, hess):
+        num_rows = self.grid.size**self.grid.dim * self.grid.dim
+        hess1=ti.linalg.SparseMatrixBuilder(num_rows, num_rows, max_num_triplets=(num_rows)**2, dtype=self.float_type)
+        hess2=ti.linalg.SparseMatrixBuilder(num_rows, num_rows, max_num_triplets=num_rows, dtype=self.float_type)
+        self.grid.get_boundary_hess(hess1,hess2)
+        H1=hess1.build()
+        H2=hess2.build()
+        hess= hess * H1 + H2
 
 
     def save_previous_velocity(self):

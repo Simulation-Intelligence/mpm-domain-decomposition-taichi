@@ -102,7 +102,8 @@ class ImplicitMPM:
                 dpos = (offset - fx) * self.grid.dx
                 self.grid.m[grid_idx] += self.particles.wip[p,offset] * self.particles.p_mass
                 self.grid.v[grid_idx] += self.particles.wip[p,offset] * self.particles.p_mass * (self.particles.v[p] + self.particles.C[p] @ dpos)
-                self.grid.is_particle_boundary_grid[grid_idx] = self.particles.is_boundary_particle[p]
+                if self.particles.is_boundary_particle[p]:
+                    self.grid.is_particle_boundary_grid[grid_idx] = 1
 
         
         for i, j in ti.ndrange(self.grid.size, self.grid.size):

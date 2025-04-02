@@ -5,11 +5,12 @@ import matplotlib.pyplot as plt
 
 @ti.data_oriented
 class Newton:
-    def __init__(self, energy_fn, grad_fn, hess_fn, dim=3, alpha=0, beta=0.6, eta=1e-2, grad_normalizer=1.0,float_type=ti.f32):
+    def __init__(self, energy_fn, grad_fn, hess_fn, DBC_fn=None,dim=3, alpha=0.5, beta=0.6, eta=1e-3, grad_normalizer=1.0,float_type=ti.f32):
         self.dim = dim
         self.energy_fn = energy_fn
         self.grad_fn = grad_fn
         self.hess_fn = hess_fn
+        self.DBC_fn = DBC_fn
         self.alpha = alpha
         self.beta = beta
         self.eta = eta
@@ -56,7 +57,7 @@ class Newton:
             for i in range(self.dim):
                 self.temp_x[i] = self.x[i] + a * d[i]
 
-        while True:
+        while alpha > 1e-6:
             update_temp(alpha,self.d)
             f_new = self.energy_fn(self.temp_x)
             if f_new <= self.f0+ self.alpha  * alpha * g0:
@@ -78,7 +79,7 @@ class Newton:
         for it in range(max_iter):
             # 计算当前能量和梯度
             self.f0 = self.grad_fn(self.x, self.grad)
-            print(f"Iteration {it}, Energy: {self.f0:.6f}")
+            print(f"Iteration {it}, Energy: {self.f0:.4e}")
 
             # 检查收敛
             @ti.kernel
@@ -89,21 +90,19 @@ class Newton:
                 return n
             
             g_norm = grad_inf_norm() / self.grad_normalizer
-            print(f"Grad norm: {g_norm:.6f}")
+            print(f"Grad norm: {g_norm:.4e}")
             if g_norm < self.eta:
-                print(f"Converged at iteration {it}")
+                print(f"Newton Converged at iteration {it}")
                 break
 
             # 构建Hessian矩阵
-            H_builder = ti.linalg.SparseMatrixBuilder(self.dim, self.dim,max_num_triplets=self.dim*20,dtype=self.float_type)
+            H_builder = ti.linalg.SparseMatrixBuilder(self.dim, self.dim,max_num_triplets=self.dim**2,dtype=self.float_type)
             self.hess_fn(self.x, H_builder)
-
-            # 正定化
             H = H_builder.build()
 
+            if self.DBC_fn is not None:
+                self.DBC_fn(H)
 
-
-            # H=H+self.h_eps
 
             # 构建右端项
             b = ti.ndarray(self.float_type,self.dim)
@@ -129,13 +128,6 @@ class Newton:
                 self.d = b
                 print("Solver failed, resetting to gradient descent")
 
-            #去除nan
-            # @ti.kernel
-            # def remove_nan(d:ti.types.ndarray()):
-            #     for i in range(self.dim):
-            #         if d[i] != d[i]:
-            #             d[i] = 0
-            # remove_nan(self.d)
             # 线搜索
             alpha = self.line_search()
             print(f"Step size: {alpha:.4f}")
@@ -157,7 +149,7 @@ class Newton:
 if __name__ == "__main__":
     float_type = ti.f64
     ti.init(arch=ti.cpu, default_fp=float_type, device_memory_GB=20)
-    dim =300000
+    dim =30000
 
     @ti.kernel
     def quadratic_energy(x: ti.template()) -> float_type:
