@@ -86,6 +86,9 @@ class ImplicitMPM:
 
             self.grid.apply_boundary_conditions()
 
+            if self.implicit:
+                self.solver.save_previous_velocity()
+                
             self.solve()
             
             self.g2p()

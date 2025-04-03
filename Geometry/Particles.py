@@ -7,11 +7,32 @@ import taichi as ti
 class Particles:
     def __init__(self, config):
         self.dim = config.get("dim", 2)
-        self.init_pos_range = config.get("initial_position_range", [[0.3, 0.6], [0.3, 0.6]])
-        self.area = (self.init_pos_range[0][1]-self.init_pos_range[0][0]) * (self.init_pos_range[1][1]-self.init_pos_range[1][0])
+        init_pos_range = config.get("initial_position_range", [[[0.3, 0.6], [0.3, 0.6]]])
+        self.num_areas = len(init_pos_range)
+        self.init_pos_range = ti.Vector.field(2, ti.f32, shape=(self.num_areas, self.dim))
+
+        for i in ti.static(range(self.num_areas)):
+            for d in ti.static(range(self.dim)):
+                self.init_pos_range[i, d] = ti.Vector(init_pos_range[i][d])
+        
+        # 面积计算也需要在Taichi字段上进行
+        self.areas = ti.field(ti.f32, self.num_areas)
+        for i in ti.static(range(self.num_areas)):
+            area = 1.0
+            for d in ti.static(range(self.dim)):
+                min_val = self.init_pos_range[i, d][0]
+                max_val = self.init_pos_range[i, d][1]
+                area *= (max_val - min_val)
+            self.areas[i] = area
+            
         self.particles_per_grid = config.get("particles_per_grid", 8)
         self.grid_size = config.get("grid_size", 16)
-        self.n_particles = (int)(self.grid_size**self.dim * self.area * self.particles_per_grid)
+        self.n_per_area = ti.field(ti.i32, shape=self.num_areas)
+        self.n_particles = 0
+        for i in range(self.num_areas):
+            n = int(self.grid_size**self.dim * self.areas[i] * self.particles_per_grid)
+            self.n_per_area[i] = n
+            self.n_particles += n
         self.p_rho = config.get("p_rho", 1)
         self.p_vol = (1.0/self.grid_size)**self.dim / self.particles_per_grid
         self.p_mass = self.p_vol * self.p_rho
@@ -34,22 +55,30 @@ class Particles:
         self.init_vel_y = config.get("initial_velocity_y", -1)
 
         self.is_boundary_particle = ti.field(ti.i32, self.n_particles)
+    
+    def initialize(self):
+        start_num=0
+        for i in range(self.num_areas):
+            self.initialize_area(i, start_num)
+            start_num += self.n_per_area[i]
 
     @ti.kernel
-    def initialize(self):
-        for p in range(self.n_particles):
+    def initialize_area(self,i:ti.i32,start_num:ti.i32):
+        for p in range(self.n_per_area[i]):
             pos = ti.Vector.zero(self.float_type, self.dim)
             for d in ti.static(range(self.dim)):
-                pos[d] = ti.random() * (self.init_pos_range[d][1]-self.init_pos_range[d][0]) + self.init_pos_range[d][0]
-                # test if the particle is in the boundary
-                # if d==1:
-                if pos[d] < self.init_pos_range[d][0]+self.boundary_size or pos[d] > self.init_pos_range[d][1] - self.boundary_size:
-                    self.is_boundary_particle[p] = 1
-            self.x[p] = pos
-            self.v[p] = ti.Vector.zero(self.float_type, self.dim)
-            self.v[p][1] = self.init_vel_y
-            self.F[p] = ti.Matrix.identity(self.float_type, self.dim)
-            self.C[p] = ti.Matrix.zero(self.float_type, self.dim, self.dim)
+                # 从Taichi字段获取范围值
+                min_val = self.init_pos_range[i, d][0]
+                max_val = self.init_pos_range[i, d][1]
+                pos[d] = ti.random() * (max_val - min_val) + min_val
+                # 边界判断
+                if pos[d] < min_val + self.boundary_size or pos[d] > max_val - self.boundary_size:
+                    self.is_boundary_particle[start_num + p] = 1
+            self.x[start_num+p] = pos
+            self.v[start_num+p] = ti.Vector.zero(self.float_type, self.dim)
+            self.v[start_num+p][1] = self.init_vel_y
+            self.F[start_num+p] = ti.Matrix.identity(self.float_type, self.dim)
+            self.C[start_num+p] = ti.Matrix.zero(self.float_type, self.dim, self.dim)
 
     @ti.kernel
     def build_neighbor_list(self):

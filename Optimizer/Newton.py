@@ -130,7 +130,7 @@ class Newton:
 
             # 线搜索
             alpha = self.line_search()
-            print(f"Step size: {alpha:.4f}")
+            print(f"Step size: {alpha:.4e}")
 
             # 更新参数
             @ti.kernel

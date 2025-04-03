@@ -77,10 +77,14 @@ class MPM_Schwarz:
             self.Domain1.p2g()
             self.Domain2.p2g()
 
+            self.Domain1.solver.save_previous_velocity()
+            self.Domain2.solver.save_previous_velocity()
+
             residuals=[]
 
             # 2.迭代求解两个子域
-            for _ in range(self.max_schwarz_iter):
+            for i in range(self.max_schwarz_iter):
+                print(f"Schwarz Iteration {i}/{self.max_schwarz_iter}")
 
                 residuals.append(self.check_grid_v_residual())
             

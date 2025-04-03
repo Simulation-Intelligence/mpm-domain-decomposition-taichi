@@ -51,7 +51,6 @@ class ImplicitSolver:
         elif solver_type == "Newton":
             self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=self.set_hess_DBC,dim=grid.size**grid.dim * grid.dim,grad_normalizer=self.dt*self.particles.p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
     def solve(self):
-        self.save_previous_velocity()
         self.grid.set_boundary_v()
         self.set_initial_guess()
         iter=self.optimizer.minimize(self.solve_max_iter, self.solve_init_iter)
