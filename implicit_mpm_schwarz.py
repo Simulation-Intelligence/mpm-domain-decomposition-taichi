@@ -34,6 +34,8 @@ class MPM_Schwarz:
             ], dtype=np.uint32),
             max_frames=main_config.get("record_frames", 60)
         )
+        
+        self.use_mass_boundary = main_config.get("use_mass_boundary", False)
             
         self.residuals = []
 
@@ -43,12 +45,20 @@ class MPM_Schwarz:
         设置边界条件
         """
         for I in ti.grouped(self.Domain1.grid.v):
-            if self.Domain1.grid.is_particle_boundary_grid[I] and self.Domain2.grid.m[I] > 0:
+            Domian1_set_boundary = self.Domain1.grid.is_particle_boundary_grid[I] and self.Domain2.grid.m[I] > 0
+            Domian2_set_boundary = self.Domain2.grid.is_particle_boundary_grid[I] and self.Domain1.grid.m[I] > 0
+            if self.use_mass_boundary:
+                Domian1_set_boundary = Domian1_set_boundary and self.Domain1.grid.m[I] <self.Domain2.grid.m[I]
+                Domian2_set_boundary = Domian2_set_boundary and self.Domain2.grid.m[I] <self.Domain1.grid.m[I]
+            else: 
+                Domian1_set_boundary = Domian1_set_boundary and not self.Domain2.grid.is_particle_boundary_grid[I]
+                Domian2_set_boundary = Domian2_set_boundary and not self.Domain1.grid.is_particle_boundary_grid[I]
+
+            if Domian1_set_boundary:
                 self.Domain1.grid.is_boundary_grid[I] = [1]*self.Domain1.grid.dim
                 self.Domain1.grid.boundary_v[I] = self.Domain2.grid.v[I]
 
-        for I in ti.grouped(self.Domain2.grid.v):
-            if self.Domain2.grid.is_particle_boundary_grid[I] and self.Domain1.grid.m[I] > 0:
+            if Domian2_set_boundary:
                 self.Domain2.grid.is_boundary_grid[I] = [1]*self.Domain2.grid.dim
                 self.Domain2.grid.boundary_v[I] = self.Domain1.grid.v[I]
 
@@ -82,6 +92,9 @@ class MPM_Schwarz:
 
             residuals=[]
 
+            self.Domain1.grid.apply_boundary_conditions()
+            self.Domain2.grid.apply_boundary_conditions()
+
             # 2.迭代求解两个子域
             for i in range(self.max_schwarz_iter):
                 print(f"Schwarz Iteration {i}/{self.max_schwarz_iter}")
@@ -89,9 +102,6 @@ class MPM_Schwarz:
                 residuals.append(self.check_grid_v_residual())
             
                 self.exchange_boundary_conditions()
-
-                self.Domain1.grid.apply_boundary_conditions()
-                self.Domain2.grid.apply_boundary_conditions()
 
                 self.Domain1.solve()
                 self.Domain2.solve()

@@ -1,14 +1,15 @@
 {
-    "max_schwarz_iter": 10,
+    "max_schwarz_iter": 2,
     "record_frames": 80,
     "steps": 1,
     "arch": "cpu",
     "float_type": "f64",
+    "use_mass_boundary": true,
     "Domain1": {
         "arch": "cpu",
         "float_type": "f64",
         "grid_size": 48,
-        "particles_per_grid": 12,
+        "particles_per_grid": 24,
         "dt": 1e-3,
         "max_iter": 1,
         "solve_max_iter": 1000,
@@ -35,7 +36,7 @@
             ]
         ],
         "implicit_solver": "Newton",
-        "eta": 1e-4
+        "eta": 1e-2
     },
     "Domain2": {
         "arch": "cpu",
@@ -68,6 +69,6 @@
             ]
         ],
         "implicit_solver": "Newton",
-        "eta": 1e-4
+        "eta": 1e-2
     }
 }

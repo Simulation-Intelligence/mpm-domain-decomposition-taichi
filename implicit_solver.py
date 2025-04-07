@@ -170,6 +170,7 @@ class ImplicitSolver:
                 h2=self.mu * FWWF 
                 h3=self.lam * (1-ti.log(J)) * FWWF
                 hessian=(h1+h2+h3)*self.particles.p_vol
+                
                 U ,sig, V = ti.svd(hessian)
                 for i in ti.static(range(self.grid.dim)):
                     if sig[i,i] < 0:
