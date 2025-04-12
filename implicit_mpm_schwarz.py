@@ -61,6 +61,16 @@ class MPM_Schwarz:
             if Domian2_set_boundary:
                 self.Domain2.grid.is_boundary_grid[I] = [1]*self.Domain2.grid.dim
                 self.Domain2.grid.boundary_v[I] = self.Domain1.grid.v[I]
+    
+    @ti.kernel
+    def apply_average_grid_v(self):
+        """
+        将网格速度平均到粒子上
+        """
+        for I in ti.grouped(self.Domain1.grid.v):
+            if self.Domain1.grid.m[I] > 0 and self.Domain2.grid.m[I] > 0:
+                self.Domain1.grid.v[I] = (self.Domain1.grid.v[I] + self.Domain2.grid.v[I]) / 2.0
+                self.Domain2.grid.v[I] = self.Domain1.grid.v[I]
 
     @ti.kernel
     def check_grid_v_residual(self) -> ti.f32:
@@ -106,6 +116,7 @@ class MPM_Schwarz:
                 self.Domain1.solve()
                 self.Domain2.solve()
                 
+            self.apply_average_grid_v()
 
             self.residuals.append(residuals)
 
@@ -176,8 +187,8 @@ if __name__ == "__main__":
             break
     
     
-    #绘制最后5组residuals
-    for i in range(5):
+    #绘制最后1组residuals
+    for i in range(1):
         plt.plot(mpm.residuals[-i-1])
     plt.ylabel('Residual')
     plt.xlabel('Iteration')

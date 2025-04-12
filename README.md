@@ -2,7 +2,14 @@
 taichi==1.7.3
 
 ## How to run ##
-edit config.json to set parameters
+edit config/config.json to set parameters
+
+run MPM with the following command:
 ```
-python implicit_mpm_auto_grad.py
+python implicit_mpm.py
+```
+
+run schwarz mpm with the following command:
+```
+python implicit_mpm_schwarz.py
 ```

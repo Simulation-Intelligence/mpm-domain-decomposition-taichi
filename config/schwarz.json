@@ -1,6 +1,6 @@
 {
-    "max_schwarz_iter": 2,
-    "record_frames": 80,
+    "max_schwarz_iter": 100,
+    "record_frames": 60,
     "steps": 1,
     "arch": "cpu",
     "float_type": "f64",
