@@ -52,6 +52,8 @@ class ImplicitMPM:
         )
         self.particles.initialize()
 
+        self.gui= ti.GUI("Implicit MPM", res=800)
+
     def solve(self):
         if self.implicit:
             return self.solver.solve()
@@ -153,6 +155,19 @@ class ImplicitMPM:
                 grid_idx = base + offset
                 self.grid.v[grid_idx] +=4* self.dt * stress @ self.particles.dwip[p,offset] / self.grid.m[grid_idx] 
 
+    def render(self):
+        self.gui.circles(self.particles.x.to_numpy(), radius=1.5, color=0x66CCFF)
+        self.gui.show()
+
+        if self.recorder is None:
+            return
+
+        print("Recording frame: ", len(self.recorder.frame_data) + 1)
+        self.recorder.capture(
+            self.particles.x.to_numpy(),
+            self.particles.is_boundary_particle.to_numpy().astype(np.uint32)
+        )
+
 # 使用示例
 if __name__ == "__main__":
 
@@ -168,21 +183,11 @@ if __name__ == "__main__":
 
     ti.init(arch=arch, default_fp=float_type, device_memory_GB=20)
     mpm = ImplicitMPM(cfg)
-    gui = ti.GUI("Implicit MPM", res=800)
     
-    while gui.running:
+    while mpm.gui.running:
         mpm.step()
-        gui.circles(mpm.particles.x.to_numpy(), radius=1.5, color=0x66CCFF)
-        gui.show()
-
-        if mpm.recorder is None:
-            continue
-
-        print("Recording frame: ", len(mpm.recorder.frame_data) + 1)
-        mpm.recorder.capture(
-            mpm.particles.x.to_numpy(),
-            mpm.particles.is_boundary_particle.to_numpy().astype(np.uint32)
-        )
+        
+        mpm.render()
 
         # 自动停止条件
         if len(mpm.recorder.frame_data) >= mpm.recorder.max_frames:

@@ -2,7 +2,7 @@
     "arch": "cpu",
     "float_type": "f64",
     "grid_size": 32,
-    "particles_per_grid": 8,
+    "particles_per_grid": 24,
     "dt": 1e-3,
     "max_iter": 1,
     "solve_max_iter": 1000,

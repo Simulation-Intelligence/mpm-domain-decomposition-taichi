@@ -39,6 +39,8 @@ class MPM_Schwarz:
             
         self.residuals = []
 
+        self.gui=ti.GUI("Implicit MPM Schwarz", res=800)
+
     @ti.kernel
     def exchange_boundary_conditions(self):
         """
@@ -81,9 +83,11 @@ class MPM_Schwarz:
         cnt = 0
         for I in ti.grouped(self.Domain1.grid.v):
             if self.Domain1.grid.m[I] > 0 and self.Domain2.grid.m[I] > 0:
-                residual += (self.Domain1.grid.v[I]-self.Domain2.grid.v[I]).norm()
-                cnt += 1
+                ti.atomic_add(residual,(self.Domain1.grid.v[I]-self.Domain2.grid.v[I]).norm())
+                ti.atomic_add(cnt, 1)
+
         return residual / cnt
+    
     
     def step(self):
         for _ in range(self.steps):
@@ -128,6 +132,37 @@ class MPM_Schwarz:
             self.Domain1.particles.advect(self.Domain1.dt)
             self.Domain2.particles.advect(self.Domain2.dt)
 
+    def render(self):
+        self.gui.circles(self.Domain1.particles.x.to_numpy(), radius=1.5, color=0x068587)
+        self.gui.circles(self.Domain2.particles.x.to_numpy(), radius=1.5, color=0xED553B)
+
+        #绘制边界粒子
+        self.gui.circles(self.Domain1.particles.x.to_numpy()[self.Domain1.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
+        self.gui.circles(self.Domain2.particles.x.to_numpy()[self.Domain2.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
+        self.gui.show()
+        # 合并两域粒子数据
+        if self.recorder is None:
+            return
+        print("Frame", len(self.recorder.frame_data))
+        all_pos = np.concatenate([
+            self.Domain1.particles.x.to_numpy(),
+            self.Domain2.particles.x.to_numpy()
+        ])
+        
+        # 生成颜色索引 (0:域1普通, 1:域2普通, 2:边界)
+        d1_colors = np.where(
+            self.Domain1.particles.is_boundary_particle.to_numpy(),
+            2, 0
+        )
+        d2_colors = np.where(
+            self.Domain2.particles.is_boundary_particle.to_numpy(),
+            2, 1
+        )
+        all_colors = np.concatenate([d1_colors, d2_colors]).astype(np.uint32)
+        
+        # 捕获帧
+        self.recorder.capture(all_pos, all_colors)
+
 
 
 # ------------------ 主程序 ------------------
@@ -147,40 +182,11 @@ if __name__ == "__main__":
     
     # 创建Schwarz域分解MPM实例
     mpm = MPM_Schwarz(cfg)
-
-    gui = ti.GUI("Implicit MPM", res=800)
     
-    while gui.running:
+    while mpm.gui.running:
         mpm.step()
-        gui.circles(mpm.Domain1.particles.x.to_numpy(), radius=1.5, color=0x068587)
-        gui.circles(mpm.Domain2.particles.x.to_numpy(), radius=1.5, color=0xED553B)
-
-        #绘制边界粒子
-        gui.circles(mpm.Domain1.particles.x.to_numpy()[mpm.Domain1.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
-        gui.circles(mpm.Domain2.particles.x.to_numpy()[mpm.Domain2.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
-        gui.show()
-        # 合并两域粒子数据
-        if mpm.recorder is None:
-            continue
-        print("Frame", len(mpm.recorder.frame_data))
-        all_pos = np.concatenate([
-            mpm.Domain1.particles.x.to_numpy(),
-            mpm.Domain2.particles.x.to_numpy()
-        ])
         
-        # 生成颜色索引 (0:域1普通, 1:域2普通, 2:边界)
-        d1_colors = np.where(
-            mpm.Domain1.particles.is_boundary_particle.to_numpy(),
-            2, 0
-        )
-        d2_colors = np.where(
-            mpm.Domain2.particles.is_boundary_particle.to_numpy(),
-            2, 1
-        )
-        all_colors = np.concatenate([d1_colors, d2_colors]).astype(np.uint32)
-        
-        # 捕获帧
-        mpm.recorder.capture(all_pos, all_colors)
+        mpm.render()
         
         # 自动停止条件
         if len(mpm.recorder.frame_data) >= mpm.recorder.max_frames:
