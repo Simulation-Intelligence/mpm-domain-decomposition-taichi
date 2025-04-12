@@ -192,6 +192,8 @@ if __name__ == "__main__":
         plt.plot(mpm.residuals[-i-1])
     plt.ylabel('Residual')
     plt.xlabel('Iteration')
+    # plt.xscale('log')  # X轴对数化
+    plt.yscale('log')  # Y轴对数化
     plt.show()
 
     if mpm.recorder is None:

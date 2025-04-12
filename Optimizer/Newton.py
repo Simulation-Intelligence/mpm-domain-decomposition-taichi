@@ -114,17 +114,11 @@ class Newton:
 
             # 求解线性系统
             solver = ti.linalg.SparseSolver(solver_type="LDLT",dtype=self.float_type)
-            # solver = ti.linalg.SparseCG(H, b)
             try:
                 solver.analyze_pattern(H)
                 solver.factorize(H)
                 self.d = solver.solve(b)
-                # self.d, _= solver.solve()
             except RuntimeError:
-                # H=H+self.h_eps
-                # solver.analyze_pattern(H)
-                # solver.factorize(H)
-                #self.d = solver.solve(b)
                 self.d = b
                 print("Solver failed, resetting to gradient descent")
 

@@ -1,5 +1,6 @@
 import taichi as ti
-
+from Util.poisson_disk_sampling import poisson_disk_sampling_by_count
+import numpy as np
 
 
 # ------------------ 粒子模块 ------------------
@@ -15,7 +16,6 @@ class Particles:
             for d in ti.static(range(self.dim)):
                 self.init_pos_range[i, d] = ti.Vector(init_pos_range[i][d])
         
-        # 面积计算也需要在Taichi字段上进行
         self.areas = ti.field(ti.f32, self.num_areas)
         for i in ti.static(range(self.num_areas)):
             area = 1.0
@@ -24,6 +24,8 @@ class Particles:
                 max_val = self.init_pos_range[i, d][1]
                 area *= (max_val - min_val)
             self.areas[i] = area
+
+        max_n_per_area = 0
             
         self.particles_per_grid = config.get("particles_per_grid", 8)
         self.grid_size = config.get("grid_size", 16)
@@ -32,7 +34,10 @@ class Particles:
         for i in range(self.num_areas):
             n = int(self.grid_size**self.dim * self.areas[i] * self.particles_per_grid)
             self.n_per_area[i] = n
+            if n > max_n_per_area:
+                max_n_per_area = n
             self.n_particles += n
+        self.pos_possion = ti.Vector.field(self.dim, ti.f32, shape=max_n_per_area)
         self.p_rho = config.get("p_rho", 1)
         self.p_vol = (1.0/self.grid_size)**self.dim / self.particles_per_grid
         self.p_mass = self.p_vol * self.p_rho
@@ -59,6 +64,9 @@ class Particles:
     def initialize(self):
         start_num=0
         for i in range(self.num_areas):
+
+            points_np=poisson_disk_sampling_by_count(self.init_pos_range[i,0][1]-self.init_pos_range[i,0][0],self.init_pos_range[i,1][1]-self.init_pos_range[i,1][0], self.n_per_area[i])
+            self.pos_possion.from_numpy(np.array(points_np))
             self.initialize_area(i, start_num)
             start_num += self.n_per_area[i]
 
@@ -67,10 +75,10 @@ class Particles:
         for p in range(self.n_per_area[i]):
             pos = ti.Vector.zero(self.float_type, self.dim)
             for d in ti.static(range(self.dim)):
-                # 从Taichi字段获取范围值
                 min_val = self.init_pos_range[i, d][0]
                 max_val = self.init_pos_range[i, d][1]
-                pos[d] = ti.random() * (max_val - min_val) + min_val
+                #从泊松盘采样中获取位置
+                pos[d]=self.pos_possion[p][d] + min_val
                 # 边界判断
                 if pos[d] < min_val + self.boundary_size or pos[d] > max_val - self.boundary_size:
                     self.is_boundary_particle[start_num + p] = 1
