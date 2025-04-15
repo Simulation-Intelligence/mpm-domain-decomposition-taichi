@@ -14,7 +14,7 @@ from Util.Recorder import *
 # ------------------ 主模拟器 ------------------
 @ti.data_oriented
 class ImplicitMPM:
-    def __init__(self, config:Config):
+    def __init__(self, config:Config,common_particles:Particles=None):
         self.cfg = config
 
         self.float_type = ti.f32 if config.get("float_type", "f32") == "f32" else ti.f64
@@ -25,7 +25,7 @@ class ImplicitMPM:
             bound=self.cfg.get("bound", 2),
             float_type=self.float_type
         )
-        self.particles = Particles(self.cfg)
+        self.particles = Particles(self.cfg,common_particles=common_particles)
         self.implicit = self.cfg.get("implicit", True)
         self.max_iter = self.cfg.get("max_iter", 1)
         self.dt = self.cfg.get("dt", 2e-3)
@@ -50,7 +50,6 @@ class ImplicitMPM:
             ], dtype=np.uint32),
             max_frames=config.get("record_frames", 60)
         )
-        self.particles.initialize()
 
         self.gui= ti.GUI("Implicit MPM", res=800)
 

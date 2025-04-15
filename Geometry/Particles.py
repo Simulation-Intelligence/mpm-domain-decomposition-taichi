@@ -6,16 +6,22 @@ import numpy as np
 # ------------------ 粒子模块 ------------------
 @ti.data_oriented
 class Particles:
-    def __init__(self, config):
+    def __init__(self, config,common_particles:'Particles'=None):
         self.dim = config.get("dim", 2)
         init_pos_range = config.get("initial_position_range", [[[0.3, 0.6], [0.3, 0.6]]])
+        boundary_range = config.get("boundary_range", None)
         self.num_areas = len(init_pos_range)
         self.init_pos_range = ti.Vector.field(2, ti.f32, shape=(self.num_areas, self.dim))
+        self.boundary_range = ti.Vector.field(2, ti.f32, shape=(self.dim))
 
         for i in ti.static(range(self.num_areas)):
             for d in ti.static(range(self.dim)):
                 self.init_pos_range[i, d] = ti.Vector(init_pos_range[i][d])
-        
+
+        if boundary_range is not None:
+            for d in ti.static(range(self.dim)):
+                self.boundary_range[d] = ti.Vector(boundary_range[d])
+
         self.areas = ti.field(ti.f32, self.num_areas)
         for i in ti.static(range(self.num_areas)):
             area = 1.0
@@ -37,6 +43,13 @@ class Particles:
             if n > max_n_per_area:
                 max_n_per_area = n
             self.n_particles += n
+
+        self.common_particles = None
+
+        if common_particles is not None:
+            self.n_particles += common_particles.n_particles
+            self.common_particles = common_particles
+
         self.pos_possion = ti.Vector.field(self.dim, ti.f32, shape=max_n_per_area)
         self.p_rho = config.get("p_rho", 1)
         self.p_vol = (1.0/self.grid_size)**self.dim / self.particles_per_grid
@@ -60,18 +73,29 @@ class Particles:
         self.init_vel_y = config.get("initial_velocity_y", -1)
 
         self.is_boundary_particle = ti.field(ti.i32, self.n_particles)
+
+        self.initialize()
+
+        if boundary_range is not None:
+            self.set_boundary()
     
     def initialize(self):
         start_num=0
         for i in range(self.num_areas):
-
             points_np=poisson_disk_sampling_by_count(self.init_pos_range[i,0][1]-self.init_pos_range[i,0][0],self.init_pos_range[i,1][1]-self.init_pos_range[i,1][0], self.n_per_area[i])
             self.pos_possion.from_numpy(np.array(points_np))
             self.initialize_area(i, start_num)
             start_num += self.n_per_area[i]
+        
+        if self.common_particles is not None:
+            self.merge_common_particles(start_num)
+            start_num += self.common_particles.n_particles
+        
+
 
     @ti.kernel
     def initialize_area(self,i:ti.i32,start_num:ti.i32):
+
         for p in range(self.n_per_area[i]):
             pos = ti.Vector.zero(self.float_type, self.dim)
             for d in ti.static(range(self.dim)):
@@ -80,13 +104,31 @@ class Particles:
                 #从泊松盘采样中获取位置
                 pos[d]=self.pos_possion[p][d] + min_val
                 # 边界判断
-                if pos[d] < min_val + self.boundary_size or pos[d] > max_val - self.boundary_size:
-                    self.is_boundary_particle[start_num + p] = 1
+                # if pos[d] < min_val + self.boundary_size or pos[d] > max_val - self.boundary_size:
+                #     self.is_boundary_particle[start_num + p] = 1
             self.x[start_num+p] = pos
             self.v[start_num+p] = ti.Vector.zero(self.float_type, self.dim)
             self.v[start_num+p][1] = self.init_vel_y
             self.F[start_num+p] = ti.Matrix.identity(self.float_type, self.dim)
             self.C[start_num+p] = ti.Matrix.zero(self.float_type, self.dim, self.dim)
+
+    @ti.kernel
+    def merge_common_particles(self,start_num:ti.i32):
+        for p in range(self.common_particles.n_particles):
+            self.x[start_num + p] = self.common_particles.x[p]
+            self.v[start_num + p] = self.common_particles.v[p]
+            self.F[start_num + p] = self.common_particles.F[p]
+            self.C[start_num + p] = self.common_particles.C[p]
+            self.is_boundary_particle[start_num + p] = 1 if self.common_particles.is_boundary_particle[p] else 0
+
+    @ti.kernel
+    def set_boundary(self):
+        for p in range(self.n_particles):
+            for d in ti.static(range(self.dim)):
+                min_val = self.boundary_range[d][0]
+                max_val = self.boundary_range[d][1]
+                if self.x[p][d] < min_val + self.boundary_size or self.x[p][d] > max_val - self.boundary_size:
+                    self.is_boundary_particle[p] = 1
 
     @ti.kernel
     def build_neighbor_list(self):

@@ -16,10 +16,14 @@ class MPM_Schwarz:
         # 提取子域配置并创建独立配置对象
         domain1_config = Config(data=main_config.get("Domain1", {}))
         domain2_config = Config(data=main_config.get("Domain2", {}))
+        common_particles_config = main_config.get("Common_Particles", None)
+
+        # 如果有公共粒子配置，则创建公共粒子实例
+        common_particles = Particles(common_particles_config) if common_particles_config else None
         
         # 初始化两个子域MPM实例
-        self.Domain1 = ImplicitMPM(domain1_config)
-        self.Domain2 = ImplicitMPM(domain2_config)
+        self.Domain1 = ImplicitMPM(domain1_config,common_particles)
+        self.Domain2 = ImplicitMPM(domain2_config,common_particles)
         
         # 其他公共参数初始化
         self.max_schwarz_iter = main_config.get("max_schwarz_iter", 1)  # Schwarz迭代次数
@@ -120,7 +124,7 @@ class MPM_Schwarz:
                 self.Domain1.solve()
                 self.Domain2.solve()
                 
-            self.apply_average_grid_v()
+            # self.apply_average_grid_v()
 
             self.residuals.append(residuals)
 
@@ -198,7 +202,7 @@ if __name__ == "__main__":
         plt.plot(mpm.residuals[-i-1])
     plt.ylabel('Residual')
     plt.xlabel('Iteration')
-    # plt.xscale('log')  # X轴对数化
+    plt.xscale('log')  # X轴对数化
     plt.yscale('log')  # Y轴对数化
     plt.show()
 
