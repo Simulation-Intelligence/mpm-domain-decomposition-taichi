@@ -96,7 +96,7 @@ class Newton:
                 break
 
             # 构建Hessian矩阵
-            H_builder = ti.linalg.SparseMatrixBuilder(self.dim, self.dim,max_num_triplets=self.dim**2,dtype=self.float_type)
+            H_builder = ti.linalg.SparseMatrixBuilder(self.dim, self.dim,max_num_triplets=(int)(self.dim**2 / 10),dtype=self.float_type)
             self.hess_fn(self.x, H_builder)
             H = H_builder.build()
 

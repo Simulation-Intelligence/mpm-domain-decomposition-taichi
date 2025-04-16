@@ -38,7 +38,13 @@ class Grid:
     def apply_boundary_conditions(self):
         for I in ti.grouped(self.v):
             cond = (I < self.bound) | (I > self.size - self.bound)
-            if cond[0] or cond[1]:
+            is_boundary =False
+            
+            for d in ti.static(range(self.dim)):
+                if cond[d]:
+                    is_boundary = True
+
+            if is_boundary:
                 self.is_boundary_grid[I] = cond
                 self.boundary_v[I] = ti.select(cond, 0, self.v[I])
 
@@ -82,6 +88,6 @@ class Grid:
     def clear(self):
         for I in ti.grouped(self.v):
             self.m[I] = 0.0
-            self.v[I] = [0.0, 0.0]
+            self.v[I] = [0.0]*self.dim
             self.is_particle_boundary_grid[I] = 0
             self.is_boundary_grid[I] = [0]*self.dim

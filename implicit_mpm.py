@@ -9,6 +9,8 @@ from Util.Config import Config
 
 from Util.Recorder import *
 
+from Util.Project import project
+
 
 
 # ------------------ 主模拟器 ------------------
@@ -18,10 +20,12 @@ class ImplicitMPM:
         self.cfg = config
 
         self.float_type = ti.f32 if config.get("float_type", "f32") == "f32" else ti.f64
+
+        self.dim = config.get("dim", 2)
     
         self.grid = Grid(
             size=self.cfg.get("grid_size", 16),
-            dim=2,
+            dim=self.dim,
             bound=self.cfg.get("bound", 2),
             float_type=self.float_type
         )
@@ -34,6 +38,8 @@ class ImplicitMPM:
         nu = self.cfg.get("nu", 0.4)
         self.mu = E / (2 * (1 + nu))  # 现在作为实例属性
         self.lam = E * nu / ((1 + nu) * (1 - 2 * nu))
+
+        self.neighbor = (3,) * self.dim
         
         if self.implicit:
             self.solver = ImplicitSolver(self.grid, self.particles, self.cfg)
@@ -61,21 +67,6 @@ class ImplicitMPM:
             self.grid.set_boundary_v()
             return 0
 
-    @ti.kernel
-    def build_neighbor_list(self):
-        for p in range(self.particles.n_particles):
-            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
-            fx = self.particles.x[p] * self.grid.inv_dx - base.cast(float)
-            w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
-            
-            for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
-                weight = 1.0
-                for d in ti.static(range(self.grid.dim)):
-                    weight *= w[offset[d]][d]
-                dpos = (offset - fx) * self.grid.inv_dx
-                self.particles.wip[p, offset] = weight
-                self.particles.dwip[p, offset] = weight * dpos
-
     def pre_p2g(self):
         self.grid.clear()
         self.particles.build_neighbor_list()
@@ -101,7 +92,7 @@ class ImplicitMPM:
             base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
             fx = self.particles.x[p] * self.grid.inv_dx - base.cast(float)
             
-            for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
                 grid_idx = (base + offset) % self.grid.size
                 dpos = (offset - fx) * self.grid.dx
                 self.grid.m[grid_idx] += self.particles.wip[p,offset] * self.particles.p_mass
@@ -109,10 +100,9 @@ class ImplicitMPM:
                 if self.particles.is_boundary_particle[p]:
                     self.grid.is_particle_boundary_grid[grid_idx] = 1
 
-        
-        for i, j in ti.ndrange(self.grid.size, self.grid.size):
-            if self.grid.m[i,j] > 1e-10:
-                self.grid.v[i,j] /= self.grid.m[i,j]
+        for I in ti.grouped(self.grid.m):
+            if self.grid.m[I] > 1e-10:
+                self.grid.v[I] /= self.grid.m[I]
 
     @ti.kernel
     def g2p(self):
@@ -120,10 +110,10 @@ class ImplicitMPM:
             Xp = self.particles.x[p] / self.grid.dx
             base = (Xp - 0.5).cast(int)
 
-            new_v = ti.Vector.zero(self.float_type, 2)
-            new_C = ti.Matrix.zero(self.float_type, 2, 2)
+            new_v = ti.Vector.zero(self.float_type, self.dim)
+            new_C = ti.Matrix.zero(self.float_type, self.dim, self.dim)
             
-            for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
                 grid_idx = base + offset
                 g_v = self.grid.v[grid_idx]
                 new_v += g_v*self.particles.wip[p, offset]
@@ -147,15 +137,20 @@ class ImplicitMPM:
             
             J = self.particles.F[p].determinant()
             logJ = ti.log(J)
-            cauchy = self.mu * (self.particles.F[p] @ self.particles.F[p].transpose()) + ti.Matrix.identity(self.float_type, 2) * (self.lam * logJ - self.mu)
+            cauchy = self.mu * (self.particles.F[p] @ self.particles.F[p].transpose()) + ti.Matrix.identity(self.float_type, self.dim) * (self.lam * logJ - self.mu)
             stress = -(self.particles.p_vol ) * cauchy
 
-            for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
                 grid_idx = base + offset
                 self.grid.v[grid_idx] +=4* self.dt * stress @ self.particles.dwip[p,offset] / self.grid.m[grid_idx] 
 
     def render(self):
-        self.gui.circles(self.particles.x.to_numpy(), radius=1.5, color=0x66CCFF)
+        x_numpy = self.particles.x.to_numpy()
+
+        if self.dim == 3:
+            x_numpy= project(x_numpy)
+
+        self.gui.circles(x_numpy, radius=1.5, color=0x66CCFF)
         self.gui.show()
 
         if self.recorder is None:
@@ -163,14 +158,14 @@ class ImplicitMPM:
 
         print("Recording frame: ", len(self.recorder.frame_data) + 1)
         self.recorder.capture(
-            self.particles.x.to_numpy(),
+            x_numpy,
             self.particles.is_boundary_particle.to_numpy().astype(np.uint32)
         )
 
 # 使用示例
 if __name__ == "__main__":
 
-    cfg=Config("config/config.json")
+    cfg=Config("config/config_2d.json")
     float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64        
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":

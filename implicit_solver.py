@@ -19,6 +19,9 @@ class ImplicitSolver:
 
         self.float_type = ti.f32 if config.get("float_type", ti.f32) == "f32" else ti.f64
 
+        self.dim = config.get("dim", 2)
+        self.neighbor = (3,) * self.dim
+
         self.dt = config.get("dt", 2e-3)
         self.solve_max_iter = config.get("solve_max_iter", 50)
         self.solve_init_iter = config.get("solve_init_iter", 10)
@@ -27,8 +30,8 @@ class ImplicitSolver:
         nu = config.get("nu", 0.4)
         self.mu = E / (2*(1+nu))
         self.lam = E*nu/((1+nu)*(1-2*nu))
-        self.v_grad=ti.field(self.float_type, grid.size**grid.dim * grid.dim,needs_grad=True)
-        self.grad_save=ti.field(self.float_type, grid.size**grid.dim * grid.dim)
+        self.v_grad=ti.field(self.float_type, grid.size**self.dim * self.dim,needs_grad=True)
+        self.grad_save=ti.field(self.float_type, grid.size**self.dim * self.dim)
         self.total_energy = ti.field(self.float_type, shape=(), needs_grad=True)
         self.grad_fn=None
         if config.get("use_auto_diff", True):
@@ -45,11 +48,11 @@ class ImplicitSolver:
 
         eta = config.get("eta", 1)
         if solver_type == "BFGS":
-            self.optimizer = BFGS(energy_fn=self.compute_energy,grad_fn=self.grad_fn, dim=grid.size**grid.dim * grid.dim,grad_normalizer=self.dt*self.particles.p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
+            self.optimizer = BFGS(energy_fn=self.compute_energy,grad_fn=self.grad_fn, dim=grid.size**self.dim * self.dim,grad_normalizer=self.dt*self.particles.p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
         elif solver_type == "LBFGS":
-            self.optimizer = LBFGS(self.grad_fn, grid.size**grid.dim * grid.dim, eta=eta,float_type=self.float_type)
+            self.optimizer = LBFGS(self.grad_fn, grid.size**self.dim * self.dim, eta=eta,float_type=self.float_type)
         elif solver_type == "Newton":
-            self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=self.set_hess_DBC,dim=grid.size**grid.dim * grid.dim,grad_normalizer=self.dt*self.particles.p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
+            self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=self.set_hess_DBC,dim=grid.size**self.dim * self.dim,grad_normalizer=self.dt*self.particles.p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
     def solve(self):
         self.grid.set_boundary_v()
         self.set_initial_guess()
@@ -58,25 +61,43 @@ class ImplicitSolver:
         self.update_velocity()
         return iter
 
+    @ti.func
+    def get_idx(self, I):
+        idx = 0
+        for d in ti.static(range(self.dim)):
+            idx += I[d] * self.grid.size ** (self.dim-1-d) *self.dim
+        return idx
+    
+    @ti.func
+    def get_vel(self,v_flat,vidx):
+        vel = ti.Vector.zero(self.float_type, self.dim)
+        for d in ti.static(range(self.dim)):
+            vel[d] = v_flat[vidx+d]
+        return vel
+    
+    @ti.func
+    def cal_vel_grad(self,v_flat,p):
+        vel_grad = ti.Matrix.zero(self.float_type, self.dim, self.dim)
+        base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
+        for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
+            grid_idx = (base + offset) % self.grid.size
+            vidx = self.get_idx(grid_idx)
+            vel = self.get_vel(v_flat,vidx)
+            vel_grad += 4 * self.dt * vel.outer_product(self.particles.dwip[p, offset])
+        return vel_grad
+        
     
     @ti.kernel
     def compute_particle_energy(self, v_flat: ti.template()):
         for p in range(self.particles.n_particles):
-            vel_grad = ti.Matrix.zero(self.float_type, 2, 2)
-            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
-            for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
-                grid_idx = (base + offset) % self.grid.size
-                vidx = grid_idx.x * self.grid.size * 2 + grid_idx.y * 2
-                vel = ti.Vector([v_flat[vidx], v_flat[vidx+1]])
-                vel_grad_= 4 * self.dt * vel.outer_product(self.particles.dwip[p, offset])
-                vel_grad += vel_grad_
+            vel_grad = self.cal_vel_grad(v_flat,p)
 
             F = self.particles.F[p]
-            new_F = (ti.Matrix.identity(self.float_type, self.grid.dim) + vel_grad) @ F
+            new_F = (ti.Matrix.identity(self.float_type, self.dim) + vel_grad) @ F
             J = new_F.determinant()
             logJ = ti.log(J)
 
-            e1=0.5*self.mu*(new_F.norm_sqr() - self.grid.dim)
+            e1=0.5*self.mu*(new_F.norm_sqr() - self.dim)
             e2=-self.mu*logJ
             e3=0.5*self.lam*(logJ**2)
             energy = e1 + e2 + e3
@@ -86,27 +107,20 @@ class ImplicitSolver:
 
     @ti.kernel
     def compute_grid_energy(self, v_flat: ti.template()):
-        for i, j in ti.ndrange(self.grid.size, self.grid.size):
-            vidx = i * self.grid.size * 2 + j * 2
-            self.total_energy[None] += 0.5 * self.grid.m[i,j] * (ti.Vector([v_flat[vidx], v_flat[vidx+1]]) - 
-                                 self.grid.v_prev[i,j]).norm_sqr()
+        for I in ti.grouped(self.grid.v):
+            vidx = self.get_idx(I)
+            vel = self.get_vel(v_flat,vidx)
+            self.total_energy[None] += 0.5 * self.grid.m[I] * (vel - self.grid.v_prev[I]).norm_sqr()
 
     @ti.kernel
     def manual_particle_energy_grad(self, v_flat: ti.template(), grad_flat: ti.template()):
         for p in range(self.particles.n_particles):
             # 计算速度梯度
-            vel_grad = ti.Matrix.zero(self.float_type, 2, 2)
-            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
-
-            for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
-                grid_idx = (base + offset) % self.grid.size
-                vidx = grid_idx.x * self.grid.size * 2 + grid_idx.y * 2
-                vel = ti.Vector([v_flat[vidx], v_flat[vidx+1]])
-                vel_grad += 4 * self.dt * vel.outer_product(self.particles.dwip[p, offset]) 
+            vel_grad = self.cal_vel_grad(v_flat,p)
 
             # 计算变形梯度导数
             F = self.particles.F[p]
-            new_F = (ti.Matrix.identity(self.float_type, self.grid.dim) + vel_grad) @ F
+            new_F = (ti.Matrix.identity(self.float_type, self.dim) + vel_grad) @ F
             newJ = new_F.determinant()
             newF_T= new_F.transpose()
             newF_inv_T = newF_T.inverse()
@@ -117,84 +131,75 @@ class ImplicitSolver:
             g3=self.lam * ti.log(newJ) * newF_inv_T
             dE_dvel_grad =(g1+g2+g3)@ F.transpose()*self.particles.p_vol
 
-
+            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
             # 将梯度分配到网格点
-            for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
                 grid_idx = (base + offset) % self.grid.size
-                vidx = grid_idx.x * self.grid.size * 2 + grid_idx.y * 2
+                vidx = self.get_idx(grid_idx)
 
                 grad= 4*self.dt*dE_dvel_grad @ self.particles.dwip[p, offset]
 
                 # 累加梯度
-                ti.atomic_add(grad_flat[vidx], grad[0])
-                ti.atomic_add(grad_flat[vidx+1], grad[1])
+                for d in ti.static(range(self.dim)):
+                    ti.atomic_add(grad_flat[vidx+d], grad[d])
 
     @ti.kernel
     def manual_grid_energy_grad(self, v_flat: ti.template(), grad_flat: ti.template()):
-        for i, j in ti.ndrange(self.grid.size, self.grid.size):
-            vidx = i * self.grid.size * 2 + j * 2
-            v = ti.Vector([v_flat[vidx], v_flat[vidx+1]])
-            grad = self.grid.m[i,j] * (v - self.grid.v_prev[i,j])
+
+        for I in ti.grouped(self.grid.v):
+            vidx = self.get_idx(I)
+            vel = self.get_vel(v_flat,vidx)
+            grad = self.grid.m[I] * (vel - self.grid.v_prev[I])
 
             # 累加梯度
-            ti.atomic_add(grad_flat[vidx], grad[0]) 
-            ti.atomic_add(grad_flat[vidx+1], grad[1])
+            for d in ti.static(range(self.dim)):
+                ti.atomic_add(grad_flat[vidx+d], grad[d])
 
     @ti.kernel
     def manual_particle_energy_hess(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
         for p in range(self.particles.n_particles):
             # 计算速度梯度
-            vel_grad = ti.Matrix.zero(self.float_type, 2, 2)
-            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
-
-            for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
-                grid_idx = (base + offset) % self.grid.size
-                vidx = grid_idx.x * self.grid.size * 2 + grid_idx.y * 2
-                vel = ti.Vector([v_flat[vidx], v_flat[vidx+1]])
-                vel_grad += 4 * self.dt * vel.outer_product(self.particles.dwip[p, offset]) 
+            vel_grad = self.cal_vel_grad(v_flat,p)
 
 
             # 计算变形梯度导数
             F = self.particles.F[p]
-            new_F = (ti.Matrix.identity(self.float_type, self.grid.dim) + vel_grad) @ F
+            new_F = (ti.Matrix.identity(self.float_type, self.dim) + vel_grad) @ F
             J = new_F.determinant()
             F_inv = new_F.inverse()
             F_inv_T = F_inv.transpose()
             
+            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int) 
 
-
-            for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
                 FTw=4 * self.dt * F.transpose() @ self.particles.dwip[p, offset]
                 FWWF=F_inv_T @ FTw.outer_product(FTw) @ F_inv 
-                h1=self.mu *FTw.dot(FTw) * ti.Matrix.identity(self.float_type, self.grid.dim) 
+                h1=self.mu *FTw.dot(FTw) * ti.Matrix.identity(self.float_type, self.dim) 
                 h2=self.mu * FWWF 
                 h3=self.lam * (1-ti.log(J)) * FWWF
                 hessian=(h1+h2+h3)*self.particles.p_vol
                 
                 U ,sig, V = ti.svd(hessian)
-                for i in ti.static(range(self.grid.dim)):
+                for i in ti.static(range(self.dim)):
                     if sig[i,i] < 0:
                         sig[i,i] = 0
                 hessian = U @ sig @ V.transpose()
 
                 grid_idx = (base + offset) % self.grid.size
-                vidx = grid_idx.x * self.grid.size * 2 + grid_idx.y * 2
-                hess[vidx, vidx] += hessian[0,0]
-                hess[vidx+1, vidx+1] += hessian[1,1]
-                hess[vidx, vidx+1] += hessian[0,1]
-                hess[vidx+1, vidx] += hessian[1,0]
+                vidx = self.get_idx(grid_idx)
+                for i in ti.static(range(self.dim)):
+                    for j in ti.static(range(self.dim)):
+                        hess[vidx+i, vidx+j] += hessian[i,j]
 
 
     @ti.kernel
     def manual_grid_energy_hess(self,hess: ti. sparse_matrix_builder()):
-        for i, j in ti.ndrange(self.grid.size, self.grid.size):
-            vidx = i * self.grid.size * 2 + j * 2
-            if self.grid.m[i,j] == 0 :
-                hess[vidx, vidx] += 1
-                hess[vidx+1, vidx+1] += 1
-            else:
-                hess[vidx, vidx] += self.grid.m[i,j]
-                hess[vidx+1, vidx+1] += self.grid.m[i,j]
+        for I in ti.grouped(self.grid.v):
+            vidx= self.get_idx(I)
+            m= 1 if self.grid.m[I] ==0 else self.grid.m[I]
+
+            for d in ti.static(range(self.dim)):
+                hess[vidx+d, vidx+d] += m
 
     def compute_energy(self, v_flat: ti.template()):
         self.grid.set_boundary_v_grid(v_flat)
@@ -267,8 +272,8 @@ class ImplicitSolver:
         self.manual_grid_energy_hess(hess)
 
     def set_hess_DBC(self, hess):
-        num_rows = self.grid.size**self.grid.dim * self.grid.dim
-        hess1=ti.linalg.SparseMatrixBuilder(num_rows, num_rows, max_num_triplets=(num_rows)**2, dtype=self.float_type)
+        num_rows = self.grid.size**self.dim * self.dim
+        hess1=ti.linalg.SparseMatrixBuilder(num_rows, num_rows, max_num_triplets=(num_rows)**self.dim, dtype=self.float_type)
         hess2=ti.linalg.SparseMatrixBuilder(num_rows, num_rows, max_num_triplets=num_rows, dtype=self.float_type)
         self.grid.get_boundary_hess(hess1,hess2)
         H1=hess1.build()
@@ -281,14 +286,18 @@ class ImplicitSolver:
 
     @ti.kernel
     def set_initial_guess(self):
-        for i, j in ti.ndrange(self.grid.size, self.grid.size):
-            idx = i * self.grid.size * 2 + j * 2
-            self.optimizer.x[idx] = self.grid.v[i,j][0]
-            self.optimizer.x[idx+1] = self.grid.v[i,j][1]
+        for I in ti.grouped(self.grid.v):
+            idx=0
+            for d in ti.static(range(self.dim)):
+                idx += I[d] * self.grid.size ** (self.dim-1-d) *self.dim 
+            for d in ti.static(range(self.dim)):
+                self.optimizer.x[idx+d] = self.grid.v[I][d]
 
     @ti.kernel
     def update_velocity(self):
-        for i, j in ti.ndrange(self.grid.size, self.grid.size):
-            idx = i * self.grid.size * 2 + j * 2
-            for d in ti.static(range(self.grid.dim)):
-                self.grid.v[i,j][d] = self.optimizer.x[idx+d]
+        for I in ti.grouped(self.grid.v):
+            idx=0
+            for d in ti.static(range(self.dim)):
+                idx += I[d] * self.grid.size ** (self.dim-1-d) *self.dim 
+            for d in ti.static(range(self.dim)):
+                self.grid.v[I][d] = self.optimizer.x[idx+d]

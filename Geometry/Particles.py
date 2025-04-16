@@ -13,6 +13,7 @@ class Particles:
         self.num_areas = len(init_pos_range)
         self.init_pos_range = ti.Vector.field(2, ti.f32, shape=(self.num_areas, self.dim))
         self.boundary_range = ti.Vector.field(2, ti.f32, shape=(self.dim))
+        self.neighbor = (3,) * self.dim
 
         for i in ti.static(range(self.num_areas)):
             for d in ti.static(range(self.dim)):
@@ -50,6 +51,7 @@ class Particles:
             self.n_particles += common_particles.n_particles
             self.common_particles = common_particles
 
+        self.use_possion_sampling = config.get("use_possion_sampling", True)
         self.pos_possion = ti.Vector.field(self.dim, ti.f32, shape=max_n_per_area)
         self.p_rho = config.get("p_rho", 1)
         self.p_vol = (1.0/self.grid_size)**self.dim / self.particles_per_grid
@@ -62,12 +64,13 @@ class Particles:
         
         self.x = ti.Vector.field(self.dim, self.float_type, self.n_particles)
         self.v = ti.Vector.field(self.dim, self.float_type, self.n_particles)
-        self.F = ti.Matrix.field(2, 2, self.float_type, self.n_particles)
-        self.C = ti.Matrix.field(2, 2, self.float_type, self.n_particles)
-        self.temp_P = ti.Matrix.field(2, 2, self.float_type, self.n_particles)
+        self.F = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
+        self.C = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
+        self.temp_P = ti.Matrix.field(self.dim,self.dim, self.float_type, self.n_particles)
 
-        self.wip=ti.field(self.float_type, (self.n_particles, 3,3))
-        self.dwip=ti.Vector.field(self.dim, self.float_type, (self.n_particles, 3,3))
+        shape = (self.n_particles, 3,3) if self.dim == 2 else (self.n_particles, 3,3,3)
+        self.wip=ti.field(self.float_type, shape)
+        self.dwip=ti.Vector.field(self.dim, self.float_type, shape)
         
         
         self.init_vel_y = config.get("initial_velocity_y", -1)
@@ -82,8 +85,12 @@ class Particles:
     def initialize(self):
         start_num=0
         for i in range(self.num_areas):
-            points_np=poisson_disk_sampling_by_count(self.init_pos_range[i,0][1]-self.init_pos_range[i,0][0],self.init_pos_range[i,1][1]-self.init_pos_range[i,1][0], self.n_per_area[i])
-            self.pos_possion.from_numpy(np.array(points_np))
+            region_size=[]
+            for d in ti.static(range(self.dim)):
+                region_size.append(self.init_pos_range[i, d][1] - self.init_pos_range[i, d][0])
+            if self.use_possion_sampling:
+                points_np=poisson_disk_sampling_by_count(region_size, self.n_per_area[i])
+                self.pos_possion.from_numpy(np.array(points_np))
             self.initialize_area(i, start_num)
             start_num += self.n_per_area[i]
         
@@ -101,8 +108,12 @@ class Particles:
             for d in ti.static(range(self.dim)):
                 min_val = self.init_pos_range[i, d][0]
                 max_val = self.init_pos_range[i, d][1]
+                if self.use_possion_sampling:
                 #从泊松盘采样中获取位置
-                pos[d]=self.pos_possion[p][d] + min_val
+                    pos[d]=self.pos_possion[p][d] + min_val
+                else:
+                #均匀采样
+                    pos[d] = ti.random(self.float_type) * (max_val -min_val) + min_val
                 # 边界判断
                 # if pos[d] < min_val + self.boundary_size or pos[d] > max_val - self.boundary_size:
                 #     self.is_boundary_particle[start_num + p] = 1
@@ -137,7 +148,7 @@ class Particles:
             fx = self.x[p] * self.grid_size - base.cast(float)
             w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
             
-            for offset in ti.static(ti.grouped(ti.ndrange(3, 3))):
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
                 weight = 1.0
                 for d in ti.static(range(self.dim)):
                     weight *= w[offset[d]][d]
