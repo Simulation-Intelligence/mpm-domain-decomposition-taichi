@@ -8,7 +8,8 @@ import numpy as np
 class Particles:
     def __init__(self, config,common_particles:'Particles'=None):
         self.dim = config.get("dim", 2)
-        init_pos_range = config.get("initial_position_range", [[[0.3, 0.6], [0.3, 0.6]]])
+        default_init_pos_range = [[0.3, 0.6], [0.3, 0.6]] if self.dim == 2 else [[0.3, 0.6], [0.3, 0.6], [0.3, 0.6]]
+        init_pos_range = config.get("initial_position_range", [default_init_pos_range])
         boundary_range = config.get("boundary_range", None)
         self.num_areas = len(init_pos_range)
         self.init_pos_range = ti.Vector.field(2, ti.f32, shape=(self.num_areas, self.dim))

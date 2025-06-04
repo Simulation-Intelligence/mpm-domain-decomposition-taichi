@@ -50,24 +50,75 @@ class MPM_Schwarz:
         """
         设置边界条件
         """
+        # for I in ti.grouped(self.Domain1.grid.v):
+        #     Domain1_set_boundary = self.Domain1.grid.is_particle_boundary_grid[I] and self.Domain2.grid.m[I] > 0
+        #     Domain2_set_boundary = self.Domain2.grid.is_particle_boundary_grid[I] and self.Domain1.grid.m[I] > 0
+        #     if self.use_mass_boundary:
+        #         Domain1_set_boundary = Domain1_set_boundary and (not Domain2_set_boundary or self.Domain1.grid.m[I] <self.Domain2.grid.m[I])
+        #         Domain2_set_boundary = Domain2_set_boundary and (not Domain1_set_boundary or self.Domain2.grid.m[I] < self.Domain1.grid.m[I])
+        #     else: 
+        #         Domain1_set_boundary = Domain1_set_boundary and not self.Domain2.grid.is_particle_boundary_grid[I]
+        #         Domain2_set_boundary = Domain2_set_boundary and not self.Domain1.grid.is_particle_boundary_grid[I]
+
+        #     if Domain1_set_boundary:
+        #         self.Domain1.grid.is_boundary_grid[I] = [1]*self.Domain1.grid.dim
+        #         self.Domain1.grid.boundary_v[I] = self.Domain2.grid.v[I]
+
+        #     if Domain2_set_boundary:
+        #         self.Domain2.grid.is_boundary_grid[I] = [1]*self.Domain2.grid.dim
+        #         self.Domain2.grid.boundary_v[I] = self.Domain1.grid.v[I]
         for I in ti.grouped(self.Domain1.grid.v):
-            Domian1_set_boundary = self.Domain1.grid.is_particle_boundary_grid[I] and self.Domain2.grid.m[I] > 0
-            Domian2_set_boundary = self.Domain2.grid.is_particle_boundary_grid[I] and self.Domain1.grid.m[I] > 0
-            if self.use_mass_boundary:
-                Domian1_set_boundary = Domian1_set_boundary and self.Domain1.grid.m[I] <self.Domain2.grid.m[I]
-                Domian2_set_boundary = Domian2_set_boundary and self.Domain2.grid.m[I] <self.Domain1.grid.m[I]
-            else: 
-                Domian1_set_boundary = Domian1_set_boundary and not self.Domain2.grid.is_particle_boundary_grid[I]
-                Domian2_set_boundary = Domian2_set_boundary and not self.Domain1.grid.is_particle_boundary_grid[I]
+            if self.Domain1.grid.is_particle_boundary_grid[I]:
+                m = 0.0
+                is_Domain2_boundary = False
+                x = I * self.Domain1.grid.dx
+                base = (x * self.Domain2.grid.inv_dx - 0.5).cast(int)
+                fx = x * self.Domain2.grid.inv_dx - base.cast(float)
+                w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
+                self.Domain1.grid.boundary_v[I] = ti.Vector.zero(self.Domain1.grid.float_type, self.Domain1.grid.dim)
 
-            if Domian1_set_boundary:
-                self.Domain1.grid.is_boundary_grid[I] = [1]*self.Domain1.grid.dim
-                self.Domain1.grid.boundary_v[I] = self.Domain2.grid.v[I]
+                for offset in ti.static(ti.grouped(ti.ndrange(*self.Domain1.particles.neighbor))):
+                    weight = 1.0
+                    for d in ti.static(range(self.Domain1.grid.dim)):
+                        weight *= w[offset[d]][d]
+                    if self.Domain2.grid.is_particle_boundary_grid[base + offset]:
+                        is_Domain2_boundary = True
+                    m += weight * self.Domain2.grid.m[base + offset]
+                    self.Domain1.grid.boundary_v[I] += weight * self.Domain2.grid.v[base + offset]* self.Domain2.grid.m[base + offset]
 
-            if Domian2_set_boundary:
-                self.Domain2.grid.is_boundary_grid[I] = [1]*self.Domain2.grid.dim
-                self.Domain2.grid.boundary_v[I] = self.Domain1.grid.v[I]
-    
+                Domain1_set_boundary = self.Domain1.grid.is_particle_boundary_grid[I] and m > 1e-10
+                Domain1_set_boundary = Domain1_set_boundary and (not is_Domain2_boundary or self.Domain1.grid.m[I] <m)
+
+                if Domain1_set_boundary:
+                    self.Domain1.grid.is_boundary_grid[I] = [1]*self.Domain1.grid.dim
+                    self.Domain1.grid.boundary_v[I] = self.Domain1.grid.boundary_v[I] / m
+
+        for I in ti.grouped(self.Domain2.grid.v):
+            if self.Domain2.grid.is_particle_boundary_grid[I]:
+                m = 0.0
+                is_Domain1_boundary = False
+                x = I * self.Domain2.grid.dx
+                base = (x * self.Domain1.grid.inv_dx - 0.5).cast(int)
+                fx = x * self.Domain1.grid.inv_dx - base.cast(float)
+                w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
+                self.Domain2.grid.boundary_v[I] = ti.Vector.zero(self.Domain2.grid.float_type, self.Domain2.grid.dim)
+
+                for offset in ti.static(ti.grouped(ti.ndrange(*self.Domain2.particles.neighbor))):
+                    weight = 1.0
+                    for d in ti.static(range(self.Domain2.grid.dim)):
+                        weight *= w[offset[d]][d]
+                    if self.Domain1.grid.is_particle_boundary_grid[base + offset]:
+                        is_Domain1_boundary = True
+                    m += weight * self.Domain1.grid.m[base + offset]
+                    self.Domain2.grid.boundary_v[I] += weight * self.Domain1.grid.v[base + offset]* self.Domain1.grid.m[base + offset]
+
+                Domain2_set_boundary = self.Domain2.grid.is_particle_boundary_grid[I] and m > 1e-10
+                Domain2_set_boundary = Domain2_set_boundary and (not is_Domain1_boundary or self.Domain2.grid.m[I] < m)
+
+                if Domain2_set_boundary:
+                    self.Domain2.grid.is_boundary_grid[I] = [1]*self.Domain2.grid.dim
+                    self.Domain2.grid.boundary_v[I] = self.Domain2.grid.boundary_v[I] / m
+
     @ti.kernel
     def apply_average_grid_v(self):
         """
@@ -117,7 +168,7 @@ class MPM_Schwarz:
             for i in range(self.max_schwarz_iter):
                 print(f"Schwarz Iteration {i}/{self.max_schwarz_iter}")
 
-                residuals.append(self.check_grid_v_residual())
+                # residuals.append(self.check_grid_v_residual())
             
                 self.exchange_boundary_conditions()
 

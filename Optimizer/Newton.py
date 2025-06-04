@@ -24,11 +24,6 @@ class Newton:
         self.d = ti.ndarray(self.float_type, shape=dim)
         self.f0 =0.0
 
-        # self.h_eps_builder = ti.linalg.SparseMatrixBuilder(dim, dim, max_num_triplets=dim,dtype=self.float_type)
-
-        # self.init_eps(self.h_eps_builder,1)
-
-        # self.h_eps = self.h_eps_builder.build()
 
 
 
@@ -96,7 +91,7 @@ class Newton:
                 break
 
             # 构建Hessian矩阵
-            H_builder = ti.linalg.SparseMatrixBuilder(self.dim, self.dim,max_num_triplets=(int)(self.dim**2 / 10),dtype=self.float_type)
+            H_builder = ti.linalg.SparseMatrixBuilder(self.dim, self.dim,max_num_triplets=(int)(self.dim**2 *0.1),dtype=self.float_type)
             self.hess_fn(self.x, H_builder)
             H = H_builder.build()
 

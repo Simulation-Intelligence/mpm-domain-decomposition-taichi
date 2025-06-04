@@ -3,17 +3,18 @@ from implicit_mpm import *
 config = Config(data={
         "dt": 0.001,
         "float_type": "f64",
+        "dim": 3,
         "E": 4.0,
         "nu": 0.4,
         "solve_max_iter": 1,
         "implicit_solver": "BFGS"
     })
 float_type = ti.f32 if config.get("float_type", "f32") == "f32" else ti.f64
-ti.init(arch=ti.cpu, debug=True,default_fp=float_type, device_memory_GB=20,random_seed=114514)
+ti.init(arch=ti.cpu, default_fp=float_type, device_memory_GB=20,random_seed=114514)
 
 # 测试配置
-grid_size = 16
-dim = 2
+grid_size = 8
+dim = config.get("dim", 2)
 dt = 0.001
 n_particles = 2
 # 初始化网格
@@ -22,23 +23,16 @@ grid.dx = 1.0 / grid_size
 grid.inv_dx = grid_size
 
 # 初始化场变量
-grid.m = ti.field(dtype=float_type, shape=(grid_size, grid_size))
-grid.v_prev = ti.Vector.field(dim, dtype=float_type, shape=(grid_size, grid_size))
-grid.v = ti.Vector.field(dim, dtype=float_type, shape=(grid_size, grid_size))
+shape = (grid_size, grid_size, dim) if dim == 3 else (grid_size, grid_size)
+grid.m = ti.field(dtype=float_type, shape=shape)
+grid.v_prev = ti.Vector.field(dim, dtype=float_type, shape=shape)
+grid.v = ti.Vector.field(dim, dtype=float_type, shape=shape)
 
 # 随机初始化网格质量
 @ti.kernel
 def init_grid_mass():
-    # for i, j in grid.m:
-    #     grid.m[i, j] = ti.random() + 0.5  # 确保质量不为零
-    #选择大部分质量为0.0
-    # for i, j in grid.m:
-    #     if ti.random() > 0.1:
-    #         grid.m[i, j] = 0.0
-    #     else:
-    #         grid.m[i, j] = ti.random() + 0.5
-    for i ,j in grid.m:
-        grid.m[i, j] = ti.random()
+    for I in ti.grouped(grid.m):
+        grid.m[I] = ti.random() * 0.1 + 0.1
 
 init_grid_mass()
 
@@ -49,12 +43,13 @@ particles = Particles(config)
 @ti.kernel
 def init_particles():
     for p in range(n_particles):
-        particles.x[p] = [ti.random(), ti.random()]
-        for i, j in ti.static(ti.ndrange(3, 3)):
-            particles.F[p] = ti.Matrix([[200, -2], [-2, 200]])
+        for d in ti.static(range(dim)):
+            particles.x[p][d] = ti.random() * 0.5 + 0.25
+            particles.v[p] = ti.Vector([0.0] * dim)
+            for q in ti.static(range(dim)):
+                particles.F[p][d,q] = 200 if d == q else -10
 
-particles.initialize()
-init_particles()
+# init_particles()
 particles.build_neighbor_list()
 
 # 初始化求解器
@@ -134,5 +129,5 @@ def test_hessian_derivative():
     assert max_error < 1e-4, "手动Hessian与有限差分结果不一致"
 
 if __name__ == "__main__":
-    #test_gradient_derivative()
+    # test_gradient_derivative()
     test_hessian_derivative()

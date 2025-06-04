@@ -95,7 +95,7 @@ class BFGS:
             # 计算当前能量和梯度 
             self.f0 = self.grad_fn(self.x,  self.grad)
             print ("Iteration:", iter)
-            print(f"Energy: {self.f0:.6f}")
+            print(f"Energy: {self.f0:.6e}")
             # 检查收敛  
             @ti.kernel
             def calc_grad_norm() -> self.float_type:
@@ -111,7 +111,7 @@ class BFGS:
                     ti.atomic_max(grad_norm, ti.abs(self.grad[i]))
                 return grad_norm
             grad_norm=calc_grad_inf_norm() / self.grad_normalizer
-            print(f"Grad norm: {ti.sqrt(grad_norm)}")
+            print(f"Grad norm: {ti.sqrt(grad_norm):.6e}")
             if grad_norm < self.eta**2 :
                 print(f"Converged at iteration {iter}")
                 break 

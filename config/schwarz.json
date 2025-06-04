@@ -1,6 +1,6 @@
 {
-    "max_schwarz_iter": 30,
-    "record_frames": 40,
+    "max_schwarz_iter": 10,
+    "record_frames": 80,
     "steps": 1,
     "arch": "cpu",
     "float_type": "f64",
@@ -24,36 +24,16 @@
         "p_rho": 1e3,
         "initial_velocity_y": -2.0,
         "initial_position_range": [
+        [
             [
-                [
-                    0.2,
-                    0.4
-                ],
-                [
-                    0.1,
-                    0.4
-                ]
+                0.2,
+                0.8
             ],
             [
-                [
-                    0.4,
-                    0.6
-                ],
-                [
-                    0.1,
-                    0.2
-                ]
-            ],
-            [
-                [
-                    0.6,
-                    0.8
-                ],
-                [
-                    0.1,
-                    0.4
-                ]
+                0.1,
+                0.4
             ]
+        ]
         ],
         "boundary_range": [
             [
@@ -71,7 +51,7 @@
     "Domain2": {
         "arch": "cpu",
         "float_type": "f64",
-        "grid_size": 32,
+        "grid_size": 16,
         "particles_per_grid": 8,
         "dt": 1e-3,
         "max_iter": 1,
@@ -93,7 +73,7 @@
                     0.6
                 ],
                 [
-                    0.4,
+                    0.2,
                     0.5
                 ]
             ]
@@ -110,25 +90,5 @@
         ],
         "implicit_solver": "Newton",
         "eta": 1e-4
-    },
-    "Common_Particles": {
-        "float_type": "f64",
-        "grid_size": 32,
-        "particles_per_grid": 8,
-        "boundary_size": 0.01,
-        "p_rho": 1e3,
-        "initial_velocity_y": -2.0,
-        "initial_position_range": [
-            [
-                [
-                    0.4,
-                    0.6
-                ],
-                [
-                    0.2,
-                    0.4
-                ]
-            ]
-        ]
     }
 }

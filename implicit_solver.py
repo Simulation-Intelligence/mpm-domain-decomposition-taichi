@@ -157,8 +157,10 @@ class ImplicitSolver:
 
     @ti.kernel
     def manual_particle_energy_hess(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
+
         for p in range(self.particles.n_particles):
             # 计算速度梯度
+            # print("p:",p)
             vel_grad = self.cal_vel_grad(v_flat,p)
 
 
@@ -267,9 +269,11 @@ class ImplicitSolver:
 
     def compute_hess(self, v_flat: ti.template(), hess: ti.sparse_matrix_builder()):
         self.grid.set_boundary_v_grid(v_flat)
-
+        
         self.manual_particle_energy_hess(v_flat, hess)
         self.manual_grid_energy_hess(hess)
+        
+        
 
     def set_hess_DBC(self, hess):
         num_rows = self.grid.size**self.dim * self.dim
