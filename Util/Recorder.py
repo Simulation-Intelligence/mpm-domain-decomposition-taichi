@@ -3,7 +3,7 @@ import time
 import taichi as ti
 
 class ParticleRecorder:
-    def __init__(self, palette=None, max_frames=300):
+    def __init__(self, palette=None, max_frames=300, lines_begin=None, lines_end=None, lines_color=None):
         """
         通用粒子动画录制器
         
@@ -15,6 +15,11 @@ class ParticleRecorder:
         self.palette = np.array([0xFFFFFF, 0x66CCFF], dtype=np.uint32) if palette is None else palette
         self.frame_data = []
         self.max_frames = max_frames
+
+        self.lines_begin = lines_begin if lines_begin is not None else np.array([], dtype=np.float32)
+        self.lines_end = lines_end if lines_end is not None else np.array([], dtype=np.float32)
+        self.lines_color = lines_color if lines_color is not None else np.array([], dtype=np.uint32)
+
         self.gui=ti.GUI("Record", res=1200)
 
 
@@ -65,6 +70,13 @@ class ParticleRecorder:
                 palette_indices=indices,
                 radius=3
             )
+            if self.lines_begin.size > 0 and self.lines_end.size > 0:
+                self.gui.lines(
+                    self.lines_begin,
+                    self.lines_end,
+                    color=self.lines_color,
+                    radius=0.8
+                )
             self.gui.show()
 
             # 更新帧索引

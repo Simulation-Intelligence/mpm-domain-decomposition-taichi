@@ -5,14 +5,14 @@ import taichi as ti
 # ------------------ 网格模块 ------------------
 @ti.data_oriented
 class Grid:
-    def __init__(self, size, dim, bound,float_type=ti.f32):
+    def __init__(self, size, dim, bound, float_type=ti.f32):
         self.size = size
         self.dim = dim
         self.bound = bound
         self.dx = 1.0 / size
         self.inv_dx = size
         self.float_type = float_type
-        
+
         self.v = ti.Vector.field(dim, self.float_type, (size,)*dim)
         self.m = ti.field(self.float_type, (size,)*dim)
         self.v_prev = ti.Vector.field(dim, self.float_type, (size,)*dim)
@@ -91,3 +91,4 @@ class Grid:
             self.v[I] = [0.0]*self.dim
             self.is_particle_boundary_grid[I] = 0
             self.is_boundary_grid[I] = [0]*self.dim
+

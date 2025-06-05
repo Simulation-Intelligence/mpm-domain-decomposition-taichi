@@ -34,6 +34,9 @@ class ImplicitMPM:
         self.max_iter = self.cfg.get("max_iter", 1)
         self.dt = self.cfg.get("dt", 2e-3)
 
+        self.scale = self.cfg.get("scale", 1.0)
+        self.offset = self.cfg.get("offset", (0, 0))
+
         E = self.cfg.get("E", 4)
         nu = self.cfg.get("nu", 0.4)
         self.mu = E / (2 * (1 + nu))  # 现在作为实例属性
@@ -144,6 +147,21 @@ class ImplicitMPM:
                 grid_idx = base + offset
                 self.grid.v[grid_idx] +=4* self.dt * stress @ self.particles.dwip[p,offset] / self.grid.m[grid_idx] 
 
+    #returns the grid lines for visualization
+    def get_grid_lines_begin(self):
+        lines_begin = []
+        for i in range(self.grid.size):
+            lines_begin.append(((i+0.5)*self.grid.dx*self.scale + self.offset[0], self.offset[1]))
+            lines_begin.append((self.offset[0], (i+0.5)*self.grid.dx*self.scale + self.offset[1]))
+        return lines_begin
+
+    def get_grid_lines_end(self):
+        lines_end = []
+        for i in range(self.grid.size):
+            lines_end.append(((i+0.5)*self.grid.dx*self.scale + self.offset[0], self.scale + self.offset[1]))
+            lines_end.append((self.scale + self.offset[0], (i+0.5)*self.grid.dx*self.scale + self.offset[1]))
+        return lines_end
+    
     def render(self):
         x_numpy = self.particles.x.to_numpy()
 

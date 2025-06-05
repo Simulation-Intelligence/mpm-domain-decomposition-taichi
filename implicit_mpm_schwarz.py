@@ -30,15 +30,27 @@ class MPM_Schwarz:
         self.steps=main_config.get("steps", 10)  # 迭代步数
         self.recorder = None
         if main_config.get("record_frames", 0) > 0:
+            lines_begin_1 = self.Domain1.get_grid_lines_begin()
+            lines_end_1 = self.Domain1.get_grid_lines_end()
+            lines_begin_2 = self.Domain2.get_grid_lines_begin()
+            lines_end_2 = self.Domain2.get_grid_lines_end()
+            lines_begin = np.concatenate([lines_begin_1, lines_begin_2])
+            lines_end = np.concatenate([lines_end_1, lines_end_2])
+            lines_color_1 = np.full(len(lines_begin_1), 0x66CCFF, dtype=np.uint32)
+            lines_color_2 = np.full(len(lines_begin_2), 0xED553B, dtype=np.uint32)
+            lines_color = np.concatenate([lines_color_1, lines_color_2])
             self.recorder = ParticleRecorder(
             palette=np.array([
                 0x66CCFF,  # 域1普通粒子
                 0xED553B,  # 域2普通粒子 
                 0xFFFFFF   # 边界粒子
             ], dtype=np.uint32),
-            max_frames=main_config.get("record_frames", 60)
+            max_frames=main_config.get("record_frames", 60),
+            lines_begin=lines_begin,
+            lines_end=lines_end,
+            lines_color=lines_color
         )
-        
+
         self.use_mass_boundary = main_config.get("use_mass_boundary", False)
             
         self.residuals = []
@@ -71,7 +83,8 @@ class MPM_Schwarz:
             if self.Domain1.grid.is_particle_boundary_grid[I]:
                 m = 0.0
                 is_Domain2_boundary = False
-                x = I * self.Domain1.grid.dx
+                x = ((I * self.Domain1.grid.dx)*self.Domain1.scale + self.Domain1.offset)- self.Domain2.offset
+                x = x / self.Domain2.scale
                 base = (x * self.Domain2.grid.inv_dx - 0.5).cast(int)
                 fx = x * self.Domain2.grid.inv_dx - base.cast(float)
                 w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
@@ -97,7 +110,8 @@ class MPM_Schwarz:
             if self.Domain2.grid.is_particle_boundary_grid[I]:
                 m = 0.0
                 is_Domain1_boundary = False
-                x = I * self.Domain2.grid.dx
+                x = ((I * self.Domain2.grid.dx)*self.Domain2.scale + self.Domain2.offset)- self.Domain1.offset
+                x = x / self.Domain1.scale
                 base = (x * self.Domain1.grid.inv_dx - 0.5).cast(int)
                 fx = x * self.Domain1.grid.inv_dx - base.cast(float)
                 w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
@@ -188,20 +202,26 @@ class MPM_Schwarz:
             self.Domain2.particles.advect(self.Domain2.dt)
 
     def render(self):
-        self.gui.circles(self.Domain1.particles.x.to_numpy(), radius=1.5, color=0x068587)
-        self.gui.circles(self.Domain2.particles.x.to_numpy(), radius=1.5, color=0xED553B)
+        transformed_x1 = self.Domain1.particles.x.to_numpy() * self.Domain1.scale + self.Domain1.offset
+        transformed_x2 = self.Domain2.particles.x.to_numpy() * self.Domain2.scale + self.Domain2.offset
+        self.gui.circles(transformed_x1, radius=1.5, color=0x068587)
+        self.gui.circles(transformed_x2, radius=1.5, color=0xED553B)
 
         #绘制边界粒子
-        self.gui.circles(self.Domain1.particles.x.to_numpy()[self.Domain1.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
-        self.gui.circles(self.Domain2.particles.x.to_numpy()[self.Domain2.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
+        self.gui.circles(transformed_x1[self.Domain1.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
+        self.gui.circles(transformed_x2[self.Domain2.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
+
+        #绘制grid网格
+        self.gui.lines(np.array(self.Domain1.get_grid_lines_begin()),np.array(self.Domain1.get_grid_lines_end()), radius=0.8, color=0x068587)
+        self.gui.lines(np.array(self.Domain2.get_grid_lines_begin()),np.array(self.Domain2.get_grid_lines_end()), radius=0.8, color=0xED553B)
         self.gui.show()
         # 合并两域粒子数据
         if self.recorder is None:
             return
         print("Frame", len(self.recorder.frame_data))
         all_pos = np.concatenate([
-            self.Domain1.particles.x.to_numpy(),
-            self.Domain2.particles.x.to_numpy()
+            transformed_x1,
+            transformed_x2
         ])
         
         # 生成颜色索引 (0:域1普通, 1:域2普通, 2:边界)
