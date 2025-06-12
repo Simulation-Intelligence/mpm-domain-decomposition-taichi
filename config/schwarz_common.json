@@ -1,7 +1,6 @@
 {
     "max_schwarz_iter": 10,
-    "record_frames": 40,
-    "visualize_grid": false,
+    "record_frames": 80,
     "steps": 1,
     "arch": "cpu",
     "float_type": "f64",
@@ -10,8 +9,6 @@
         "arch": "cpu",
         "float_type": "f64",
         "grid_size": 32,
-        "offset": [0.0724, 0.0],
-        "scale": 1.0,
         "particles_per_grid": 8,
         "dt": 1e-3,
         "max_iter": 1,
@@ -27,21 +24,21 @@
         "p_rho": 1e3,
         "initial_velocity_y": -2.0,
         "initial_position_range": [
-        [
             [
-                0.2,
-                0.8
-            ],
-            [
-                0.1,
-                0.4
+                [
+                    0.2,
+                    0.3
+                ],
+                [
+                    0.1,
+                    0.4
+                ]
             ]
-        ]
         ],
         "boundary_range": [
             [
                 0.2,
-                0.8
+                0.3
             ],
             [
                 0.1,
@@ -54,9 +51,7 @@
     "Domain2": {
         "arch": "cpu",
         "float_type": "f64",
-        "grid_size": 19,
-        "offset": [0.0, 0.0],
-        "scale": 1.0,
+        "grid_size": 32,
         "particles_per_grid": 8,
         "dt": 1e-3,
         "max_iter": 1,
@@ -74,23 +69,23 @@
         "initial_position_range": [
             [
                 [
-                    0.4,
-                    0.6
+                    0.7,
+                    0.8
                 ],
                 [
-                    0.2,
-                    0.5
+                    0.1,
+                    0.4
                 ]
             ]
         ],
         "boundary_range": [
             [
-                0.4,
-                0.6
+                0.7,
+                0.8
             ],
             [
-                0.2,
-                0.5
+                0.1,
+                0.4
             ]
         ],
         "implicit_solver": "Newton",

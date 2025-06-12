@@ -29,16 +29,21 @@ class MPM_Schwarz:
         self.max_schwarz_iter = main_config.get("max_schwarz_iter", 1)  # Schwarz迭代次数
         self.steps=main_config.get("steps", 10)  # 迭代步数
         self.recorder = None
+        self.visualize_grid = main_config.get("visualize_grid", False)
         if main_config.get("record_frames", 0) > 0:
-            lines_begin_1 = self.Domain1.get_grid_lines_begin()
-            lines_end_1 = self.Domain1.get_grid_lines_end()
-            lines_begin_2 = self.Domain2.get_grid_lines_begin()
-            lines_end_2 = self.Domain2.get_grid_lines_end()
-            lines_begin = np.concatenate([lines_begin_1, lines_begin_2])
-            lines_end = np.concatenate([lines_end_1, lines_end_2])
-            lines_color_1 = np.full(len(lines_begin_1), 0x66CCFF, dtype=np.uint32)
-            lines_color_2 = np.full(len(lines_begin_2), 0xED553B, dtype=np.uint32)
-            lines_color = np.concatenate([lines_color_1, lines_color_2])
+            lines_begin = None
+            lines_end = None
+            lines_color = None
+            if self.visualize_grid:
+                lines_begin_1 = self.Domain1.get_grid_lines_begin()
+                lines_end_1 = self.Domain1.get_grid_lines_end()
+                lines_begin_2 = self.Domain2.get_grid_lines_begin()
+                lines_end_2 = self.Domain2.get_grid_lines_end()
+                lines_begin = np.concatenate([lines_begin_1, lines_begin_2])
+                lines_end = np.concatenate([lines_end_1, lines_end_2])
+                lines_color_1 = np.full(len(lines_begin_1), 0x66CCFF, dtype=np.uint32)
+                lines_color_2 = np.full(len(lines_begin_2), 0xED553B, dtype=np.uint32)
+                lines_color = np.concatenate([lines_color_1, lines_color_2])
             self.recorder = ParticleRecorder(
             palette=np.array([
                 0x66CCFF,  # 域1普通粒子
@@ -212,8 +217,10 @@ class MPM_Schwarz:
         self.gui.circles(transformed_x2[self.Domain2.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
 
         #绘制grid网格
-        self.gui.lines(np.array(self.Domain1.get_grid_lines_begin()),np.array(self.Domain1.get_grid_lines_end()), radius=0.8, color=0x068587)
-        self.gui.lines(np.array(self.Domain2.get_grid_lines_begin()),np.array(self.Domain2.get_grid_lines_end()), radius=0.8, color=0xED553B)
+        if self.visualize_grid:
+            self.gui.lines(np.array(self.Domain1.grid.get_lines_begin()), np.array(self.Domain1.grid.get_lines_end()), radius=0.8, color=0x068587)
+            self.gui.lines(np.array(self.Domain2.grid.get_lines_begin()), np.array(self.Domain2.grid.get_lines_end()), radius=0.8, color=0xED553B)
+
         self.gui.show()
         # 合并两域粒子数据
         if self.recorder is None:
