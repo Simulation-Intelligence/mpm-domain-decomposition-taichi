@@ -152,7 +152,7 @@ class MPM_Schwarz:
                     to_boundary_v[I] = to_boundary_v[I] / m
 
     @ti.kernel
-    def linp(dest: ti.template(), a: ti.template(), b: ti.template(), ratio: ti.f32):
+    def linp(self,dest: ti.template(), a: ti.template(), b: ti.template(), ratio: ti.f32):
         """
         将a和b的线性组合存储到dest中
         """
@@ -189,25 +189,25 @@ class MPM_Schwarz:
             """
             执行一步Schwarz迭代
             """
-            self.Domain1.pre_p2g()
-            self.Domain2.pre_p2g()
+            self.BigTimeDomain.pre_p2g()
+            self.SmallTimeDomain.pre_p2g()
 
             # 1.P2G: 将粒子的质量和动量传递到网格上
-            self.Domain1.p2g()
-            self.Domain2.p2g()
+            self.BigTimeDomain.p2g()
+            self.SmallTimeDomain.p2g()
 
-            self.Domain1.post_p2g()
-            self.Domain2.post_p2g()
+            self.BigTimeDomain.post_p2g()
+            self.SmallTimeDomain.post_p2g()
 
             # 记录上一步网格速度
-            # self.BigTimeDomainTempGridV.copy_from(self.BigTimeDomain.grid.v)
-            # self.SmallTimeDomainTempGridV.copy_from(self.SmallTimeDomain.grid.v)
+            self.BigTimeDomainTempGridV.copy_from(self.BigTimeDomain.grid.v)
+            self.SmallTimeDomainTempGridV.copy_from(self.SmallTimeDomain.grid.v)
 
             residuals = []
 
-            # self.exchange_boundary_conditions()
-            # self.SmallTimeDomainBoundaryVLast.copy_from(self.SmallTimeDomain.grid.boundary_v)
-            # self.SmallTimeDomainBoundaryVNext.copy_from(self.SmallTimeDomain.grid.boundary_v)
+            self.exchange_boundary_conditions()
+            self.SmallTimeDomainBoundaryVLast.copy_from(self.SmallTimeDomain.grid.boundary_v)
+            self.SmallTimeDomainBoundaryVNext.copy_from(self.SmallTimeDomain.grid.boundary_v)
 
             # 2.迭代求解两个子域
             for i in range(self.max_schwarz_iter):
@@ -215,44 +215,48 @@ class MPM_Schwarz:
 
                 # residuals.append(self.check_grid_v_residual())
             
-                self.exchange_boundary_conditions()
+                # self.exchange_boundary_conditions()
 
-                self.Domain1.solve()
-                self.Domain2.solve()
-                # timesteps = self.BigTimeDomain.dt // self.SmallTimeDomain.dt
-                # self.BigTimeDomain.solve()
+                timesteps = int(self.BigTimeDomain.dt // self.SmallTimeDomain.dt)
+                self.BigTimeDomain.solve()
 
-                # for i in range(timesteps):
-                #     self.linp(self.SmallTimeDomain.grid.boundary_v, self.SmallTimeDomainBoundaryVLast, self.SmallTimeDomainBoundaryVNext, i / timesteps)
-                #     self.SmallTimeDomain.solve()
-                #     self.SmallTimeDomain.post_p2g()
+                for i in range(timesteps):
+                    self.linp(self.SmallTimeDomain.grid.boundary_v, self.SmallTimeDomainBoundaryVLast, self.SmallTimeDomainBoundaryVNext, (i+1) / timesteps)
+                    self.SmallTimeDomain.solve()
+                    if i < timesteps - 1:
+                        self.SmallTimeDomain.solver.save_previous_velocity()
+                
+                if i < self.max_schwarz_iter - 1:
+                    self.exchange_boundary_conditions()
+                    self.SmallTimeDomainBoundaryVNext.copy_from(self.SmallTimeDomain.grid.boundary_v) 
+                    self.SmallTimeDomain.grid.v_prev.copy_from(self.SmallTimeDomainTempGridV)
 
             # self.apply_average_grid_v()
 
             self.residuals.append(residuals)
 
             # 3.G2P: 将网格的速度传递回粒子上
-            self.Domain1.g2p()
-            self.Domain2.g2p()
+            self.BigTimeDomain.g2p()
+            self.SmallTimeDomain.g2p()
 
             # 4.粒子自由运动
-            self.Domain1.particles.advect(self.Domain1.dt)
-            self.Domain2.particles.advect(self.Domain2.dt)
+            self.BigTimeDomain.particles.advect(self.BigTimeDomain.dt)
+            self.SmallTimeDomain.particles.advect(self.BigTimeDomain.dt)
 
     def render(self):
-        transformed_x1 = self.Domain1.particles.x.to_numpy() * self.Domain1.scale + self.Domain1.offset
-        transformed_x2 = self.Domain2.particles.x.to_numpy() * self.Domain2.scale + self.Domain2.offset
+        transformed_x1 = self.BigTimeDomain.particles.x.to_numpy() * self.BigTimeDomain.scale + self.BigTimeDomain.offset
+        transformed_x2 = self.SmallTimeDomain.particles.x.to_numpy() * self.SmallTimeDomain.scale + self.SmallTimeDomain.offset
         self.gui.circles(transformed_x1, radius=1.5, color=0x068587)
         self.gui.circles(transformed_x2, radius=1.5, color=0xED553B)
 
         #绘制边界粒子
-        self.gui.circles(transformed_x1[self.Domain1.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
-        self.gui.circles(transformed_x2[self.Domain2.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
+        self.gui.circles(transformed_x1[self.BigTimeDomain.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
+        self.gui.circles(transformed_x2[self.SmallTimeDomain.particles.is_boundary_particle.to_numpy().astype(bool)], radius=1.5, color=0x66CCFF)
 
         #绘制grid网格
         if self.visualize_grid:
-            self.gui.lines(np.array(self.Domain1.grid.get_lines_begin()), np.array(self.Domain1.grid.get_lines_end()), radius=0.8, color=0x068587)
-            self.gui.lines(np.array(self.Domain2.grid.get_lines_begin()), np.array(self.Domain2.grid.get_lines_end()), radius=0.8, color=0xED553B)
+            self.gui.lines(np.array(self.BigTimeDomain.grid.get_lines_begin()), np.array(self.BigTimeDomain.grid.get_lines_end()), radius=0.8, color=0x068587)
+            self.gui.lines(np.array(self.SmallTimeDomain.grid.get_lines_begin()), np.array(self.SmallTimeDomain.grid.get_lines_end()), radius=0.8, color=0xED553B)
 
         self.gui.show()
         # 合并两域粒子数据
@@ -266,11 +270,11 @@ class MPM_Schwarz:
         
         # 生成颜色索引 (0:域1普通, 1:域2普通, 2:边界)
         d1_colors = np.where(
-            self.Domain1.particles.is_boundary_particle.to_numpy(),
+            self.BigTimeDomain.particles.is_boundary_particle.to_numpy(),
             2, 0
         )
         d2_colors = np.where(
-            self.Domain2.particles.is_boundary_particle.to_numpy(),
+            self.SmallTimeDomain.particles.is_boundary_particle.to_numpy(),
             2, 1
         )
         all_colors = np.concatenate([d1_colors, d2_colors]).astype(np.uint32)
