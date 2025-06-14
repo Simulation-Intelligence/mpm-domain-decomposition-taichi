@@ -73,7 +73,11 @@ class ImplicitMPM:
     def pre_p2g(self):
         self.grid.clear()
         self.particles.build_neighbor_list()
-        
+
+    def post_p2g(self):
+        self.solver.save_previous_velocity()
+        self.grid.apply_boundary_conditions()
+
     def step(self):
         for _ in range(self.max_iter):
             self.pre_p2g()
