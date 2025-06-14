@@ -86,59 +86,6 @@ class MPM_Schwarz:
         """
         self.project_to_big_time_domain_boundary(self.SmallTimeDomain.grid.v, self.BigTimeDomain.grid.boundary_v)
         self.project_to_small_time_domain_boundary(self.BigTimeDomain.grid.v, self.SmallTimeDomain.grid.boundary_v)
-        # for I in ti.grouped(self.Domain1.grid.v):
-        #     if self.Domain1.grid.is_particle_boundary_grid[I]:
-        #         m = 0.0
-        #         is_Domain2_boundary = False
-        #         x = ((I * self.Domain1.grid.dx)*self.Domain1.scale + self.Domain1.offset)- self.Domain2.offset
-        #         x = x / self.Domain2.scale
-        #         base = (x * self.Domain2.grid.inv_dx - 0.5).cast(int)
-        #         fx = x * self.Domain2.grid.inv_dx - base.cast(float)
-        #         w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
-        #         self.Domain1.grid.boundary_v[I] = ti.Vector.zero(self.Domain1.grid.float_type, self.Domain1.grid.dim)
-
-        #         for offset in ti.static(ti.grouped(ti.ndrange(*self.Domain1.particles.neighbor))):
-        #             weight = 1.0
-        #             for d in ti.static(range(self.Domain1.grid.dim)):
-        #                 weight *= w[offset[d]][d]
-        #             if self.Domain2.grid.is_particle_boundary_grid[base + offset]:
-        #                 is_Domain2_boundary = True
-        #             m += weight * self.Domain2.grid.m[base + offset]
-        #             self.Domain1.grid.boundary_v[I] += weight * self.Domain2.grid.v[base + offset]* self.Domain2.grid.m[base + offset]
-
-        #         Domain1_set_boundary = self.Domain1.grid.is_particle_boundary_grid[I] and m > 1e-10
-        #         Domain1_set_boundary = Domain1_set_boundary and (not is_Domain2_boundary or self.Domain1.grid.m[I] <m)
-
-        #         if Domain1_set_boundary:
-        #             self.Domain1.grid.is_boundary_grid[I] = [1]*self.Domain1.grid.dim
-        #             self.Domain1.grid.boundary_v[I] = self.Domain1.grid.boundary_v[I] / m
-
-        # for I in ti.grouped(self.Domain2.grid.v):
-        #     if self.Domain2.grid.is_particle_boundary_grid[I]:
-        #         m = 0.0
-        #         is_Domain1_boundary = False
-        #         x = ((I * self.Domain2.grid.dx)*self.Domain2.scale + self.Domain2.offset)- self.Domain1.offset
-        #         x = x / self.Domain1.scale
-        #         base = (x * self.Domain1.grid.inv_dx - 0.5).cast(int)
-        #         fx = x * self.Domain1.grid.inv_dx - base.cast(float)
-        #         w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
-        #         self.Domain2.grid.boundary_v[I] = ti.Vector.zero(self.Domain2.grid.float_type, self.Domain2.grid.dim)
-
-        #         for offset in ti.static(ti.grouped(ti.ndrange(*self.Domain2.particles.neighbor))):
-        #             weight = 1.0
-        #             for d in ti.static(range(self.Domain2.grid.dim)):
-        #                 weight *= w[offset[d]][d]
-        #             if self.Domain1.grid.is_particle_boundary_grid[base + offset]:
-        #                 is_Domain1_boundary = True
-        #             m += weight * self.Domain1.grid.m[base + offset]
-        #             self.Domain2.grid.boundary_v[I] += weight * self.Domain1.grid.v[base + offset]* self.Domain1.grid.m[base + offset]
-
-        #         Domain2_set_boundary = self.Domain2.grid.is_particle_boundary_grid[I] and m > 1e-10
-        #         Domain2_set_boundary = Domain2_set_boundary and (not is_Domain1_boundary or self.Domain2.grid.m[I] < m)
-
-        #         if Domain2_set_boundary:
-        #             self.Domain2.grid.is_boundary_grid[I] = [1]*self.Domain2.grid.dim
-        #             self.Domain2.grid.boundary_v[I] = self.Domain2.grid.boundary_v[I] / m
 
     @ti.kernel
     def project_to_big_time_domain_boundary(self, from_boundary_v: ti.template(), to_boundary_v: ti.template()):
@@ -205,6 +152,14 @@ class MPM_Schwarz:
                     to_boundary_v[I] = to_boundary_v[I] / m
 
     @ti.kernel
+    def linp(dest: ti.template(), a: ti.template(), b: ti.template(), ratio: ti.f32):
+        """
+        将a和b的线性组合存储到dest中
+        """
+        for I in ti.grouped(dest):
+            dest[I] = a[I] * (1 - ratio) + b[I] * ratio
+
+    @ti.kernel
     def apply_average_grid_v(self):
         """
         将网格速度平均到粒子上
@@ -244,7 +199,15 @@ class MPM_Schwarz:
             self.Domain1.post_p2g()
             self.Domain2.post_p2g()
 
+            # 记录上一步网格速度
+            # self.BigTimeDomainTempGridV.copy_from(self.BigTimeDomain.grid.v)
+            # self.SmallTimeDomainTempGridV.copy_from(self.SmallTimeDomain.grid.v)
+
             residuals = []
+
+            # self.exchange_boundary_conditions()
+            # self.SmallTimeDomainBoundaryVLast.copy_from(self.SmallTimeDomain.grid.boundary_v)
+            # self.SmallTimeDomainBoundaryVNext.copy_from(self.SmallTimeDomain.grid.boundary_v)
 
             # 2.迭代求解两个子域
             for i in range(self.max_schwarz_iter):
@@ -256,7 +219,14 @@ class MPM_Schwarz:
 
                 self.Domain1.solve()
                 self.Domain2.solve()
-                
+                # timesteps = self.BigTimeDomain.dt // self.SmallTimeDomain.dt
+                # self.BigTimeDomain.solve()
+
+                # for i in range(timesteps):
+                #     self.linp(self.SmallTimeDomain.grid.boundary_v, self.SmallTimeDomainBoundaryVLast, self.SmallTimeDomainBoundaryVNext, i / timesteps)
+                #     self.SmallTimeDomain.solve()
+                #     self.SmallTimeDomain.post_p2g()
+
             # self.apply_average_grid_v()
 
             self.residuals.append(residuals)
