@@ -157,6 +157,7 @@ class Particles:
                 self.wip[p, offset] = weight
                 self.dwip[p, offset] = weight * dpos
 
+
     @ti.kernel
     def advect(self, dt: ti.f32):
         for p in self.x:
