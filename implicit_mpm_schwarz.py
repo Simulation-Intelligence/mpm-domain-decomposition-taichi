@@ -33,14 +33,27 @@ class MPM_Schwarz:
             self.SmallTimeDomain = self.Domain1
 
         # 小时间步长的domain的时间步长需要调整为大时间步长的整数倍
-        if self.BigTimeDomain.dt % self.SmallTimeDomain.dt != 0:
+        ratio = self.BigTimeDomain.dt / self.SmallTimeDomain.dt
+        import math
+        if not math.isclose(ratio, round(ratio), rel_tol=1e-8):
+            print("big time domain dt:", self.BigTimeDomain.dt,
+                  "small time domain dt:", self.SmallTimeDomain.dt,
+                  "ratio:", ratio)
             raise ValueError("Big time domain dt must be a multiple of small time domain dt.")
+        
+        self.do_small_advect = main_config.get("do_small_advect", True)  # 是否执行小时间步长域的粒子自由运动
         
         # 分配临时数组用于保存网格速度
         self.BigTimeDomainTempGridV = ti.Vector.field(self.BigTimeDomain.grid.dim, self.BigTimeDomain.float_type, (self.BigTimeDomain.grid.size,)*self.BigTimeDomain.grid.dim)
         self.SmallTimeDomainTempGridV = ti.Vector.field(self.SmallTimeDomain.grid.dim, self.SmallTimeDomain.float_type, (self.SmallTimeDomain.grid.size,)*self.SmallTimeDomain.grid.dim)
         self.SmallTimeDomainBoundaryVLast = ti.Vector.field(self.SmallTimeDomain.grid.dim, self.SmallTimeDomain.float_type, (self.SmallTimeDomain.grid.size,)*self.SmallTimeDomain.grid.dim)
         self.SmallTimeDomainBoundaryVNext = ti.Vector.field(self.SmallTimeDomain.grid.dim, self.SmallTimeDomain.float_type, (self.SmallTimeDomain.grid.size,)*self.SmallTimeDomain.grid.dim)
+
+        #临时数组用于保存粒子数据
+        self.SmallTimeDomainTempParticlesX = ti.Vector.field(self.SmallTimeDomain.particles.dim, self.SmallTimeDomain.float_type, self.SmallTimeDomain.particles.n_particles)
+        self.SmallTimeDomainTempParticlesV = ti.Vector.field(self.SmallTimeDomain.particles.dim, self.SmallTimeDomain.float_type, self.SmallTimeDomain.particles.n_particles)
+        self.SmallTimeDomainTempParticlesF = ti.Matrix.field(self.SmallTimeDomain.particles.dim,self.SmallTimeDomain.particles.dim, self.SmallTimeDomain.float_type, self.SmallTimeDomain.particles.n_particles)
+        self.SmallTimeDomainTempParticlesC = ti.Matrix.field(self.SmallTimeDomain.particles.dim,self.SmallTimeDomain.particles.dim, self.SmallTimeDomain.float_type, self.SmallTimeDomain.particles.n_particles)
 
         # 其他公共参数初始化
         self.max_schwarz_iter = main_config.get("max_schwarz_iter", 1)  # Schwarz迭代次数
@@ -86,6 +99,24 @@ class MPM_Schwarz:
         """
         self.project_to_big_time_domain_boundary(self.SmallTimeDomain.grid.v, self.BigTimeDomain.grid.boundary_v)
         self.project_to_small_time_domain_boundary(self.BigTimeDomain.grid.v, self.SmallTimeDomain.grid.boundary_v)
+
+    def save_small_time_domain_particles(self):
+        """
+        保存小时间步长域的粒子数据到临时数组
+        """
+        self.SmallTimeDomainTempParticlesX.copy_from(self.SmallTimeDomain.particles.x)
+        self.SmallTimeDomainTempParticlesV.copy_from(self.SmallTimeDomain.particles.v)
+        self.SmallTimeDomainTempParticlesF.copy_from(self.SmallTimeDomain.particles.F)
+        self.SmallTimeDomainTempParticlesC.copy_from(self.SmallTimeDomain.particles.C)
+
+    def restore_small_time_domain_particles(self):
+        """
+        恢复小时间步长域的粒子数据从临时数组
+        """
+        self.SmallTimeDomain.particles.x.copy_from(self.SmallTimeDomainTempParticlesX)
+        self.SmallTimeDomain.particles.v.copy_from(self.SmallTimeDomainTempParticlesV)
+        self.SmallTimeDomain.particles.F.copy_from(self.SmallTimeDomainTempParticlesF)
+        self.SmallTimeDomain.particles.C.copy_from(self.SmallTimeDomainTempParticlesC)
 
     @ti.kernel
     def project_to_big_time_domain_boundary(self, from_boundary_v: ti.template(), to_boundary_v: ti.template()):
@@ -203,6 +234,8 @@ class MPM_Schwarz:
             self.BigTimeDomainTempGridV.copy_from(self.BigTimeDomain.grid.v)
             self.SmallTimeDomainTempGridV.copy_from(self.SmallTimeDomain.grid.v)
 
+            self.save_small_time_domain_particles()
+
             residuals = []
 
             self.exchange_boundary_conditions()
@@ -220,28 +253,42 @@ class MPM_Schwarz:
                 timesteps = int(self.BigTimeDomain.dt // self.SmallTimeDomain.dt)
                 self.BigTimeDomain.solve()
 
-                for i in range(timesteps):
-                    self.linp(self.SmallTimeDomain.grid.boundary_v, self.SmallTimeDomainBoundaryVLast, self.SmallTimeDomainBoundaryVNext, (i+1) / timesteps)
+                for j in range(timesteps):
+                    self.linp(self.SmallTimeDomain.grid.boundary_v, self.SmallTimeDomainBoundaryVLast, self.SmallTimeDomainBoundaryVNext, (j+1) / timesteps)
                     self.SmallTimeDomain.solve()
-                    if i < timesteps - 1:
+                    self.SmallTimeDomain.g2p(self.SmallTimeDomain.dt)
+                    if self.do_small_advect:
+                        self.SmallTimeDomain.particles.advect(self.SmallTimeDomain.dt)
+                        self.SmallTimeDomain.pre_p2g()
+                        self.SmallTimeDomain.p2g()
+                        self.SmallTimeDomain.post_p2g()
+                    else:
                         self.SmallTimeDomain.solver.save_previous_velocity()
-                
+
                 if i < self.max_schwarz_iter - 1:
                     self.exchange_boundary_conditions()
                     self.SmallTimeDomainBoundaryVNext.copy_from(self.SmallTimeDomain.grid.boundary_v) 
-                    self.SmallTimeDomain.grid.v_prev.copy_from(self.SmallTimeDomainTempGridV)
+                    if self.do_small_advect:
+                        self.restore_small_time_domain_particles()
+                    else:
+                        self.SmallTimeDomain.grid.v_prev.copy_from(self.SmallTimeDomainTempGridV)
+
+                if not self.do_small_advect:
+                    self.restore_small_time_domain_particles()
 
             # self.apply_average_grid_v()
 
             self.residuals.append(residuals)
 
             # 3.G2P: 将网格的速度传递回粒子上
-            self.BigTimeDomain.g2p()
-            self.SmallTimeDomain.g2p()
-
             # 4.粒子自由运动
+            self.BigTimeDomain.g2p(self.BigTimeDomain.dt)
             self.BigTimeDomain.particles.advect(self.BigTimeDomain.dt)
-            self.SmallTimeDomain.particles.advect(self.BigTimeDomain.dt)
+            
+
+            if not self.do_small_advect:
+                self.SmallTimeDomain.g2p(self.BigTimeDomain.dt)
+                self.SmallTimeDomain.particles.advect(self.BigTimeDomain.dt)
 
     def render(self):
         transformed_x1 = self.BigTimeDomain.particles.x.to_numpy() * self.BigTimeDomain.scale + self.BigTimeDomain.offset

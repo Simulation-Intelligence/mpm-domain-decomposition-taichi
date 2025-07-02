@@ -90,7 +90,7 @@ class ImplicitMPM:
             
             self.solve()
             
-            self.g2p()
+            self.g2p(self.dt)
             self.particles.advect(self.dt)
 
     @ti.kernel
@@ -112,7 +112,7 @@ class ImplicitMPM:
                 self.grid.v[I] /= self.grid.m[I]
 
     @ti.kernel
-    def g2p(self):
+    def g2p(self, dt: ti.f32):
         for p in self.particles.x:
             Xp = self.particles.x[p] / self.grid.dx
             base = (Xp - 0.5).cast(int)
@@ -127,9 +127,29 @@ class ImplicitMPM:
                 new_C += 4*  g_v.outer_product(self.particles.dwip[p, offset])
                 
             self.particles.v[p] = new_v
-            self.particles.F[p] = (ti.Matrix.identity(self.float_type, self.grid.dim) + self.dt * self.particles.C[p]) @ self.particles.F[p]
+            if self.implicit:
+                self.particles.F[p] = (ti.Matrix.identity(self.float_type, self.grid.dim) + dt * new_C) @ self.particles.F[p]
+            else:
+                self.particles.F[p] = (ti.Matrix.identity(self.float_type, self.grid.dim) + dt * self.particles.C[p]) @ self.particles.F[p]
             self.particles.C[p] = new_C
 
+    @ti.kernel
+    def update_F(self, dt: ti.f32):
+        for p in self.particles.x:
+            Xp = self.particles.x[p] / self.grid.dx
+            base = (Xp - 0.5).cast(int)
+
+            new_C = ti.Matrix.zero(self.float_type, self.dim, self.dim)
+
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
+                grid_idx = base + offset
+                g_v = self.grid.v[grid_idx]
+                new_C += 4*  g_v.outer_product(self.particles.dwip[p, offset])
+
+            if self.implicit:
+                self.particles.F[p] = (ti.Matrix.identity(self.float_type, self.grid.dim) + dt * new_C) @ self.particles.F[p]
+            else:
+                self.particles.F[p] = (ti.Matrix.identity(self.float_type, self.grid.dim) + dt * self.particles.C[p]) @ self.particles.F[p]
 
     @ti.kernel
     def solve_explicit(self):
