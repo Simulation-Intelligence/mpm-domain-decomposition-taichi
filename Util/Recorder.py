@@ -20,7 +20,7 @@ class ParticleRecorder:
         self.lines_end = lines_end if lines_end is not None else np.array([], dtype=np.float32)
         self.lines_color = lines_color if lines_color is not None else np.array([], dtype=np.uint32)
 
-        self.gui=ti.GUI("Record", res=1200)
+        self.gui=ti.GUI("Record", res=800)
 
 
     def capture(self, positions: np.ndarray, color_indices: np.ndarray):

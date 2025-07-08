@@ -173,14 +173,14 @@ class ImplicitSolver:
             
             base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int) 
 
-            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
+            for offset in ti.grouped(ti.ndrange(*self.neighbor)):
                 FTw=4 * self.dt * F.transpose() @ self.particles.dwip[p, offset]
                 FWWF=F_inv_T @ FTw.outer_product(FTw) @ F_inv 
                 h1=self.mu *FTw.dot(FTw) * ti.Matrix.identity(self.float_type, self.dim) 
                 h2=self.mu * FWWF 
                 h3=self.lam * (1-ti.log(J)) * FWWF
                 hessian=(h1+h2+h3)*self.particles.p_vol
-                
+
                 U ,sig, V = ti.svd(hessian)
                 for i in ti.static(range(self.dim)):
                     if sig[i,i] < 0:
@@ -189,8 +189,9 @@ class ImplicitSolver:
 
                 grid_idx = (base + offset) % self.grid.size
                 vidx = self.get_idx(grid_idx)
-                for i in ti.static(range(self.dim)):
-                    for j in ti.static(range(self.dim)):
+
+                for (i,j) in ti.static(ti.ndrange(self.dim, self.dim)):
+                    if not self.grid.is_boundary_grid[grid_idx][i] and not self.grid.is_boundary_grid[grid_idx][j]:
                         hess[vidx+i, vidx+j] += hessian[i,j]
 
 
@@ -201,7 +202,10 @@ class ImplicitSolver:
             m= 1 if self.grid.m[I] ==0 else self.grid.m[I]
 
             for d in ti.static(range(self.dim)):
-                hess[vidx+d, vidx+d] += m
+                if not self.grid.is_boundary_grid[I][d]:
+                    hess[vidx+d, vidx+d] += m
+                else:
+                    hess[vidx+d, vidx+d] += 1.0
 
     def compute_energy(self, v_flat: ti.template()):
         self.grid.set_boundary_v_grid(v_flat)
@@ -277,12 +281,13 @@ class ImplicitSolver:
 
     def set_hess_DBC(self, hess):
         num_rows = self.grid.size**self.dim * self.dim
-        hess1=ti.linalg.SparseMatrixBuilder(num_rows, num_rows, max_num_triplets=(num_rows)**self.dim, dtype=self.float_type)
+        hess1=ti.linalg.SparseMatrixBuilder(num_rows, num_rows, max_num_triplets=(num_rows)**2, dtype=self.float_type)
         hess2=ti.linalg.SparseMatrixBuilder(num_rows, num_rows, max_num_triplets=num_rows, dtype=self.float_type)
         self.grid.get_boundary_hess(hess1,hess2)
         H1=hess1.build()
         H2=hess2.build()
-        hess= hess * H1 + H2
+        # hess= hess * H1 + H2
+        hess= hess + H2
 
 
     def save_previous_velocity(self):

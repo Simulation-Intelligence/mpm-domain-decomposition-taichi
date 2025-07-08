@@ -95,8 +95,8 @@ class Newton:
             self.hess_fn(self.x, H_builder)
             H = H_builder.build()
 
-            if self.DBC_fn is not None:
-                self.DBC_fn(H)
+            # if self.DBC_fn is not None:
+            #     self.DBC_fn(H)
 
 
             # 构建右端项

@@ -28,6 +28,13 @@ class Grid:
         self.boundary_v = ti.Vector.field(dim, self.float_type, (size,)*dim)
         self.is_particle_boundary_grid = ti.field(ti.i32, (size,)*dim)
 
+    @ti.func
+    def get_idx(self, I):
+        idx = 0
+        for d in ti.static(range(self.dim)):
+            idx += I[d] * self.size ** (self.dim-1-d) *self.dim
+        return idx
+    
     @ti.kernel
     def apply_boundary_conditions_explicit(self):
         for I in ti.grouped(self.v):
@@ -51,33 +58,42 @@ class Grid:
     @ti.kernel
     def set_boundary_v_grid(self,v_grad: ti.template()):
         for I in ti.grouped(self.is_boundary_grid):
+            idx = self.get_idx(I)
             for d in ti.static(range(self.dim)):
                 if self.is_boundary_grid[I][d]:
-                    idx= I[0] * self.size * 2 + I[1] * 2 + d
-                    v_grad[idx] = self.boundary_v[I][d]
+                    v_grad[idx+ d] = self.boundary_v[I][d]
             
     @ti.kernel
     def set_boundary_grad(self,grad: ti.template()):
         for I in ti.grouped(self.is_boundary_grid):
+            idx = self.get_idx(I)
             for d in ti.static(range(self.dim)):
                 if self.is_boundary_grid[I][d]:
-                    idx= I[0] * self.size * 2 + I[1] * 2 + d
-                    grad[idx] = 0.0 
+                    grad[idx+d] = 0.0 
 
     @ti.kernel
     def get_boundary_hess(self,hess1:ti.sparse_matrix_builder(),hess2:ti.sparse_matrix_builder()):
         for I in ti.grouped(self.is_boundary_grid):
+            idx1 = self.get_idx(I)
             for d1 in ti.static(range(self.dim)):
-                idx1= I[0] * self.size * 2 + I[1] * 2 + d1
-                if not self.is_boundary_grid[I][d1] :
-                    for i, j in ti.static(ti.ndrange(self.dim, self.dim)):
-                        for d2 in ti.static(range(self.dim)):
-                            idx2= i * self.size * 2 + j * 2 + d2
-                            if not self.is_boundary_grid[i, j][d2]:
-                                hess1[idx1, idx2] +=1.0
-                else:
-                    hess2[idx1, idx1] += 1.0
-
+                # if self.is_boundary_grid[I][d1]:
+                hess2[idx1 + d1, idx1 + d1] += 1.0
+                # if not self.is_boundary_grid[I][d1] :
+                #     if ti.static(self.dim ==2):
+                #         for i, j in ti.static(ti.ndrange(self.dim, self.dim)):
+                #             for d2 in ti.static(range(self.dim)):
+                #                 idx2= i * self.size * 2 + j * 2 + d2
+                #                 if not self.is_boundary_grid[i, j][d2]:
+                #                     hess1[idx1+d1 , idx2] +=1.0
+                #     elif ti.static(self.dim ==3):
+                #         for i, j, k in ti.static(ti.ndrange(self.dim, self.dim, self.dim)):
+                #             for d2 in ti.static(range(self.dim)):
+                #                 idx2 = i * self.size**2 * 3 + j * self.size * 3 + k * 3 + d2
+                #                 if not self.is_boundary_grid[i, j, k][d2]:
+                #                     hess1[idx1+d1 , idx2] +=1.0
+                                
+                # else:
+                #     hess2[idx1+d1, idx1+d1] += 1.0
 
     @ti.kernel
     def set_boundary_v(self):
