@@ -4,6 +4,8 @@ from Util.Recorder import *
 
 import matplotlib.pyplot as plt
 
+from Util.Project import project
+
 @ti.data_oriented
 class MPM_Schwarz:
     def __init__(self, main_config: Config):
@@ -293,6 +295,11 @@ class MPM_Schwarz:
     def render(self):
         transformed_x1 = self.BigTimeDomain.particles.x.to_numpy() * self.BigTimeDomain.scale + self.BigTimeDomain.offset
         transformed_x2 = self.SmallTimeDomain.particles.x.to_numpy() * self.SmallTimeDomain.scale + self.SmallTimeDomain.offset
+
+        if self.BigTimeDomain.particles.dim == 3:
+            transformed_x1 = project(transformed_x1, self.BigTimeDomain.particles.dim)
+            transformed_x2 = project(transformed_x2, self.SmallTimeDomain.particles.dim)
+
         self.gui.circles(transformed_x1, radius=1.5, color=0x068587)
         self.gui.circles(transformed_x2, radius=1.5, color=0xED553B)
 
@@ -334,7 +341,7 @@ class MPM_Schwarz:
 # ------------------ 主程序 ------------------
 if __name__ == "__main__":
     # 读取配置文件
-    cfg = Config(path="config/schwarz.json")
+    cfg = Config(path="config/schwarz_2d.json")
     float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64        
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":

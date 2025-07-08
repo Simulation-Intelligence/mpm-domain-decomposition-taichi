@@ -2,11 +2,11 @@
     "arch": "cpu",
     "float_type": "f64",
     "dim": 3,
-    "grid_size": 8,
-    "particles_per_grid": 32,
+    "grid_size": 16,
+    "particles_per_grid": 16,
     "use_possion_sampling": true,
-    "dt": 1e-4,
-    "max_iter": 10,
+    "dt": 1e-3,
+    "max_iter": 1,
     "solve_max_iter": 1000,
     "solve_init_iter": 100,
     "E": 1e6,
@@ -25,8 +25,8 @@
                 0.6
             ],
             [
-                0.4,
-                0.6
+                0.3,
+                0.5
             ],
             [
                 0.4,
@@ -40,15 +40,15 @@
             0.6
         ],
         [
-            0.4,
-            0.6
+            0.3,
+            0.5
         ],
         [
             0.4,
             0.6
         ]
     ],
-    "implicit_solver": "BFGS",
+    "implicit_solver": "Newton",
     "eta": 1e-2,
     "record_frames": 160
 }

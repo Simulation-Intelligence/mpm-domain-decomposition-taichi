@@ -3,7 +3,7 @@
     "float_type": "f64",
     "dim": 2,
     "grid_size": 32,
-    "particles_per_grid": 8,
+    "particles_per_grid": 16,
     "use_possion_sampling": true,
     "dt": 1e-3,
     "max_iter": 1,
