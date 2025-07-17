@@ -13,3 +13,5 @@ run schwarz mpm with the following command:
 ```
 python implicit_mpm_schwarz.py
 ```
+
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Simulation-Intelligence/mpm-domain-decomposition-taichi)
