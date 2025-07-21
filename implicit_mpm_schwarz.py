@@ -261,9 +261,10 @@ class MPM_Schwarz:
                     self.SmallTimeDomain.g2p(self.SmallTimeDomain.dt)
                     if self.do_small_advect:
                         self.SmallTimeDomain.particles.advect(self.SmallTimeDomain.dt)
-                        self.SmallTimeDomain.pre_p2g()
-                        self.SmallTimeDomain.p2g()
-                        self.SmallTimeDomain.post_p2g()
+                        if j < timesteps - 1:
+                            self.SmallTimeDomain.pre_p2g_sub()
+                            self.SmallTimeDomain.p2g()
+                            self.SmallTimeDomain.post_p2g()
                     else:
                         self.SmallTimeDomain.solver.save_previous_velocity()
 
@@ -271,7 +272,10 @@ class MPM_Schwarz:
                     self.exchange_boundary_conditions()
                     self.SmallTimeDomainBoundaryVNext.copy_from(self.SmallTimeDomain.grid.boundary_v) 
                     if self.do_small_advect:
-                        self.restore_small_time_domain_particles()
+                        self.restore_small_time_domain_particles()                        
+                        self.SmallTimeDomain.pre_p2g_sub()
+                        self.SmallTimeDomain.p2g()
+                        self.SmallTimeDomain.post_p2g()
                     else:
                         self.SmallTimeDomain.grid.v_prev.copy_from(self.SmallTimeDomainTempGridV)
 
