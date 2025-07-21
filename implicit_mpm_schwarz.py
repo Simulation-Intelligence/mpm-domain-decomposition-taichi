@@ -345,7 +345,7 @@ class MPM_Schwarz:
 # ------------------ 主程序 ------------------
 if __name__ == "__main__":
     # 读取配置文件
-    cfg = Config(path="config/schwarz_2d.json")
+    cfg = Config(path="config/schwarz_2d_beam.json")
     float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64        
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":

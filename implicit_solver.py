@@ -30,6 +30,14 @@ class ImplicitSolver:
         nu = config.get("nu", 0.4)
         self.mu = E / (2*(1+nu))
         self.lam = E*nu/((1+nu)*(1-2*nu))
+
+        self.damping = config.get("damping", 0.0)
+
+        default_gravity = [0.0, 0.0] if self.dim == 2 else [0.0, 0.0, 0.0]
+        gravity = config.get("gravity", default_gravity)
+        self.gravity = ti.Vector(gravity)
+
+        
         self.v_grad=ti.field(self.float_type, grid.size**self.dim * self.dim,needs_grad=True)
         self.grad_save=ti.field(self.float_type, grid.size**self.dim * self.dim)
         self.total_energy = ti.field(self.float_type, shape=(), needs_grad=True)
@@ -112,6 +120,13 @@ class ImplicitSolver:
             vel = self.get_vel(v_flat,vidx)
             self.total_energy[None] += 0.5 * self.grid.m[I] * (vel - self.grid.v_prev[I]).norm_sqr()
 
+            # 计算重力势能
+            pos = I * self.grid.dx + vel * self.dt
+            self.total_energy[None] -= self.gravity.dot(pos) * self.grid.m[I]
+
+            # 计算阻尼
+            self.total_energy[None] += 0.5 * self.damping * self.grid.m[I] * vel.norm_sqr()
+
     @ti.kernel
     def manual_particle_energy_grad(self, v_flat: ti.template(), grad_flat: ti.template()):
         for p in range(self.particles.n_particles):
@@ -150,6 +165,9 @@ class ImplicitSolver:
             vidx = self.get_idx(I)
             vel = self.get_vel(v_flat,vidx)
             grad = self.grid.m[I] * (vel - self.grid.v_prev[I])
+            grad -= self.gravity * self.dt * self.grid.m[I]
+            grad += self.damping * vel * self.grid.m[I] 
+
 
             # 累加梯度
             for d in ti.static(range(self.dim)):
@@ -199,7 +217,8 @@ class ImplicitSolver:
     def manual_grid_energy_hess(self,hess: ti. sparse_matrix_builder()):
         for I in ti.grouped(self.grid.v):
             vidx= self.get_idx(I)
-            m= 1 if self.grid.m[I] ==0 else self.grid.m[I]
+            m = self.grid.m[I] *(1+ self.damping)
+            m= 1 if m ==0 else m
 
             for d in ti.static(range(self.dim)):
                 if not self.grid.is_boundary_grid[I][d]:

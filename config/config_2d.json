@@ -3,7 +3,7 @@
     "float_type": "f64",
     "dim": 2,
     "grid_size": 32,
-    "particles_per_grid": 16,
+    "particles_per_grid": 32,
     "use_possion_sampling": true,
     "dt": 1e-3,
     "max_iter": 1,
@@ -11,14 +11,18 @@
     "solve_init_iter": 100,
     "E": 1e6,
     "nu": 0.3,
-    "damping": 1e-3,
+    "damping": 1e-1,
     "implicit": true,
     "use_auto_diff": false,
     "compare_diff": false,
     "bound": 2,
     "boundary_size": 0.01,
     "p_rho": 1e3,
-    "initial_velocity_y": -2.0,
+    "initial_velocity_y": -0.0,
+    "gravity": [
+        0.0,
+        -9.81
+    ],
     "initial_position_range": [
         [
             [
@@ -39,18 +43,6 @@
         [
             0.1,
             0.4
-        ]
-    ],
-    "DBC_range": [
-        [
-            [
-                0.4,
-                0.6
-            ],
-            [
-                0.3,
-                0.4
-            ]
         ]
     ],
     "implicit_solver": "Newton",
