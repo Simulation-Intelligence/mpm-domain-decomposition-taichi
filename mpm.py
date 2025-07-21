@@ -22,6 +22,7 @@ class MPM3D:
             self.gravity = config.get('gravity',ti.Vector([0, -9.8]))
         else:
             self.gravity = config.get('gravity', ti.Vector([0, -9.8, 0]))
+            
         self.bound = 3
         self.E = config.get('youngs_modulus', 40)
         self.nu = config.get('poisson_ratio', 0.4)
