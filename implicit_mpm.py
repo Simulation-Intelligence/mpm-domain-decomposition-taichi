@@ -24,10 +24,7 @@ class ImplicitMPM:
         self.dim = config.get("dim", 2)
     
         self.grid = Grid(
-            size=self.cfg.get("grid_size", 16),
-            dim=self.dim,
-            bound=self.cfg.get("bound", 2),
-            float_type=self.float_type
+            config
         )
         self.particles = Particles(self.cfg,common_particles=common_particles)
         self.implicit = self.cfg.get("implicit", True)
@@ -72,6 +69,10 @@ class ImplicitMPM:
 
     def pre_p2g(self):
         self.grid.clear()
+        self.particles.build_neighbor_list()
+
+    def pre_p2g_sub(self):
+        self.grid.clear_sub()
         self.particles.build_neighbor_list()
 
     def post_p2g(self):
@@ -206,7 +207,7 @@ class ImplicitMPM:
 
 if __name__ == "__main__":
 
-    cfg=Config("config/config_3d.json")
+    cfg=Config("config/config_2d.json")
     float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64        
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":

@@ -8,12 +8,13 @@ import numpy as np
 class Particles:
     def __init__(self, config,common_particles:'Particles'=None):
         self.dim = config.get("dim", 2)
+        self.float_type = ti.f32 if config.get("float_type", "f32") == "f32" else ti.f64
         default_init_pos_range = [[0.3, 0.6], [0.3, 0.6]] if self.dim == 2 else [[0.3, 0.6], [0.3, 0.6], [0.3, 0.6]]
         init_pos_range = config.get("initial_position_range", [default_init_pos_range])
         boundary_range = config.get("boundary_range", None)
         self.num_areas = len(init_pos_range)
-        self.init_pos_range = ti.Vector.field(2, ti.f32, shape=(self.num_areas, self.dim))
-        self.boundary_range = ti.Vector.field(2, ti.f32, shape=(self.dim))
+        self.init_pos_range = ti.Vector.field(2, self.float_type, shape=(self.num_areas, self.dim))
+        self.boundary_range = ti.Vector.field(2, self.float_type, shape=(self.dim))
         self.neighbor = (3,) * self.dim
 
         for i in ti.static(range(self.num_areas)):
@@ -24,7 +25,7 @@ class Particles:
             for d in ti.static(range(self.dim)):
                 self.boundary_range[d] = ti.Vector(boundary_range[d])
 
-        self.areas = ti.field(ti.f32, self.num_areas)
+        self.areas = ti.field(self.float_type, self.num_areas)
         for i in ti.static(range(self.num_areas)):
             area = 1.0
             for d in ti.static(range(self.dim)):
@@ -53,13 +54,13 @@ class Particles:
             self.common_particles = common_particles
 
         self.use_possion_sampling = config.get("use_possion_sampling", True)
-        self.pos_possion = ti.Vector.field(self.dim, ti.f32, shape=max_n_per_area)
+        self.pos_possion = ti.Vector.field(self.dim, self.float_type, shape=max_n_per_area)
         self.p_rho = config.get("p_rho", 1)
         self.p_vol = (1.0/self.grid_size)**self.dim / self.particles_per_grid
         self.p_mass = self.p_vol * self.p_rho
         self.boundary_size= config.get("boundary_size", 0.05)
 
-        float_type = ti.f32 if config.get("float_type", "f32") == "f32" else ti.f64
+        float_type = self.float_type if config.get("float_type", "f32") == "f32" else ti.f64
 
         self.float_type = float_type
         
@@ -67,7 +68,6 @@ class Particles:
         self.v = ti.Vector.field(self.dim, self.float_type, self.n_particles)
         self.F = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
         self.C = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
-        self.temp_P = ti.Matrix.field(self.dim,self.dim, self.float_type, self.n_particles)
 
         shape = (self.n_particles, 3,3) if self.dim == 2 else (self.n_particles, 3,3,3)
         self.wip=ti.field(self.float_type, shape)
