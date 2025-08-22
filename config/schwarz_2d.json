@@ -1,0 +1,108 @@
+{
+    "max_schwarz_iter": 5,
+    "record_frames": 50,
+    "visualize_grid": false,
+    "steps": 1,
+    "arch": "cpu",
+    "float_type": "f64",
+    "use_mass_boundary": true,
+    "do_small_advect": true,
+    "Domain1": {
+        "arch": "cpu",
+        "float_type": "f64",
+        "dim": 2,
+        "grid_size": 15,
+        "offset": [
+            0.07,
+            0.0
+        ],
+        "scale": 1.0,
+        "particles_per_grid": 8,
+        "dt": 1e-3,
+        "max_iter": 1,
+        "solve_max_iter": 1000,
+        "solve_init_iter": 100,
+        "E": 1e6,
+        "nu": 0.3,
+        "implicit": true,
+        "use_auto_diff": false,
+        "compare_diff": false,
+        "bound": 2,
+        "boundary_size": 0.01,
+        "p_rho": 1e3,
+        "initial_velocity_y": -2.0,
+        "initial_position_range": [
+            [
+                [
+                    0.2,
+                    0.8
+                ],
+                [
+                    0.2,
+                    0.5
+                ]
+            ]
+        ],
+        "boundary_range": [
+            [
+                0.2,
+                0.8
+            ],
+            [
+                0.2,
+                0.5
+            ]
+        ],
+        "implicit_solver": "Newton",
+        "eta": 1e-4
+    },
+    "Domain2": {
+        "arch": "cpu",
+        "float_type": "f64",
+        "dim": 2,
+        "grid_size": 11,
+        "offset": [
+            0.0,
+            0.0
+        ],
+        "scale": 1.0,
+        "particles_per_grid": 8,
+        "dt": 1e-4,
+        "max_iter": 1,
+        "solve_max_iter": 1000,
+        "solve_init_iter": 100,
+        "E": 1e6,
+        "nu": 0.3,
+        "implicit": true,
+        "use_auto_diff": false,
+        "compare_diff": false,
+        "bound": 2,
+        "boundary_size": 0.01,
+        "p_rho": 1e3,
+        "initial_velocity_y": -2.0,
+        "initial_position_range": [
+            [
+                [
+                    0.4,
+                    0.6
+                ],
+                [
+                    0.3,
+                    0.6
+                ]
+            ]
+        ],
+        "boundary_range": [
+            [
+                0.4,
+                0.6
+            ],
+            [
+                0.3,
+                0.6
+            ]
+        ],
+        "implicit_solver": "Newton",
+        "eta": 1e-4
+    }
+}
