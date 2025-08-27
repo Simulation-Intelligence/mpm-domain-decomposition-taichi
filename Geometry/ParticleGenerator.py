@@ -20,7 +20,8 @@ class ShapeConfig:
                 shapes.append({
                     "type": shape_config.get("type", "rectangle"),
                     "params": shape_config.get("params", {}),
-                    "operation": shape_config.get("operation", "add")  # add/subtract
+                    "operation": shape_config.get("operation", "add"),  # add/subtract
+                    "material_id": shape_config.get("material_id", 0)
                 })
         
         # 兼容旧格式的initial_position_range
@@ -80,12 +81,21 @@ class ParticleGenerator:
         for i, shape in enumerate(shapes):
             if shape["operation"] == "add":
                 particles = self.generate_particles_for_shape(shape, particles_per_area[i])
-                all_particles.extend(particles)
+                material_id = shape.get("material_id", 0)  # 获取材料ID，默认为0
+                
+                # 为每个粒子添加材料ID信息
+                particles_with_material = []
+                for pos in particles:
+                    particles_with_material.append({
+                        "position": pos,
+                        "material_id": material_id
+                    })
+                all_particles.extend(particles_with_material)
         
         # 应用所有挖空操作
         for shape in shapes:
             if shape["operation"] == "subtract":
-                all_particles = self._remove_particles_in_shape(all_particles, shape)
+                all_particles = self._remove_particles_in_shape_with_material(all_particles, shape)
         
         return all_particles
     
@@ -173,10 +183,20 @@ class ParticleGenerator:
         
         return remaining_particles
     
+    def _remove_particles_in_shape_with_material(self, particles, shape):
+        """从包含材料ID的粒子列表中移除在指定形状内的粒子"""
+        remaining_particles = []
+        
+        for particle in particles:
+            particle_pos = particle["position"]
+            if not self._is_particle_in_shape(particle_pos, shape):
+                remaining_particles.append(particle)
+        
+        return remaining_particles
+    
     def _poisson_sampling_with_radius(self, region_size, n_particles):
         """执行Poisson采样并返回半径信息"""
         import io
-        import sys
         from contextlib import redirect_stdout
         
         # 捕获输出以提取半径信息
@@ -289,16 +309,35 @@ class ParticleInitializer:
         self.float_type = float_type
         self.init_vel_y = init_vel_y
     
-    def initialize_particle_fields(self, positions, x_field, v_field, F_field, C_field):
+    def initialize_particle_fields(self, particle_data, x_field, v_field, F_field, C_field, material_id_field=None):
         """初始化粒子的各种属性字段"""
         import taichi as ti
-        n_particles = len(positions)
+        n_particles = len(particle_data)
+        
+        # 处理两种格式：旧格式(只有位置)和新格式(包含材料ID)
+        positions = []
+        material_ids = []
+        
+        for data in particle_data:
+            if isinstance(data, dict) and "position" in data:
+                # 新格式：包含位置和材料ID
+                positions.append(data["position"])
+                material_ids.append(data.get("material_id", 0))
+            else:
+                # 旧格式：只有位置信息
+                positions.append(data)
+                material_ids.append(0)
         
         # 创建临时numpy数组用于传递粒子位置
         numpy_dtype = np.float32 if self.float_type == ti.f32 else np.float64
         positions_np = np.array(positions, dtype=numpy_dtype)
+        material_ids_np = np.array(material_ids, dtype=np.int32)
+        
         temp_positions = ti.Vector.field(self.dim, self.float_type, shape=n_particles)
+        temp_material_ids = ti.field(ti.i32, shape=n_particles)
+        
         temp_positions.from_numpy(positions_np)
+        temp_material_ids.from_numpy(material_ids_np)
         
         # 初始化粒子属性
         @ti.kernel
@@ -311,4 +350,13 @@ class ParticleInitializer:
                 F_field[i] = ti.Matrix.identity(self.float_type, self.dim)
                 C_field[i] = ti.Matrix.zero(self.float_type, self.dim, self.dim)
         
+        @ti.kernel
+        def init_material_ids():
+            for i in range(n_particles):
+                material_id_field[i] = temp_material_ids[i]
+        
         init_kernel()
+        
+        # 设置材料ID（如果提供了material_id_field）
+        if material_id_field is not None:
+            init_material_ids()

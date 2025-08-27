@@ -26,6 +26,7 @@ class ImplicitSolver:
         self.solve_max_iter = config.get("solve_max_iter", 50)
         self.solve_init_iter = config.get("solve_init_iter", 10)
         
+        # 保留兼容性的全局参数，但现在主要使用particles.material_params
         E = config.get("E", 4)
         nu = config.get("nu", 0.4)
         self.mu = E / (2*(1+nu))
@@ -56,11 +57,15 @@ class ImplicitSolver:
 
         eta = config.get("eta", 1)
         if solver_type == "BFGS":
-            self.optimizer = BFGS(energy_fn=self.compute_energy,grad_fn=self.grad_fn, dim=grid.size**self.dim * self.dim,grad_normalizer=self.dt*self.particles.p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
+            # 使用平均p_mass进行梯度归一化
+            avg_p_mass = sum(params["p_mass"] for params in self.particles.material_params.values()) / len(self.particles.material_params)
+            self.optimizer = BFGS(energy_fn=self.compute_energy,grad_fn=self.grad_fn, dim=grid.size**self.dim * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
         elif solver_type == "LBFGS":
             self.optimizer = LBFGS(self.grad_fn, grid.size**self.dim * self.dim, eta=eta,float_type=self.float_type)
         elif solver_type == "Newton":
-            self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=self.set_hess_DBC,dim=grid.size**self.dim * self.dim,grad_normalizer=self.dt*self.particles.p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
+            # 使用平均p_mass进行梯度归一化
+            avg_p_mass = sum(params["p_mass"] for params in self.particles.material_params.values()) / len(self.particles.material_params)
+            self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=self.set_hess_DBC,dim=grid.size**self.dim * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
     def solve(self):
         self.grid.set_boundary_v()
         self.set_initial_guess()
@@ -75,6 +80,7 @@ class ImplicitSolver:
         for d in ti.static(range(self.dim)):
             idx += I[d] * self.grid.size ** (self.dim-1-d) *self.dim
         return idx
+    
     
     @ti.func
     def get_vel(self,v_flat,vidx):
@@ -105,9 +111,10 @@ class ImplicitSolver:
             J = new_F.determinant()
             logJ = ti.log(J)
 
-            e1=0.5*self.mu*(new_F.norm_sqr() - self.dim)
-            e2=-self.mu*logJ
-            e3=0.5*self.lam*(logJ**2)
+            mu, lam = self.particles.get_material_params(p)
+            e1=0.5*mu*(new_F.norm_sqr() - self.dim)
+            e2=-mu*logJ
+            e3=0.5*lam*(logJ**2)
             energy = e1 + e2 + e3
             self.total_energy[None] += energy * self.particles.p_vol
 
@@ -141,9 +148,10 @@ class ImplicitSolver:
             newF_inv_T = newF_T.inverse()
 
             # 导数
-            g1=self.mu * new_F  
-            g2=-self.mu * newF_inv_T 
-            g3=self.lam * ti.log(newJ) * newF_inv_T
+            mu, lam = self.particles.get_material_params(p)
+            g1=mu * new_F  
+            g2=-mu * newF_inv_T 
+            g3=lam * ti.log(newJ) * newF_inv_T
             dE_dvel_grad =(g1+g2+g3)@ F.transpose()*self.particles.p_vol
 
             base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
@@ -194,9 +202,10 @@ class ImplicitSolver:
             for offset in ti.grouped(ti.ndrange(*self.neighbor)):
                 FTw=4 * self.dt * F.transpose() @ self.particles.dwip[p, offset]
                 FWWF=F_inv_T @ FTw.outer_product(FTw) @ F_inv 
-                h1=self.mu *FTw.dot(FTw) * ti.Matrix.identity(self.float_type, self.dim) 
-                h2=self.mu * FWWF 
-                h3=self.lam * (1-ti.log(J)) * FWWF
+                mu, lam = self.particles.get_material_params(p)
+                h1=mu *FTw.dot(FTw) * ti.Matrix.identity(self.float_type, self.dim) 
+                h2=mu * FWWF 
+                h3=lam * (1-ti.log(J)) * FWWF
                 hessian=(h1+h2+h3)*self.particles.p_vol
 
                 U ,sig, V = ti.svd(hessian)

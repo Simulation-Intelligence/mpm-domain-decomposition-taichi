@@ -70,6 +70,27 @@ class Particles:
         
         self.init_vel_y = config.get("initial_velocity_y", -1)
         self.is_boundary_particle = ti.field(ti.i32, self.n_particles)
+        
+        # 材料参数表和粒子材料ID
+        self.material_params = self._parse_material_params(config)
+        self.particle_material_id = ti.field(ti.i32, self.n_particles)
+        
+        # 创建Taichi字段存储材料参数，以便在kernel中访问
+        self.max_materials = 16  # 最大支持16种材料
+        self.material_E = ti.field(self.float_type, self.max_materials)
+        self.material_nu = ti.field(self.float_type, self.max_materials)
+        self.material_rho = ti.field(self.float_type, self.max_materials)
+        self.material_mu = ti.field(self.float_type, self.max_materials)
+        self.material_lambda = ti.field(self.float_type, self.max_materials)
+        self.material_p_mass = ti.field(self.float_type, self.max_materials)
+        
+        # 将材料参数复制到Taichi字段
+        self._copy_material_params_to_fields()
+
+        #检查taichi字段的材料参数
+        for mat_id in range(self.max_materials):
+            if self.material_E[mat_id] != 0:
+                print(f"Material {mat_id}: E={self.material_E[mat_id]}, nu={self.material_nu[mat_id]}, rho={self.material_rho[mat_id]}")
 
         # 初始化组件
         self._init_components(config)
@@ -82,6 +103,79 @@ class Particles:
             self.set_boundary(method="manual")
         else:
             self.set_boundary(method="automatic")
+
+    def _parse_material_params(self, config):
+        """解析材料参数表"""
+        material_params = config.get("material_params", [])
+        if not material_params:
+            # 如果没有材料参数表，使用默认参数
+            E = config.get("E", 4)
+            nu = config.get("nu", 0.4)
+            rho = config.get("p_rho", 1)
+            material_params = [{
+                "id": 0,
+                "name": "default",
+                "E": E,
+                "nu": nu,
+                "rho": rho
+            }]
+        
+        # 构建材料参数字典，以id为键
+        params_dict = {}
+        for param in material_params:
+            mat_id = param["id"]
+            E = param["E"]
+            nu = param["nu"]
+            rho = param.get("rho", config.get("p_rho", 1))
+            
+            # 计算拉梅参数
+            mu = E / (2 * (1 + nu))
+            lam = E * nu / ((1 + nu) * (1 - 2 * nu))
+            
+            # 计算粒子质量：p_mass = p_vol * rho
+            p_mass = self.p_vol * rho
+            
+            params_dict[mat_id] = {
+                "E": E,
+                "nu": nu,
+                "rho": rho,
+                "mu": mu,
+                "lambda": lam,
+                "p_mass": p_mass
+            }
+
+        return params_dict
+    
+    def _copy_material_params_to_fields(self):
+        """将材料参数复制到Taichi字段"""
+        for mat_id, params in self.material_params.items():
+            if mat_id < self.max_materials:
+                self.material_E[mat_id] = params["E"]
+                self.material_nu[mat_id] = params["nu"]
+                self.material_rho[mat_id] = params["rho"]
+                self.material_mu[mat_id] = params["mu"]
+                self.material_lambda[mat_id] = params["lambda"]
+                self.material_p_mass[mat_id] = params["p_mass"]
+
+    @ti.func
+    def get_material_params(self, particle_id):
+        """获取指定粒子的材料参数(Taichi函数)"""
+        material_id = self.particle_material_id[particle_id]
+        mu = self.material_mu[material_id]
+        lam = self.material_lambda[material_id]
+        return mu, lam
+    
+    @ti.func
+    def get_particle_mass(self, particle_id):
+        """获取指定粒子的质量"""
+        material_id = self.particle_material_id[particle_id]
+        return self.material_p_mass[material_id]
+        
+    def get_material_param(self, material_id, param_name):
+        """获取指定材料ID的参数值(Python函数)"""
+        if material_id in self.material_params:
+            return self.material_params[material_id].get(param_name, 0.0)
+        return 0.0
 
     def _init_components(self, config):
         """初始化各种组件"""
@@ -136,7 +230,8 @@ class Particles:
         # 使用粒子初始化器初始化粒子属性
         self.particle_initializer.initialize_particle_fields(
             all_particles[:self.n_particles],
-            self.x, self.v, self.F, self.C
+            self.x, self.v, self.F, self.C,
+            self.particle_material_id
         )
         
         # 处理公共粒子
