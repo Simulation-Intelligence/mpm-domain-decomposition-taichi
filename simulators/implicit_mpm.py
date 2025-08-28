@@ -1,9 +1,13 @@
 import taichi as ti
 
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
 from Geometry.Grid import Grid
 from Geometry.Particles import Particles
 
-from implicit_solver import ImplicitSolver
+from mpm_solver import MPMSolver
 
 from Util.Config import Config
 
@@ -34,16 +38,14 @@ class ImplicitMPM:
         self.scale = self.cfg.get("scale", 1.0)
         self.offset = self.cfg.get("offset", (0, 0))
 
-        default_gravity = [0.0, 0.0] if self.dim == 2 else [0.0, 0.0, 0.0]
-        gravity = config.get("gravity", default_gravity)
-        self.gravity = ti.Vector(gravity)
+        
         
         # 材料参数现在通过particles.material_params访问
 
         self.neighbor = (3,) * self.dim
         
-        if self.implicit:
-            self.solver = ImplicitSolver(self.grid, self.particles, self.cfg)
+        # 统一创建solver，用于参数管理和求解
+        self.solver = MPMSolver(self.grid, self.particles, self.cfg)
 
 
         # 其他公共参数初始化
@@ -59,38 +61,14 @@ class ImplicitMPM:
         )
 
         self.gui= ti.GUI("Implicit MPM", res=800)
-        
-    def solve_explicit(self):
-        self.solve_v_explicit()
-        self.grid.set_boundary_v()
-        return 0
     
-    @ti.kernel
-    def solve_v_explicit(self):
-        for p in range(self.particles.n_particles):
-            Xp = self.particles.x[p] / self.grid.dx
-            base = (Xp - 0.5).cast(int)
-
-            U, sig, V = ti.svd(self.particles.F[p])
-            if sig.determinant() < 0:
-                sig[1,1] = -sig[1,1]
-            self.particles.F[p] = U @ sig @ V.transpose()
-            
-            J = self.particles.F[p].determinant()
-            logJ = ti.log(J)
-            mu, lam = self.particles.get_material_params(p)
-            cauchy = mu * (self.particles.F[p] @ self.particles.F[p].transpose()) + ti.Matrix.identity(self.float_type, self.dim) * (lam * logJ - mu)
-            stress = -(self.particles.p_vol ) * cauchy
-
-            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
-                grid_idx = base + offset
-                self.grid.v[grid_idx] +=4* self.dt * stress @ self.particles.dwip[p,offset] / self.grid.m[grid_idx] + self.dt * self.gravity
+        
 
     def solve(self):
         if self.implicit:
             return self.solver.solve()
         else:
-            return self.solve_explicit()
+            return self.solver.solve_explicit()
 
     def pre_p2g(self):
         self.grid.clear()
@@ -210,6 +188,64 @@ class ImplicitMPM:
             x_numpy,
             self.particles.is_boundary_particle.to_numpy().astype(np.uint32)
         )
+    
+    def save_stress_strain_data(self, frame_number):
+        """保存最终帧的应力和应变数据"""
+        import json
+        import os
+        
+        # 计算当前状态的应力和应变
+        print("正在计算应力和应变...")
+        self.solver.compute_stress_strain()
+        
+        # 获取应力和应变数据
+        stress_data = self.particles.stress.to_numpy()
+        strain_data = self.particles.strain.to_numpy()
+        positions = self.particles.x.to_numpy()
+        
+        # 创建输出目录
+        output_dir = "stress_strain_output"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 保存为numpy文件（用于可视化）
+        np.save(f"{output_dir}/stress_frame_{frame_number}.npy", stress_data)
+        np.save(f"{output_dir}/strain_frame_{frame_number}.npy", strain_data)
+        np.save(f"{output_dir}/positions_frame_{frame_number}.npy", positions)
+        
+        # 计算应力标量值（von Mises应力）
+        von_mises_stress = []
+        for i in range(stress_data.shape[0]):
+            if self.dim == 2:
+                s = stress_data[i]
+                # 2D von Mises应力
+                von_mises = np.sqrt(s[0,0]**2 + s[1,1]**2 - s[0,0]*s[1,1] + 3*s[0,1]**2)
+            else:
+                # 3D von Mises应力
+                s = stress_data[i]
+                von_mises = np.sqrt(0.5*((s[0,0]-s[1,1])**2 + (s[1,1]-s[2,2])**2 + (s[2,2]-s[0,0])**2) + 3*(s[0,1]**2 + s[1,2]**2 + s[2,0]**2))
+            von_mises_stress.append(von_mises)
+        
+        # 保存统计信息
+        stats = {
+            "frame": frame_number,
+            "n_particles": int(stress_data.shape[0]),
+            "dimension": int(self.dim),
+            "von_mises_stress": {
+                "min": float(np.min(von_mises_stress)),
+                "max": float(np.max(von_mises_stress)),
+                "mean": float(np.mean(von_mises_stress)),
+                "std": float(np.std(von_mises_stress))
+            }
+        }
+        
+        with open(f"{output_dir}/stress_strain_stats_frame_{frame_number}.json", 'w') as f:
+            json.dump(stats, f, indent=2)
+        
+        print(f"应力应变数据已保存到 {output_dir}/")
+        print(f"von Mises应力范围: {stats['von_mises_stress']['min']:.3e} - {stats['von_mises_stress']['max']:.3e}")
+        print(f"平均von Mises应力: {stats['von_mises_stress']['mean']:.3e}")
+        
+        return output_dir
 
 if __name__ == "__main__":
 
@@ -236,6 +272,9 @@ if __name__ == "__main__":
 
         # 自动停止条件
         if i >= mpm.recorder.max_frames:
+            # 在最后一帧记录应力和应变数据
+            print("记录最终帧的应力和应变数据...")
+            mpm.save_stress_strain_data(i)
             break
 
     if mpm.recorder is None:

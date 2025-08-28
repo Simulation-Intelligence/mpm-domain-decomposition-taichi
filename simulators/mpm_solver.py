@@ -1,5 +1,7 @@
-
 import taichi as ti
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from Geometry.Grid import Grid
 from Geometry.Particles import Particles
@@ -10,9 +12,9 @@ from Optimizer.Newton import Newton
 
 from Util.Config import Config
 
-# ------------------ 隐式求解器模块 ------------------
+# ------------------ MPM求解器模块 ------------------
 @ti.data_oriented
-class ImplicitSolver:
+class MPMSolver:
     def __init__(self, grid:Grid, particles:Particles, config:Config):
         self.grid = grid
         self.particles = particles
@@ -37,6 +39,9 @@ class ImplicitSolver:
         default_gravity = [0.0, 0.0] if self.dim == 2 else [0.0, 0.0, 0.0]
         gravity = config.get("gravity", default_gravity)
         self.gravity = ti.Vector(gravity)
+        
+        # 解析体积力配置
+        self._parse_volume_forces(config.get("volume_forces", []))
 
         
         self.v_grad=ti.field(self.float_type, grid.size**self.dim * self.dim,needs_grad=True)
@@ -129,7 +134,10 @@ class ImplicitSolver:
 
             # 计算重力势能
             pos = I * self.grid.dx + vel * self.dt
-            self.total_energy[None] -= self.gravity.dot(pos) * self.grid.m[I]
+            total_external_force = self.gravity
+            if self.n_volume_forces > 0:
+                total_external_force += self._get_volume_force_at_position(pos)
+            self.total_energy[None] -= total_external_force.dot(pos) * self.grid.m[I]
 
             # 计算阻尼
             self.total_energy[None] += 0.5 * self.damping * self.grid.m[I] * vel.norm_sqr()
@@ -173,7 +181,14 @@ class ImplicitSolver:
             vidx = self.get_idx(I)
             vel = self.get_vel(v_flat,vidx)
             grad = self.grid.m[I] * (vel - self.grid.v_prev[I])
-            grad -= self.gravity * self.dt * self.grid.m[I]
+            
+            # 计算外部力（重力 + 体积力）
+            pos = I * self.grid.dx + vel * self.dt
+            total_external_force = self.gravity
+            if self.n_volume_forces > 0:
+                total_external_force += self._get_volume_force_at_position(pos)
+            grad -= total_external_force * self.dt * self.grid.m[I]
+            
             grad += self.damping * vel * self.grid.m[I] 
 
 
@@ -305,7 +320,6 @@ class ImplicitSolver:
         self.manual_particle_energy_hess(v_flat, hess)
         self.manual_grid_energy_hess(hess)
         
-        
 
     def set_hess_DBC(self, hess):
         num_rows = self.grid.size**self.dim * self.dim
@@ -338,3 +352,142 @@ class ImplicitSolver:
                 idx += I[d] * self.grid.size ** (self.dim-1-d) *self.dim 
             for d in ti.static(range(self.dim)):
                 self.grid.v[I][d] = self.optimizer.x[idx+d]
+    
+    # =============== Volume Forces Support ===============
+    def _parse_volume_forces(self, volume_forces_config):
+        """解析体积力配置并创建Taichi字段"""
+        self.n_volume_forces = len(volume_forces_config)
+        
+        # 创建Taichi字段存储体积力数据，即使没有体积力也要创建以避免访问错误
+        field_size = max(1, self.n_volume_forces)
+        self.volume_force_types = ti.field(ti.i32, shape=field_size)  # 0: rectangle, 1: ellipse
+        self.volume_force_vectors = ti.Vector.field(self.dim, self.float_type, shape=field_size)
+        
+        # 为矩形力区域存储范围 [min_x, max_x, min_y, max_y, ...]
+        max_range_params = self.dim * 2  # 每个维度的min和max
+        self.volume_force_rect_ranges = ti.field(self.float_type, shape=(field_size, max_range_params))
+        
+        # 为椭圆力区域存储中心和半轴
+        max_ellipse_params = self.dim * 2  # 中心坐标 + 半轴长度
+        self.volume_force_ellipse_params = ti.field(self.float_type, shape=(field_size, max_ellipse_params))
+        
+        # 填充数据
+        if self.n_volume_forces > 0:
+            for i, force_config in enumerate(volume_forces_config):
+                force_type = force_config.get("type", "rectangle")
+                force_vector = force_config.get("force", [0.0] * self.dim)
+                params = force_config.get("params", {})
+                
+                # 设置力向量
+                self.volume_force_vectors[i] = ti.Vector(force_vector)
+                
+                if force_type == "rectangle":
+                    self.volume_force_types[i] = 0
+                    force_range = params.get("range", [])
+                    for d in range(min(self.dim, len(force_range))):
+                        if len(force_range[d]) >= 2:
+                            self.volume_force_rect_ranges[i, d*2] = force_range[d][0]    # min
+                            self.volume_force_rect_ranges[i, d*2+1] = force_range[d][1]  # max
+                            
+                elif force_type == "ellipse":
+                    self.volume_force_types[i] = 1
+                    center = params.get("center", [0.0] * self.dim)
+                    semi_axes = params.get("semi_axes", [1.0] * self.dim)
+                    for d in range(min(self.dim, len(center))):
+                        self.volume_force_ellipse_params[i, d] = center[d]
+                    for d in range(min(self.dim, len(semi_axes))):
+                        self.volume_force_ellipse_params[i, self.dim + d] = semi_axes[d]
+    
+    @ti.func
+    def _get_volume_force_at_position(self, pos):
+        """获取位置处的体积力"""
+        total_force = ti.Vector.zero(self.float_type, self.dim)
+        
+        for i in range(self.n_volume_forces):
+            
+            in_region = False
+            
+            if self.volume_force_types[i] == 0:  # rectangle
+                in_region = True
+                for d in ti.static(range(self.dim)):
+                    min_val = self.volume_force_rect_ranges[i, d*2]
+                    max_val = self.volume_force_rect_ranges[i, d*2+1]
+                    if pos[d] < min_val or pos[d] > max_val:
+                        in_region = False
+                        
+            elif self.volume_force_types[i] == 1:  # ellipse
+                sum_normalized = 0.0
+                for d in ti.static(range(self.dim)):
+                    center_d = self.volume_force_ellipse_params[i, d]
+                    semi_axis_d = self.volume_force_ellipse_params[i, self.dim + d]
+                    diff = pos[d] - center_d
+                    sum_normalized += (diff / semi_axis_d)**2
+                in_region = sum_normalized <= 1.0
+            
+            if in_region:
+                total_force += self.volume_force_vectors[i]
+                
+        return total_force
+
+    # =============== Explicit Solver Methods ===============
+    def solve_explicit(self):
+        """显式求解器"""
+        self.solve_v_explicit()
+        self.grid.set_boundary_v()
+        return 0
+    
+    @ti.kernel
+    def solve_v_explicit(self):
+        """显式求解速度更新"""
+        for p in range(self.particles.n_particles):
+            Xp = self.particles.x[p] / self.grid.dx
+            base = (Xp - 0.5).cast(int)
+
+            U, sig, V = ti.svd(self.particles.F[p])
+            if sig.determinant() < 0:
+                sig[1,1] = -sig[1,1]
+            self.particles.F[p] = U @ sig @ V.transpose()
+            
+            J = self.particles.F[p].determinant()
+            logJ = ti.log(J)
+            mu, lam = self.particles.get_material_params(p)
+            cauchy = mu * (self.particles.F[p] @ self.particles.F[p].transpose()) + ti.Matrix.identity(self.float_type, self.dim) * (lam * logJ - mu)
+            stress = -(self.particles.p_vol ) * cauchy
+
+            # 计算位置处的体积力
+            volume_force = ti.Vector.zero(self.float_type, self.dim)
+            if self.n_volume_forces > 0:
+                volume_force = self._get_volume_force_at_position(self.particles.x[p])
+
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
+                grid_idx = base + offset
+                self.grid.v[grid_idx] +=4* self.dt * stress @ self.particles.dwip[p,offset] / self.grid.m[grid_idx] + self.dt * (self.gravity + volume_force)
+        
+        # 应用阻尼力
+        for I in ti.grouped(self.grid.v):
+            if self.grid.m[I] > 1e-10:
+                # 阻尼力与速度成正比，方向相反
+                damping_force = -self.damping * self.grid.v[I]
+                self.grid.v[I] += self.dt * damping_force
+    
+    @ti.kernel
+    def compute_stress_strain(self):
+        """计算并存储所有粒子的应力和应变（仅在需要时调用）"""
+        for p in range(self.particles.n_particles):
+            # 重新计算应力
+            U, sig, V = ti.svd(self.particles.F[p])
+            if sig.determinant() < 0:
+                sig[1,1] = -sig[1,1]
+            F_corrected = U @ sig @ V.transpose()
+            
+            J = F_corrected.determinant()
+            logJ = ti.log(J)
+            mu, lam = self.particles.get_material_params(p)
+            cauchy = mu * (F_corrected @ F_corrected.transpose()) + ti.Matrix.identity(self.float_type, self.dim) * (lam * logJ - mu)
+            
+            # 存储应力
+            self.particles.stress[p] = cauchy
+            
+            # 计算并存储应变 (Green-Lagrange strain)
+            F_transpose_F = F_corrected.transpose() @ F_corrected
+            self.particles.strain[p] = 0.5 * (F_transpose_F - ti.Matrix.identity(self.float_type, self.dim))

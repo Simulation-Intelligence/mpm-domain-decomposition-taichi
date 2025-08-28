@@ -49,12 +49,20 @@ class Particles:
             self.n_particles += common_particles.n_particles
             self.common_particles = common_particles
 
-        self.use_possion_sampling = config.get("use_possion_sampling", True)
+        # 支持新旧配置格式
+        sampling_method = config.get("sampling_method", None)
+        if sampling_method is not None:
+            # 新格式：sampling_method 可以是 "uniform", "poisson", "regular"
+            self.sampling_method = sampling_method
+        else:
+            # 兼容旧格式：use_possion_sampling 布尔值
+            use_poisson = config.get("use_possion_sampling", True)
+            self.sampling_method = "poisson" if use_poisson else "uniform"
         self.pos_possion = ti.Vector.field(self.dim, self.float_type, shape=max_n_per_area)
         self.p_rho = config.get("p_rho", 1)
         self.p_vol = (1.0/self.grid_size)**self.dim / self.particles_per_grid
         self.p_mass = self.p_vol * self.p_rho
-        self.boundary_size = 0.01
+        self.boundary_size = config.get("boundary_size", None)
 
         self.float_type = self.float_type
         
@@ -63,6 +71,10 @@ class Particles:
         self.v = ti.Vector.field(self.dim, self.float_type, self.n_particles)
         self.F = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
         self.C = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
+        
+        # 应力和应变字段
+        self.stress = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
+        self.strain = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
 
         shape = (self.n_particles, 3,3) if self.dim == 2 else (self.n_particles, 3,3,3)
         self.wip=ti.field(self.float_type, shape)
@@ -99,10 +111,12 @@ class Particles:
         self.initialize()
 
         # 设置边界
-        if boundary_range is not None:
-            self.set_boundary(method="manual")
-        else:
-            self.set_boundary(method="automatic")
+        if self.boundary_size is not None:
+            boundary_range = config.get("boundary_range", None)
+            if boundary_range is not None:
+                self.set_boundary(method="manual")
+            else:
+                self.set_boundary(method="automatic")
 
     def _parse_material_params(self, config):
         """解析材料参数表"""
@@ -182,7 +196,7 @@ class Particles:
         # 粒子生成器
         self.particle_generator = ParticleGenerator(
             dim=self.dim, 
-            use_poisson_sampling=self.use_possion_sampling
+            sampling_method=self.sampling_method
         )
         
         # 粒子初始化器
