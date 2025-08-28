@@ -68,18 +68,25 @@ class ShapeConfig:
 class ParticleGenerator:
     """粒子生成器"""
     
-    def __init__(self, dim=2, use_poisson_sampling=True):
+    def __init__(self, dim=2, sampling_method="poisson"):
+        """
+        初始化粒子生成器
+        Args:
+            dim: 维度 (2 or 3)
+            sampling_method: 采样方式，可选 "uniform", "poisson", "regular"
+        """
         self.dim = dim
-        self.use_poisson_sampling = use_poisson_sampling
+        self.sampling_method = sampling_method
         self.last_poisson_radius = None  # 存储最后使用的Poisson采样半径
     
     def generate_particles_for_shapes(self, shapes, particles_per_area):
-        """为多个形状生成粒子"""
+        """为多个形状生成粒子，按照config中的顺序依次执行添加和挖空操作"""
         all_particles = []
         
-        # 生成所有添加操作的粒子
+        # 按照shapes的顺序依次执行操作
         for i, shape in enumerate(shapes):
             if shape["operation"] == "add":
+                # 添加操作：生成新粒子并加入总列表
                 particles = self.generate_particles_for_shape(shape, particles_per_area[i])
                 material_id = shape.get("material_id", 0)  # 获取材料ID，默认为0
                 
@@ -91,10 +98,9 @@ class ParticleGenerator:
                         "material_id": material_id
                     })
                 all_particles.extend(particles_with_material)
-        
-        # 应用所有挖空操作
-        for shape in shapes:
-            if shape["operation"] == "subtract":
+                
+            elif shape["operation"] == "subtract":
+                # 挖空操作：从现有粒子中移除在该形状内的粒子
                 all_particles = self._remove_particles_in_shape_with_material(all_particles, shape)
         
         return all_particles
@@ -121,9 +127,9 @@ class ParticleGenerator:
         for d in range(self.dim):
             region_size.append(rect_range[d][1] - rect_range[d][0])
         
-        if self.use_poisson_sampling:
+        if self.sampling_method == "poisson":
             # 使用泊松采样
-            from Util.poisson_disk_sampling import poisson_disk_sampling_by_count
+            from Util.poisson_disk_sampling import poisson_disk_sampling_by_count_cached as poisson_disk_sampling_by_count
             points_np, radius_info = self._poisson_sampling_with_radius(region_size, n_particles)
             
             # 存储半径信息用于边界检测
@@ -135,8 +141,11 @@ class ParticleGenerator:
                 for d in range(self.dim):
                     pos.append(point[d] + rect_range[d][0])
                 particles.append(pos)
+        elif self.sampling_method == "regular":
+            # 规则分布采样
+            particles = self._generate_regular_grid_particles(rect_range, n_particles)
         else:
-            # 均匀随机采样
+            # 均匀随机采样 (uniform)
             for _ in range(n_particles):
                 pos = []
                 for d in range(self.dim):
@@ -147,12 +156,66 @@ class ParticleGenerator:
         
         return particles
     
+    def _generate_regular_grid_particles(self, rect_range, n_particles):
+        """生成规则格点分布的粒子"""
+        particles = []
+        
+        # 计算区域总面积/体积
+        total_volume = 1.0
+        for d in range(self.dim):
+            total_volume *= (rect_range[d][1] - rect_range[d][0])
+        
+        # 计算每个粒子占据的体积
+        particle_volume = total_volume / n_particles
+        
+        # 计算格点间距（假设是正方形/立方体格点）
+        spacing = particle_volume ** (1.0 / self.dim)
+
+        #存储
+        self.last_poisson_radius = spacing
+
+        # 计算每个维度的格点数量
+        grid_counts = []
+        for d in range(self.dim):
+            dimension_length = rect_range[d][1] - rect_range[d][0]
+            count = max(1, int(round(dimension_length / spacing)))
+            grid_counts.append(count)
+        
+        # 重新调整spacing以均匀分布
+        adjusted_spacing = []
+        for d in range(self.dim):
+            dimension_length = rect_range[d][1] - rect_range[d][0]
+            adjusted_spacing.append(dimension_length / (grid_counts[d] + 1))
+        
+        # 生成格点粒子
+        if self.dim == 2:
+            for i in range(grid_counts[0]):
+                for j in range(grid_counts[1]):
+                    x = rect_range[0][0] + (i + 1) * adjusted_spacing[0]
+                    y = rect_range[1][0] + (j + 1) * adjusted_spacing[1]
+                    particles.append([x, y])
+        elif self.dim == 3:
+            for i in range(grid_counts[0]):
+                for j in range(grid_counts[1]):
+                    for k in range(grid_counts[2]):
+                        x = rect_range[0][0] + (i + 1) * adjusted_spacing[0]
+                        y = rect_range[1][0] + (j + 1) * adjusted_spacing[1]
+                        z = rect_range[2][0] + (k + 1) * adjusted_spacing[2]
+                        particles.append([x, y, z])
+        
+        # 如果生成的粒子数量超过需要的数量，随机选择一部分
+        # if len(particles) > n_particles:
+        #     import random
+        #     particles = random.sample(particles, n_particles)
+        
+        return particles
+    
     def _generate_ellipse_particles(self, params, n_particles):
         """生成椭圆区域内的粒子"""
         center = params["center"]
         semi_axes = params["semi_axes"]
         
-        if self.use_poisson_sampling:
+        if self.sampling_method == "poisson":
             # 使用椭圆的泊松采样
             try:
                 from Util.poisson_disk_sampling import poisson_disk_sampling_ellipse
@@ -167,11 +230,68 @@ class ParticleGenerator:
                 print(f"椭圆Poisson采样失败，使用传统方法: {e}")
                 # 回退到传统方法
                 particles = self._traditional_ellipse_sampling(center, semi_axes, n_particles)
+        elif self.sampling_method == "regular":
+            # 椭圆的规则采样
+            particles = self._generate_regular_ellipse_particles(center, semi_axes, n_particles)
         else:
-            # 传统随机采样方法
+            # 传统随机采样方法 (uniform)
             particles = self._traditional_ellipse_sampling(center, semi_axes, n_particles)
         
         return particles
+    
+    def _generate_regular_ellipse_particles(self, center, semi_axes, n_particles):
+        """生成椭圆区域内的规则格点分布粒子"""
+        particles = []
+        
+        # 计算椭圆的包围盒
+        bbox_min = []
+        bbox_max = []
+        for d in range(self.dim):
+            bbox_min.append(center[d] - semi_axes[d])
+            bbox_max.append(center[d] + semi_axes[d])
+        
+        # 创建包围盒的rect_range格式
+        rect_range = []
+        for d in range(self.dim):
+            rect_range.append([bbox_min[d], bbox_max[d]])
+        
+        # 计算椭圆面积/体积
+        if self.dim == 2:
+            ellipse_area = math.pi * semi_axes[0] * semi_axes[1]
+        else:
+            ellipse_area = (4.0/3.0) * math.pi * semi_axes[0] * semi_axes[1] * semi_axes[2]
+        
+        # 基于椭圆面积计算理论粒子数量，用于估算格点密度
+        bbox_area = 1.0
+        for d in range(self.dim):
+            bbox_area *= (bbox_max[d] - bbox_min[d])
+        
+        # 估算需要在包围盒中生成多少格点，使得椭圆内大约有n_particles个粒子
+        fill_ratio = ellipse_area / bbox_area
+        estimated_bbox_particles = int(n_particles / fill_ratio)  # 1.2是安全系数
+        
+        # 在包围盒中生成规则格点
+        bbox_particles = self._generate_regular_grid_particles(rect_range, estimated_bbox_particles)
+        
+        # 筛选出在椭圆内的粒子
+        for particle_pos in bbox_particles:
+            if self._is_point_in_ellipse(particle_pos, center, semi_axes):
+                particles.append(particle_pos)
+        
+        # # 如果粒子数量过多，随机选择一部分
+        # if len(particles) > n_particles:
+        #     import random
+        #     particles = random.sample(particles, n_particles)
+        
+        return particles
+    
+    def _is_point_in_ellipse(self, point, center, semi_axes):
+        """检查点是否在椭圆内"""
+        sum_normalized = 0.0
+        for d in range(self.dim):
+            diff = point[d] - center[d]
+            sum_normalized += (diff / semi_axes[d])**2
+        return sum_normalized <= 1.0
     
     def _remove_particles_in_shape(self, particles, shape):
         """从粒子列表中移除在指定形状内的粒子"""
@@ -203,7 +323,7 @@ class ParticleGenerator:
         captured_output = io.StringIO()
         
         with redirect_stdout(captured_output):
-            from Util.poisson_disk_sampling import poisson_disk_sampling_by_count
+            from Util.poisson_disk_sampling import poisson_disk_sampling_by_count_cached as poisson_disk_sampling_by_count
             points_np = poisson_disk_sampling_by_count(region_size, n_particles)
         
         # 解析输出获取最终半径
@@ -290,13 +410,7 @@ class ParticleGenerator:
             center = params["center"]
             semi_axes = params["semi_axes"]
             
-            # 计算椭圆方程
-            sum_normalized = 0.0
-            for d in range(self.dim):
-                diff = particle_pos[d] - center[d]
-                sum_normalized += (diff / semi_axes[d])**2
-            
-            return sum_normalized <= 1.0
+            return self._is_point_in_ellipse(particle_pos, center, semi_axes)
         
         return False
 

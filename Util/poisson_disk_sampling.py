@@ -1,7 +1,104 @@
 import numpy as np 
 import matplotlib.pyplot  as plt 
-from mpl_toolkits.mplot3d  import Axes3D 
- 
+from mpl_toolkits.mplot3d  import Axes3D
+import json
+import os
+import hashlib
+
+# =============== 缓存管理 ===============
+CACHE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.poisson_cache.json')
+
+def _load_cache():
+    """加载柏松采样半径缓存"""
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return {}
+    return {}
+
+def _save_cache(cache):
+    """保存柏松采样半径缓存"""
+    try:
+        with open(CACHE_FILE, 'w') as f:
+            json.dump(cache, f, indent=2)
+    except IOError:
+        print(f"警告: 无法保存缓存到 {CACHE_FILE}")
+
+def _get_cache_key(region_size, n_target, dim):
+    """
+    生成统一缓存键（基于密度，4位有效数字）
+    """
+    volume = np.prod(region_size)
+    particle_density = n_target / volume
+    
+    # 保留4位有效数字
+    from math import log10, floor
+    if particle_density > 0:
+        significant_digits = 4
+        power = floor(log10(abs(particle_density)))
+        factor = 10 ** (significant_digits - 1 - power)
+        rounded_density = round(particle_density * factor) / factor
+    else:
+        rounded_density = 0
+    
+    cache_key = f"density_{rounded_density:.3e}_dim_{dim}"
+    return cache_key
+
+def _get_ellipse_cache_key(semi_axes, n_target, dim):
+    """
+    生成统一缓存键（基于密度，4位有效数字）
+    """
+    if dim == 2:
+        area = np.pi * semi_axes[0] * semi_axes[1]
+    else:
+        area = (4.0/3.0) * np.pi * semi_axes[0] * semi_axes[1] * semi_axes[2]
+    
+    particle_density = n_target / area
+    
+    # 保留4位有效数字
+    from math import log10, floor
+    if particle_density > 0:
+        significant_digits = 4
+        power = floor(log10(abs(particle_density)))
+        factor = 10 ** (significant_digits - 1 - power)
+        rounded_density = round(particle_density * factor) / factor
+    else:
+        rounded_density = 0
+    
+    cache_key = f"density_{rounded_density:.3e}_dim_{dim}"
+    return cache_key
+
+def _get_cached_ellipse_radius(semi_axes, n_target, dim):
+    """从缓存中获取椭圆半径"""
+    cache = _load_cache()
+    cache_key = _get_ellipse_cache_key(semi_axes, n_target, dim)
+    return cache.get(cache_key)
+
+def _cache_ellipse_radius(semi_axes, n_target, dim, radius):
+    """缓存椭圆半径结果"""
+    cache = _load_cache()
+    cache_key = _get_ellipse_cache_key(semi_axes, n_target, dim)
+    cache[cache_key] = radius
+    _save_cache(cache)
+    print(f"已缓存椭圆半径 {radius:.6e} 到键 {cache_key}")
+
+def _get_cached_radius(region_size, n_target, dim):
+    """从缓存中获取半径"""
+    cache = _load_cache()
+    cache_key = _get_cache_key(region_size, n_target, dim)
+    return cache.get(cache_key)
+
+def _cache_radius(region_size, n_target, dim, radius):
+    """缓存半径结果"""
+    cache = _load_cache()
+    cache_key = _get_cache_key(region_size, n_target, dim)
+    cache[cache_key] = radius
+    _save_cache(cache)
+    print(f"已缓存半径 {radius:.6e} 到键 {cache_key}")
+
+# =============== 主要采样函数 ===============
 def poisson_disk_sampling_by_count(region_size, n_target, n_tolerance=0.0001, max_iter=100):
     """
     支持2D/3D的泊松盘采样 
@@ -39,6 +136,55 @@ def poisson_disk_sampling_by_count(region_size, n_target, n_tolerance=0.0001, ma
             break 
     
     print(f"最终半径: {r:.4e}, 采样点数: {len(best_points)}")
+
+    return best_points[:n_target]
+
+def poisson_disk_sampling_by_count_cached(region_size, n_target, n_tolerance=0.0001, max_iter=100):
+    """
+    支持2D/3D的泊松盘采样，带缓存功能
+    """
+    assert all(s > 0 for s in region_size), "区域尺寸必须为正数"
+    dim = len(region_size)
+    assert dim in [2, 3], "仅支持2D或3D"
+
+    # 尝试从缓存中获取半径
+    cached_radius = _get_cached_radius(region_size, n_target, dim)
+    if cached_radius is not None:
+        print(f"使用缓存的半径: {cached_radius:.6e}")
+        points = _poisson_disk_sampling_fixed_r(region_size, cached_radius)
+        print(f"缓存成功，采样点数: {len(points)} (目标: {n_target})")
+        return points
+
+    # 如果缓存未命中或结果不满足要求，进行二分查找
+    volume = np.prod(region_size) 
+    max_possible_r = (volume / n_target) ** (1/dim) * dim 
+
+    r_min, r_max = 0.1 * max_possible_r, max_possible_r 
+    best_points = []
+    final_radius = None
+
+    for _ in range(max_iter):
+        r = (r_min + r_max) / 2 
+        points = _poisson_disk_sampling_fixed_r(region_size, r)
+        n_actual = len(points)
+
+        print(f"半径: {r:.4e}, 采样点数: {n_actual}, 目标点数: {n_target}")
+
+        if n_actual >= n_target:
+            best_points = points 
+            final_radius = r
+            r_min = r 
+        else:
+            r_max = r 
+
+        if ((n_actual - n_target)/n_target < n_tolerance or n_actual - n_target <=1 or r_max - r_min < 1e-6) and n_actual >= n_target:
+            break 
+    
+    print(f"最终半径: {final_radius:.4e}, 采样点数: {len(best_points)}")
+    
+    # 缓存结果
+    if final_radius is not None:
+        _cache_radius(region_size, n_target, dim, final_radius)
 
     return best_points[:n_target]
  
@@ -105,7 +251,7 @@ def _poisson_disk_sampling_fixed_r(region_size, r):
 
 def poisson_disk_sampling_ellipse(center, semi_axes, n_target, n_tolerance=0.0001, max_iter=100):
     """
-    椭圆区域的泊松盘采样
+    椭圆区域的泊松盘采样（带缓存）
     :param center: 椭圆中心 [x, y] 或 [x, y, z]
     :param semi_axes: 椭圆半轴 [a, b] 或 [a, b, c]
     :param n_target: 目标点数
@@ -125,10 +271,20 @@ def poisson_disk_sampling_ellipse(center, semi_axes, n_target, n_tolerance=0.000
     else:
         area = (4.0/3.0) * np.pi * semi_axes[0] * semi_axes[1] * semi_axes[2]
     
-    # 估计初始半径
+    # 尝试从缓存获取半径
+    cached_radius = _get_cached_ellipse_radius(semi_axes, n_target, dim)
+    if cached_radius is not None:
+        print(f"椭圆采样使用缓存半径: {cached_radius:.4e}")
+        points = _poisson_disk_sampling_ellipse_fixed_r(center, semi_axes, cached_radius)
+        print(f"椭圆采样缓存结果点数: {len(points)}")
+        return points[:n_target] if len(points) >= n_target else points
+    
+    # 缓存未命中，执行二分查找
+    print(f"椭圆采样缓存未命中，执行二分查找...")
     max_possible_r = (area / n_target) ** (1/dim) * dim
     r_min, r_max = 0.1 * max_possible_r, max_possible_r
     best_points = []
+    final_radius = None
     
     for _ in range(max_iter):
         r = (r_min + r_max) / 2
@@ -139,6 +295,7 @@ def poisson_disk_sampling_ellipse(center, semi_axes, n_target, n_tolerance=0.000
         
         if n_actual >= n_target:
             best_points = points
+            final_radius = r
             r_min = r
         else:
             r_max = r
@@ -146,7 +303,11 @@ def poisson_disk_sampling_ellipse(center, semi_axes, n_target, n_tolerance=0.000
         if ((n_actual - n_target)/n_target < n_tolerance or n_actual - n_target <= 1 or r_max - r_min < 1e-6) and n_actual >= n_target:
             break
     
-    print(f"椭圆采样最终半径: {r:.4e}, 采样点数: {len(best_points)}")
+    # 缓存结果
+    if final_radius is not None:
+        _cache_ellipse_radius(semi_axes, n_target, dim, final_radius)
+    
+    print(f"椭圆采样最终半径: {final_radius:.4e}, 采样点数: {len(best_points)}")
     return best_points[:n_target]
 
 def _poisson_disk_sampling_ellipse_fixed_r(center, semi_axes, r):

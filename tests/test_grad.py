@@ -1,4 +1,9 @@
-from implicit_mpm import *
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from simulators.implicit_mpm import *
+from simulators.mpm_solver import MPMSolver
 
 config = Config(data={
         "dt": 0.001,
@@ -53,7 +58,7 @@ def init_particles():
 particles.build_neighbor_list()
 
 # 初始化求解器
-solver = ImplicitSolver(grid, particles, config)
+solver = MPMSolver(grid, particles, config)
 n_vars = grid.size**dim * dim
 
 # 随机生成速度场

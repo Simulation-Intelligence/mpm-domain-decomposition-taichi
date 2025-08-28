@@ -13,7 +13,7 @@ def verify_implementation():
     # 1. 验证配置文件格式
     print("1. 验证配置文件格式")
     try:
-        with open('config/config_2d_test1.json', 'r') as f:
+        with open('../config/config_2d_test1.json', 'r') as f:
             config = json.load(f)
         
         print("   ✓ 配置文件加载成功")
@@ -55,7 +55,7 @@ def verify_implementation():
     ]
     
     try:
-        with open('Geometry/Particles.py', 'r') as f:
+        with open('../Geometry/Particles.py', 'r') as f:
             particles_content = f.read()
             
         for method, desc in particles_checks:
@@ -66,10 +66,10 @@ def verify_implementation():
     except Exception as e:
         print(f"   ✗ 读取Particles.py失败: {e}")
     
-    # 检查ImplicitSolver.py的修改
-    print("\n   检查ImplicitSolver.py:")
+    # 检查MPMSolver.py的修改
+    print("\n   检查mpm_solver.py:")
     try:
-        with open('implicit_solver.py', 'r') as f:
+        with open('../simulators/mpm_solver.py', 'r') as f:
             solver_content = f.read()
         
         if 'self.particles.get_material_params(p)' in solver_content:
@@ -82,12 +82,12 @@ def verify_implementation():
         else:
             print("   ✗ 未使用平均p_mass")
     except Exception as e:
-        print(f"   ✗ 读取implicit_solver.py失败: {e}")
+        print(f"   ✗ 读取mpm_solver.py失败: {e}")
     
     # 检查implicit_mpm.py的修改
     print("\n   检查implicit_mpm.py:")
     try:
-        with open('implicit_mpm.py', 'r') as f:
+        with open('../simulators/implicit_mpm.py', 'r') as f:
             mpm_content = f.read()
         
         if 'self.particles.get_particle_mass(p)' in mpm_content:
