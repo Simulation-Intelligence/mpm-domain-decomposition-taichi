@@ -42,6 +42,7 @@
                 ]
             ]
         ],
+        "boundary_size": 0.01,
         "implicit_solver": "Newton",
         "eta": 1e-4
     },
@@ -80,6 +81,7 @@
                 ]
             ]
         ],
+        "boundary_size": 0.01,
         "implicit_solver": "Newton",
         "eta": 1e-4
     }

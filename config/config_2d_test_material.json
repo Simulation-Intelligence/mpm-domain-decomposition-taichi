@@ -45,12 +45,29 @@
                             0.7
                         ],
                         [
-                            0.3,
-                            0.7
+                            0.1,
+                            0.3
                         ]
                     ]
                 },
                 "operation": "add",
+                "material_id": 1
+            },
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            0.3,
+                            0.7
+                        ],
+                        [
+                            0.2,
+                            0.3
+                        ]
+                    ]
+                },
+                "operation": "change",
                 "material_id": 0
             }
 

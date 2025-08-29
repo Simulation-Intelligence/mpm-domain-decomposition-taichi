@@ -71,7 +71,8 @@ class MPMSolver:
             # 使用平均p_mass进行梯度归一化
             avg_p_mass = sum(params["p_mass"] for params in self.particles.material_params.values()) / len(self.particles.material_params)
             self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=self.set_hess_DBC,dim=grid.size**self.dim * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
-    def solve(self):
+
+    def solve_implicit(self):
         self.grid.set_boundary_v()
         self.set_initial_guess()
         iter=self.optimizer.minimize(self.solve_max_iter, self.solve_init_iter)
@@ -402,13 +403,9 @@ class MPMSolver:
     def _get_volume_force_at_position(self, pos):
         """获取位置处的体积力"""
         total_force = ti.Vector.zero(self.float_type, self.dim)
-        
         for i in range(self.n_volume_forces):
-            
-            in_region = False
-            
+            in_region = True
             if self.volume_force_types[i] == 0:  # rectangle
-                in_region = True
                 for d in ti.static(range(self.dim)):
                     min_val = self.volume_force_rect_ranges[i, d*2]
                     max_val = self.volume_force_rect_ranges[i, d*2+1]
@@ -432,13 +429,19 @@ class MPMSolver:
     # =============== Explicit Solver Methods ===============
     def solve_explicit(self):
         """显式求解器"""
-        self.solve_v_explicit()
+        self.compute_forces_explicit()
+        self.update_velocity_explicit()
         self.grid.set_boundary_v()
         return 0
     
     @ti.kernel
-    def solve_v_explicit(self):
-        """显式求解速度更新"""
+    def compute_forces_explicit(self):
+        """计算所有力并存储到网格力场中"""
+        # 初始化网格力场
+        for I in ti.grouped(self.grid.f):
+            self.grid.f[I] = ti.Vector.zero(self.float_type, self.dim)
+        
+        # 第一步：计算应力力并分配到网格
         for p in range(self.particles.n_particles):
             Xp = self.particles.x[p] / self.grid.dx
             base = (Xp - 0.5).cast(int)
@@ -454,21 +457,36 @@ class MPMSolver:
             cauchy = mu * (self.particles.F[p] @ self.particles.F[p].transpose()) + ti.Matrix.identity(self.float_type, self.dim) * (lam * logJ - mu)
             stress = -(self.particles.p_vol ) * cauchy
 
-            # 计算位置处的体积力
-            volume_force = ti.Vector.zero(self.float_type, self.dim)
-            if self.n_volume_forces > 0:
-                volume_force = self._get_volume_force_at_position(self.particles.x[p])
-
             for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
                 grid_idx = base + offset
-                self.grid.v[grid_idx] +=4* self.dt * stress @ self.particles.dwip[p,offset] / self.grid.m[grid_idx] + self.dt * (self.gravity + volume_force)
+                # 将应力力累加到网格力场
+                ti.atomic_add(self.grid.f[grid_idx], 4 * stress @ self.particles.dwip[p,offset])
         
-        # 应用阻尼力
+        # 第二步：在网格上计算外部力（重力、体积力、阻尼力）
+        for I in ti.grouped(self.grid.f):
+            if self.grid.m[I] > 1e-10:
+                # 计算网格点的物理位置
+                grid_pos = I * self.grid.dx
+                
+                # 添加重力
+                self.grid.f[I] += self.gravity * self.grid.m[I]
+                
+                # 添加体积力
+                if self.n_volume_forces > 0:
+                    volume_force = self._get_volume_force_at_position(grid_pos)
+                    self.grid.f[I] += volume_force * self.grid.m[I]
+                
+                # 添加阻尼力（基于当前速度）
+                damping_force = -self.damping * self.grid.v[I] * self.grid.m[I]
+                self.grid.f[I] += damping_force
+    
+    @ti.kernel  
+    def update_velocity_explicit(self):
+        """基于计算好的力更新速度"""
         for I in ti.grouped(self.grid.v):
             if self.grid.m[I] > 1e-10:
-                # 阻尼力与速度成正比，方向相反
-                damping_force = -self.damping * self.grid.v[I]
-                self.grid.v[I] += self.dt * damping_force
+                # v = v + dt * f / m
+                self.grid.v[I] += self.dt * self.grid.f[I] / self.grid.m[I]
     
     @ti.kernel
     def compute_stress_strain(self):

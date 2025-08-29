@@ -66,7 +66,7 @@ class ImplicitMPM:
 
     def solve(self):
         if self.implicit:
-            return self.solver.solve()
+            return self.solver.solve_implicit()
         else:
             return self.solver.solve_explicit()
 

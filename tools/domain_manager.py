@@ -1,5 +1,5 @@
 import taichi as ti
-from implicit_mpm import *
+from simulators.implicit_mpm import *
 
 @ti.data_oriented
 class DomainManager:
