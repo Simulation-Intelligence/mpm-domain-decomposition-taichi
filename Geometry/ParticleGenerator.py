@@ -102,6 +102,11 @@ class ParticleGenerator:
             elif shape["operation"] == "subtract":
                 # 挖空操作：从现有粒子中移除在该形状内的粒子
                 all_particles = self._remove_particles_in_shape_with_material(all_particles, shape)
+                
+            elif shape["operation"] == "change":
+                # 改变操作：改变指定形状内粒子的材料ID
+                material_id = shape.get("material_id", 0)
+                all_particles = self._change_particles_material_in_shape(all_particles, shape, material_id)
         
         return all_particles
     
@@ -313,6 +318,23 @@ class ParticleGenerator:
                 remaining_particles.append(particle)
         
         return remaining_particles
+    
+    def _change_particles_material_in_shape(self, particles, shape, new_material_id):
+        """改变指定形状内粒子的材料ID"""
+        modified_particles = []
+        
+        for particle in particles:
+            particle_pos = particle["position"]
+            if self._is_particle_in_shape(particle_pos, shape):
+                # 粒子在形状内，改变材料ID
+                modified_particle = particle.copy()
+                modified_particle["material_id"] = new_material_id
+                modified_particles.append(modified_particle)
+            else:
+                # 粒子不在形状内，保持不变
+                modified_particles.append(particle)
+        
+        return modified_particles
     
     def _poisson_sampling_with_radius(self, region_size, n_particles):
         """执行Poisson采样并返回半径信息"""

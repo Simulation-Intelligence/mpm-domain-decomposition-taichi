@@ -21,6 +21,7 @@ class Grid:
         self.v = ti.Vector.field(dim, self.float_type, (size,)*dim)
         self.m = ti.field(self.float_type, (size,)*dim)
         self.v_prev = ti.Vector.field(dim, self.float_type, (size,)*dim)
+        self.f = ti.Vector.field(dim, self.float_type, (size,)*dim)  # 力场
         
         # 隐式求解相关
         self.particles = ti.field(ti.i32, (size, size, 32))

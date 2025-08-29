@@ -1,7 +1,7 @@
 from implicit_mpm import *
-from domain_manager import DomainManager
-from boundary_exchanger import BoundaryExchanger
-from particle_state_manager import ParticleStateManager
+from tools.domain_manager import DomainManager
+from tools.boundary_exchanger import BoundaryExchanger
+from tools.particle_state_manager import ParticleStateManager
 
 from Util.Recorder import *
 
@@ -240,7 +240,7 @@ class MPM_Schwarz:
 # ------------------ 主程序 ------------------
 if __name__ == "__main__":
     # 读取配置文件
-    cfg = Config(path="config/schwarz_2d_test1.json")
+    cfg = Config(path="config/schwarz_2d.json")
     float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64        
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":
