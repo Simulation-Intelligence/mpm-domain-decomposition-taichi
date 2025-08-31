@@ -62,14 +62,14 @@ class MPMSolver:
 
         eta = config.get("eta", 1)
         if solver_type == "BFGS":
-            # 使用平均p_mass进行梯度归一化
-            avg_p_mass = sum(params["p_mass"] for params in self.particles.material_params.values()) / len(self.particles.material_params)
+            # 使用材料1的p_mass进行梯度归一化
+            avg_p_mass = (self.particles.p_mass_1 + self.particles.p_mass_2) / 2.0
             self.optimizer = BFGS(energy_fn=self.compute_energy,grad_fn=self.grad_fn, dim=grid.size**self.dim * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
         elif solver_type == "LBFGS":
             self.optimizer = LBFGS(self.grad_fn, grid.size**self.dim * self.dim, eta=eta,float_type=self.float_type)
         elif solver_type == "Newton":
-            # 使用平均p_mass进行梯度归一化
-            avg_p_mass = sum(params["p_mass"] for params in self.particles.material_params.values()) / len(self.particles.material_params)
+            # 使用材料1的p_mass进行梯度归一化
+            avg_p_mass = (self.particles.p_mass_1 + self.particles.p_mass_2) / 2.0
             self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=self.set_hess_DBC,dim=grid.size**self.dim * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
 
     def solve_implicit(self):
@@ -118,6 +118,7 @@ class MPMSolver:
             logJ = ti.log(J)
 
             mu, lam = self.particles.get_material_params(p)
+
             e1=0.5*mu*(new_F.norm_sqr() - self.dim)
             e2=-mu*logJ
             e3=0.5*lam*(logJ**2)
@@ -158,8 +159,8 @@ class MPMSolver:
 
             # 导数
             mu, lam = self.particles.get_material_params(p)
-            g1=mu * new_F  
-            g2=-mu * newF_inv_T 
+            g1=mu * new_F
+            g2=-mu * newF_inv_T
             g3=lam * ti.log(newJ) * newF_inv_T
             dE_dvel_grad =(g1+g2+g3)@ F.transpose()*self.particles.p_vol
 
@@ -215,12 +216,13 @@ class MPMSolver:
             
             base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int) 
 
+            mu, lam = self.particles.get_material_params(p)
+
             for offset in ti.grouped(ti.ndrange(*self.neighbor)):
                 FTw=4 * self.dt * F.transpose() @ self.particles.dwip[p, offset]
-                FWWF=F_inv_T @ FTw.outer_product(FTw) @ F_inv 
-                mu, lam = self.particles.get_material_params(p)
-                h1=mu *FTw.dot(FTw) * ti.Matrix.identity(self.float_type, self.dim) 
-                h2=mu * FWWF 
+                FWWF=F_inv_T @ FTw.outer_product(FTw) @ F_inv
+                h1=mu *FTw.dot(FTw) * ti.Matrix.identity(self.float_type, self.dim)
+                h2=mu * FWWF
                 h3=lam * (1-ti.log(J)) * FWWF
                 hessian=(h1+h2+h3)*self.particles.p_vol
 

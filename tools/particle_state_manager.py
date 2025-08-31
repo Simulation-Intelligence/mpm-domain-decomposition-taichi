@@ -1,24 +1,26 @@
 import taichi as ti
+import Geometry.Particles as Particles
 
 @ti.data_oriented
 class ParticleStateManager:
     """管理粒子状态保存和恢复的工具类"""
-    
-    def __init__(self, particles):
+
+    def __init__(self, particles: Particles):
         self.particles = particles
         
         # 临时数组用于保存粒子数据
+        n_particles = particles.x.shape[0]
         self.temp_particles_x = ti.Vector.field(
-            particles.dim, particles.float_type, particles.n_particles
+            particles.dim, particles.float_type, n_particles
         )
         self.temp_particles_v = ti.Vector.field(
-            particles.dim, particles.float_type, particles.n_particles
+            particles.dim, particles.float_type, n_particles
         )
         self.temp_particles_f = ti.Matrix.field(
-            particles.dim, particles.dim, particles.float_type, particles.n_particles
+            particles.dim, particles.dim, particles.float_type, n_particles
         )
         self.temp_particles_c = ti.Matrix.field(
-            particles.dim, particles.dim, particles.float_type, particles.n_particles
+            particles.dim, particles.dim, particles.float_type, n_particles
         )
     
     def save_particle_state(self):
