@@ -63,8 +63,6 @@ class Particles:
         self.p_vol = (1.0/self.grid_size)**self.dim / self.particles_per_grid
         self.p_mass = self.p_vol * self.p_rho
         self.boundary_size = config.get("boundary_size", None)
-
-        self.float_type = self.float_type
         
         # 粒子字段
         self.x = ti.Vector.field(self.dim, self.float_type, self.n_particles)
@@ -87,22 +85,32 @@ class Particles:
         self.material_params = self._parse_material_params(config)
         self.particle_material_id = ti.field(ti.i32, self.n_particles)
         
-        # 创建Taichi字段存储材料参数，以便在kernel中访问
-        self.max_materials = 16  # 最大支持16种材料
-        self.material_E = ti.field(self.float_type, self.max_materials)
-        self.material_nu = ti.field(self.float_type, self.max_materials)
-        self.material_rho = ti.field(self.float_type, self.max_materials)
-        self.material_mu = ti.field(self.float_type, self.max_materials)
-        self.material_lambda = ti.field(self.float_type, self.max_materials)
-        self.material_p_mass = ti.field(self.float_type, self.max_materials)
-        
-        # 将材料参数复制到Taichi字段
-        self._copy_material_params_to_fields()
+        # 两种材料的参数作为类成员变量（Python变量）
+        if len(self.material_params) >= 1:
+            mat0 = self.material_params[0]
+            self.mu_1 = mat0["mu"]
+            self.lam_1 = mat0["lambda"]
+            self.p_mass_1 = mat0["p_mass"]
+        else:
+            # 默认材料1参数
+            self.mu_1 = self.mu
+            self.lam_1 = self.lam
+            self.p_mass_1 = self.p_mass
+            
+        if len(self.material_params) >= 2:
+            mat1 = self.material_params[1]
+            self.mu_2 = mat1["mu"] 
+            self.lam_2 = mat1["lambda"]
+            self.p_mass_2 = mat1["p_mass"]
+        else:
+            # 默认材料2参数（与材料1相同）
+            self.mu_2 = self.mu_1
+            self.lam_2 = self.lam_1
+            self.p_mass_2 = self.p_mass_1
 
-        #检查taichi字段的材料参数
-        for mat_id in range(self.max_materials):
-            if self.material_E[mat_id] != 0:
-                print(f"Material {mat_id}: E={self.material_E[mat_id]}, nu={self.material_nu[mat_id]}, rho={self.material_rho[mat_id]}")
+        #检查材料参数
+        print(f"Material 1: mu={self.mu_1}, lambda={self.lam_1}, p_mass={self.p_mass_1}")
+        print(f"Material 2: mu={self.mu_2}, lambda={self.lam_2}, p_mass={self.p_mass_2}")
 
         # 初始化组件
         self._init_components(config)
@@ -123,7 +131,7 @@ class Particles:
         material_params = config.get("material_params", [])
         if not material_params:
             # 如果没有材料参数表，使用默认参数
-            E = config.get("E", 4)
+            E = config.get("E", 4.0)
             nu = config.get("nu", 0.4)
             rho = config.get("p_rho", 1)
             material_params = [{
@@ -133,7 +141,10 @@ class Particles:
                 "nu": nu,
                 "rho": rho
             }]
-        
+            # 保留兼容性的全局参数，但现在主要使用particles.material_params
+            self.mu = E / (2*(1+nu))
+            self.lam = E*nu/((1+nu)*(1-2*nu))
+
         # 构建材料参数字典，以id为键
         params_dict = {}
         for param in material_params:
@@ -160,30 +171,27 @@ class Particles:
 
         return params_dict
     
-    def _copy_material_params_to_fields(self):
-        """将材料参数复制到Taichi字段"""
-        for mat_id, params in self.material_params.items():
-            if mat_id < self.max_materials:
-                self.material_E[mat_id] = params["E"]
-                self.material_nu[mat_id] = params["nu"]
-                self.material_rho[mat_id] = params["rho"]
-                self.material_mu[mat_id] = params["mu"]
-                self.material_lambda[mat_id] = params["lambda"]
-                self.material_p_mass[mat_id] = params["p_mass"]
-
     @ti.func
     def get_material_params(self, particle_id):
         """获取指定粒子的材料参数(Taichi函数)"""
         material_id = self.particle_material_id[particle_id]
-        mu = self.material_mu[material_id]
-        lam = self.material_lambda[material_id]
+        mu, lam = 0.0, 0.0
+        if material_id == 0:
+            mu, lam = self.mu_1, self.lam_1
+        else:
+            mu, lam = self.mu_2, self.lam_2
         return mu, lam
-    
+
     @ti.func
     def get_particle_mass(self, particle_id):
         """获取指定粒子的质量"""
         material_id = self.particle_material_id[particle_id]
-        return self.material_p_mass[material_id]
+        p_mass = 0.0
+        if material_id == 0:
+            p_mass = self.p_mass_1
+        else:
+            p_mass = self.p_mass_2
+        return p_mass
         
     def get_material_param(self, material_id, param_name):
         """获取指定材料ID的参数值(Python函数)"""
