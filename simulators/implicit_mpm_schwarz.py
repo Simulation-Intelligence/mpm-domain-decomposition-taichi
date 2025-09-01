@@ -174,6 +174,7 @@ class MPM_Schwarz:
                         self.SmallTimeDomain.post_p2g()
                     else:
                         self.SmallTimeDomain.grid.v_prev.copy_from(self.boundary_exchanger.small_time_domain_temp_grid_v)
+                        self.SmallTimeDomain.grid.v.copy_from(self.boundary_exchanger.small_time_domain_temp_grid_v)
 
                 if not self.do_small_advect:
                     self.restore_small_time_domain_particles()
@@ -184,12 +185,7 @@ class MPM_Schwarz:
 
             # 3.G2P: 将网格的速度传递回粒子上
             # 4.粒子自由运动
-            self.domain_manager.finalize_step()
-            
-
-            if not self.do_small_advect:
-                self.SmallTimeDomain.g2p(self.BigTimeDomain.dt)
-                self.SmallTimeDomain.particles.advect(self.BigTimeDomain.dt)
+            self.domain_manager.finalize_step(self.do_small_advect)
 
     def render(self):
         transformed_x1 = self.Domain1.particles.x.to_numpy() * self.Domain1.scale + self.Domain1.offset
@@ -234,13 +230,138 @@ class MPM_Schwarz:
         
         # 捕获帧
         self.recorder.capture(all_pos, all_colors)
+    
+    def save_stress_strain_data(self, frame_number):
+        """保存两个域的应力和应变数据"""
+        import json
+        import os
+        
+        # 计算两个域的应力和应变
+        print("正在计算Domain1的应力和应变...")
+        self.Domain1.solver.compute_stress_strain()
+        
+        print("正在计算Domain2的应力和应变...")
+        self.Domain2.solver.compute_stress_strain()
+        
+        # 获取两个域的数据
+        stress_data1 = self.Domain1.particles.stress.to_numpy()
+        strain_data1 = self.Domain1.particles.strain.to_numpy()
+        positions1 = self.Domain1.particles.x.to_numpy()
+        
+        stress_data2 = self.Domain2.particles.stress.to_numpy()
+        strain_data2 = self.Domain2.particles.strain.to_numpy()
+        positions2 = self.Domain2.particles.x.to_numpy()
+        
+        # 过滤掉位置为(0,0)的粒子 - Domain1
+        if self.Domain1.dim == 2:
+            # 2D情况：过滤(0,0)位置
+            valid_mask1 = ~((positions1[:, 0] == 0.0) & (positions1[:, 1] == 0.0))
+        else:
+            # 3D情况：过滤(0,0,0)位置
+            valid_mask1 = ~((positions1[:, 0] == 0.0) & (positions1[:, 1] == 0.0) & (positions1[:, 2] == 0.0))
+        
+        # 应用过滤掩码 - Domain1
+        filtered_stress_data1 = stress_data1[valid_mask1]
+        filtered_strain_data1 = strain_data1[valid_mask1]
+        filtered_positions1 = positions1[valid_mask1]
+        
+        # 过滤掉位置为(0,0)的粒子 - Domain2
+        if self.Domain2.dim == 2:
+            # 2D情况：过滤(0,0)位置
+            valid_mask2 = ~((positions2[:, 0] == 0.0) & (positions2[:, 1] == 0.0))
+        else:
+            # 3D情况：过滤(0,0,0)位置
+            valid_mask2 = ~((positions2[:, 0] == 0.0) & (positions2[:, 1] == 0.0) & (positions2[:, 2] == 0.0))
+        
+        # 应用过滤掩码 - Domain2
+        filtered_stress_data2 = stress_data2[valid_mask2]
+        filtered_strain_data2 = strain_data2[valid_mask2]
+        filtered_positions2 = positions2[valid_mask2]
+        
+        print(f"Domain1: Filtered out {np.sum(~valid_mask1)} particles at origin position")
+        print(f"Domain1: Saving data for {len(filtered_positions1)} particles")
+        print(f"Domain2: Filtered out {np.sum(~valid_mask2)} particles at origin position") 
+        print(f"Domain2: Saving data for {len(filtered_positions2)} particles")
+        
+        # 创建输出目录
+        output_dir = "stress_strain_output_schwarz"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 分别保存两个域的数据
+        # Domain1数据
+        np.save(f"{output_dir}/domain1_stress_frame_{frame_number}.npy", filtered_stress_data1)
+        np.save(f"{output_dir}/domain1_strain_frame_{frame_number}.npy", filtered_strain_data1)
+        np.save(f"{output_dir}/domain1_positions_frame_{frame_number}.npy", filtered_positions1)
+        
+        # Domain2数据
+        np.save(f"{output_dir}/domain2_stress_frame_{frame_number}.npy", filtered_stress_data2)
+        np.save(f"{output_dir}/domain2_strain_frame_{frame_number}.npy", filtered_strain_data2)
+        np.save(f"{output_dir}/domain2_positions_frame_{frame_number}.npy", filtered_positions2)
+        
+        # 计算两个域的von Mises应力
+        def compute_von_mises_stress(stress_data, dim):
+            von_mises_stress = []
+            for i in range(stress_data.shape[0]):
+                if dim == 2:
+                    s = stress_data[i]
+                    # 2D von Mises应力
+                    von_mises = np.sqrt(s[0,0]**2 + s[1,1]**2 - s[0,0]*s[1,1] + 3*s[0,1]**2)
+                else:
+                    # 3D von Mises应力
+                    s = stress_data[i]
+                    von_mises = np.sqrt(0.5*((s[0,0]-s[1,1])**2 + (s[1,1]-s[2,2])**2 + (s[2,2]-s[0,0])**2) + 3*(s[0,1]**2 + s[1,2]**2 + s[2,0]**2))
+                von_mises_stress.append(von_mises)
+            return von_mises_stress
+        
+        von_mises_stress1 = compute_von_mises_stress(filtered_stress_data1, self.Domain1.dim)
+        von_mises_stress2 = compute_von_mises_stress(filtered_stress_data2, self.Domain2.dim)
+        
+        # 保存统计信息
+        stats = {
+            "frame": frame_number,
+            "domain1": {
+                "n_particles": int(filtered_stress_data1.shape[0]),
+                "n_particles_total": int(stress_data1.shape[0]),
+                "n_particles_filtered": int(np.sum(~valid_mask1)),
+                "dimension": int(self.Domain1.dim),
+                "von_mises_stress": {
+                    "min": float(np.min(von_mises_stress1)),
+                    "max": float(np.max(von_mises_stress1)),
+                    "mean": float(np.mean(von_mises_stress1)),
+                    "std": float(np.std(von_mises_stress1))
+                }
+            },
+            "domain2": {
+                "n_particles": int(filtered_stress_data2.shape[0]),
+                "n_particles_total": int(stress_data2.shape[0]),
+                "n_particles_filtered": int(np.sum(~valid_mask2)),
+                "dimension": int(self.Domain2.dim),
+                "von_mises_stress": {
+                    "min": float(np.min(von_mises_stress2)),
+                    "max": float(np.max(von_mises_stress2)),
+                    "mean": float(np.mean(von_mises_stress2)),
+                    "std": float(np.std(von_mises_stress2))
+                }
+            }
+        }
+        
+        with open(f"{output_dir}/stress_strain_stats_frame_{frame_number}.json", 'w') as f:
+            json.dump(stats, f, indent=2)
+        
+        print(f"两域应力应变数据已保存到 {output_dir}/")
+        print(f"Domain1 von Mises应力范围: {stats['domain1']['von_mises_stress']['min']:.3e} - {stats['domain1']['von_mises_stress']['max']:.3e}")
+        print(f"Domain1 平均von Mises应力: {stats['domain1']['von_mises_stress']['mean']:.3e}")
+        print(f"Domain2 von Mises应力范围: {stats['domain2']['von_mises_stress']['min']:.3e} - {stats['domain2']['von_mises_stress']['max']:.3e}")
+        print(f"Domain2 平均von Mises应力: {stats['domain2']['von_mises_stress']['mean']:.3e}")
+        
+        return output_dir
 
 
 
 # ------------------ 主程序 ------------------
 if __name__ == "__main__":
     # 读取配置文件
-    cfg = Config(path="config/schwarz_2d.json")
+    cfg = Config(path="config/schwarz_2d_test1.json")
     float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64        
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":
@@ -255,25 +376,33 @@ if __name__ == "__main__":
     # 创建Schwarz域分解MPM实例
     mpm = MPM_Schwarz(cfg)
     
+    frame_count = 0
     while mpm.gui.running:
         mpm.step()
         
         mpm.render()
         
+        frame_count += 1
+        
         # 自动停止条件
         if len(mpm.recorder.frame_data) >= mpm.recorder.max_frames:
+            # 在最后一帧记录应力和应变数据
             break
     
     
-    #绘制最后1组residuals
-    for i in range(1):
-        plt.plot(mpm.residuals[-i-1])
-    plt.ylabel('Residual')
-    plt.xlabel('Iteration')
-    plt.xscale('log')  # X轴对数化
-    plt.yscale('log')  # Y轴对数化
-    plt.show()
-
+    # #绘制最后1组residuals
+    # for i in range(1):
+    #     plt.plot(mpm.residuals[-i-1])
+    # plt.ylabel('Residual')
+    # plt.xlabel('Iteration')
+    # plt.xscale('log')  # X轴对数化
+    # plt.yscale('log')  # Y轴对数化
+    # plt.show()
+    
+    #
+    print("记录最终帧的应力和应变数据...")
+    mpm.save_stress_strain_data(frame_count)
+    
     if mpm.recorder is None:
         exit()
     print("Playback finished.")
