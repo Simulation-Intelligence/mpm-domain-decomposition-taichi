@@ -53,8 +53,12 @@ class DomainManager:
         
         self.big_time_domain.post_p2g()
         self.small_time_domain.post_p2g()
-    
-    def finalize_step(self):
+
+    def finalize_step(self, do_small_advect):
         """完成步进后的工作"""
         self.big_time_domain.g2p(self.big_time_domain.dt)
         self.big_time_domain.particles.advect(self.big_time_domain.dt)
+
+        if not do_small_advect:
+            self.small_time_domain.g2p(self.big_time_domain.dt)
+            self.small_time_domain.particles.advect(self.big_time_domain.dt)

@@ -203,32 +203,50 @@ class ImplicitMPM:
         strain_data = self.particles.strain.to_numpy()
         positions = self.particles.x.to_numpy()
         
+        # 过滤掉位置为(0,0)的粒子
+        if self.dim == 2:
+            # 2D情况：过滤(0,0)位置
+            valid_mask = ~((positions[:, 0] == 0.0) & (positions[:, 1] == 0.0))
+        else:
+            # 3D情况：过滤(0,0,0)位置
+            valid_mask = ~((positions[:, 0] == 0.0) & (positions[:, 1] == 0.0) & (positions[:, 2] == 0.0))
+        
+        # 应用过滤掩码
+        filtered_stress_data = stress_data[valid_mask]
+        filtered_strain_data = strain_data[valid_mask]
+        filtered_positions = positions[valid_mask]
+        
+        print(f"Filtered out {np.sum(~valid_mask)} particles at origin position")
+        print(f"Saving data for {len(filtered_positions)} particles")
+        
         # 创建输出目录
         output_dir = "stress_strain_output"
         os.makedirs(output_dir, exist_ok=True)
         
         # 保存为numpy文件（用于可视化）
-        np.save(f"{output_dir}/stress_frame_{frame_number}.npy", stress_data)
-        np.save(f"{output_dir}/strain_frame_{frame_number}.npy", strain_data)
-        np.save(f"{output_dir}/positions_frame_{frame_number}.npy", positions)
+        np.save(f"{output_dir}/stress_frame_{frame_number}.npy", filtered_stress_data)
+        np.save(f"{output_dir}/strain_frame_{frame_number}.npy", filtered_strain_data)
+        np.save(f"{output_dir}/positions_frame_{frame_number}.npy", filtered_positions)
         
-        # 计算应力标量值（von Mises应力）
+        # 计算应力标量值（von Mises应力）- 使用过滤后的数据
         von_mises_stress = []
-        for i in range(stress_data.shape[0]):
+        for i in range(filtered_stress_data.shape[0]):
             if self.dim == 2:
-                s = stress_data[i]
+                s = filtered_stress_data[i]
                 # 2D von Mises应力
                 von_mises = np.sqrt(s[0,0]**2 + s[1,1]**2 - s[0,0]*s[1,1] + 3*s[0,1]**2)
             else:
                 # 3D von Mises应力
-                s = stress_data[i]
+                s = filtered_stress_data[i]
                 von_mises = np.sqrt(0.5*((s[0,0]-s[1,1])**2 + (s[1,1]-s[2,2])**2 + (s[2,2]-s[0,0])**2) + 3*(s[0,1]**2 + s[1,2]**2 + s[2,0]**2))
             von_mises_stress.append(von_mises)
         
         # 保存统计信息
         stats = {
             "frame": frame_number,
-            "n_particles": int(stress_data.shape[0]),
+            "n_particles": int(filtered_stress_data.shape[0]),
+            "n_particles_total": int(stress_data.shape[0]),
+            "n_particles_filtered": int(np.sum(~valid_mask)),
             "dimension": int(self.dim),
             "von_mises_stress": {
                 "min": float(np.min(von_mises_stress)),
