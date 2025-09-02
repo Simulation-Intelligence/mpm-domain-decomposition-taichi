@@ -1,0 +1,42 @@
+name: taichi
+channels:
+  - defaults
+dependencies:
+  - ca-certificates=2025.7.15=hca03da5_0
+  - libcxx=20.1.8=h8869778_0
+  - libffi=3.4.4=hca03da5_1
+  - ncurses=6.5=hee39554_0
+  - openssl=3.0.17=h4ee41c1_0
+  - pip=24.2=py38hca03da5_0
+  - python=3.8.20=hb885b13_0
+  - readline=8.3=h0b18652_0
+  - setuptools=75.1.0=py38hca03da5_0
+  - sqlite=3.50.2=h79febb2_1
+  - tk=8.6.15=hcd8a7d5_0
+  - wheel=0.44.0=py38hca03da5_0
+  - xz=5.6.4=h80987f9_1
+  - zlib=1.2.13=h18a0788_1
+  - pip:
+      - astunparse==1.6.3
+      - colorama==0.4.6
+      - contourpy==1.1.1
+      - cycler==0.12.1
+      - dill==0.4.0
+      - fonttools==4.57.0
+      - importlib-resources==6.4.5
+      - kiwisolver==1.4.7
+      - markdown-it-py==3.0.0
+      - matplotlib==3.7.5
+      - mdurl==0.1.2
+      - numpy==1.24.4
+      - packaging==25.0
+      - pillow==10.4.0
+      - pygments==2.19.2
+      - pyparsing==3.1.4
+      - python-dateutil==2.9.0.post0
+      - rich==14.1.0
+      - scipy==1.10.1
+      - six==1.17.0
+      - taichi==1.7.3
+      - zipp==3.20.2
+prefix: /opt/miniconda3/envs/taichi
