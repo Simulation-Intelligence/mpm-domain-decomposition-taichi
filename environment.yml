@@ -2,20 +2,20 @@ name: taichi
 channels:
   - defaults
 dependencies:
-  - ca-certificates=2025.7.15=hca03da5_0
-  - libcxx=20.1.8=h8869778_0
-  - libffi=3.4.4=hca03da5_1
-  - ncurses=6.5=hee39554_0
-  - openssl=3.0.17=h4ee41c1_0
-  - pip=24.2=py38hca03da5_0
-  - python=3.8.20=hb885b13_0
-  - readline=8.3=h0b18652_0
-  - setuptools=75.1.0=py38hca03da5_0
-  - sqlite=3.50.2=h79febb2_1
-  - tk=8.6.15=hcd8a7d5_0
-  - wheel=0.44.0=py38hca03da5_0
-  - xz=5.6.4=h80987f9_1
-  - zlib=1.2.13=h18a0788_1
+  - ca-certificates=2025.7.15
+  - libcxx=20.1.8
+  - libffi=3.4.4
+  - ncurses=6.5
+  - openssl=3.0.17
+  - pip=24.2
+  - python=3.8.20
+  - readline=8.3
+  - setuptools=75.1.0
+  - sqlite=3.50.2
+  - tk=8.6.15
+  - wheel=0.44.0
+  - xz=5.6.4
+  - zlib=1.2.13
   - pip:
       - astunparse==1.6.3
       - colorama==0.4.6
