@@ -189,19 +189,159 @@ class ImplicitMPM:
             self.particles.is_boundary_particle.to_numpy().astype(np.uint32)
         )
     
+    def _is_point_in_single_region(self, point, region_config):
+        """检查点是否在单个区域内"""
+        region_type = region_config.get("type", "rectangle")
+        params = region_config.get("params", {})
+        
+        if region_type == "rectangle":
+            rect_range = params.get("range", [])
+            if len(rect_range) != self.dim:
+                return False
+            
+            for d in range(self.dim):
+                if point[d] < rect_range[d][0] or point[d] > rect_range[d][1]:
+                    return False
+            return True
+            
+        elif region_type == "ellipse":
+            center = params.get("center", [0.5] * self.dim)
+            semi_axes = params.get("semi_axes", [0.1] * self.dim)
+            
+            if len(center) != self.dim or len(semi_axes) != self.dim:
+                return False
+            
+            sum_normalized = 0.0
+            for d in range(self.dim):
+                diff = point[d] - center[d]
+                sum_normalized += (diff / semi_axes[d])**2
+            return sum_normalized <= 1.0
+        
+        return False
+
+    def _weight_gauss_data_to_grid(self):
+        """将高斯积分点的应力应变数据按权重加权到网格位置"""
+        from Geometry.GaussQuadrature import GaussQuadrature
+        import numpy as np
+        
+        # 获取粒子数据
+        particle_stress = self.particles.stress.to_numpy()
+        particle_strain = self.particles.strain.to_numpy()
+        particle_positions = self.particles.x.to_numpy()
+        
+        # 获取高斯积分点配置
+        ppg = self.particles.particles_per_grid
+        grid_size = self.particles.grid_size
+        dx = 1.0 / grid_size
+        
+        try:
+            n_1d = GaussQuadrature.validate_particles_per_grid(ppg)
+        except ValueError:
+            # 如果不是完全平方数，使用最接近的
+            sqrt_n = int(ppg ** 0.5)
+            if sqrt_n * sqrt_n < ppg:
+                sqrt_n += 1
+            n_1d = min(sqrt_n, 10)
+        
+        # 获取高斯积分点的权重
+        gauss_positions, gauss_weights = GaussQuadrature.get_2d_grid_points_and_weights(n_1d, dx)
+        
+        # 创建网格数据存储
+        grid_stress = {}
+        grid_strain = {}
+        grid_weights = {}
+        
+        # 遍历所有粒子，将它们的数据加权到对应的网格中心
+        for p_idx, pos in enumerate(particle_positions):
+            x, y = pos[0], pos[1]
+            
+            # 找到粒子所属的网格
+            grid_i = int(x / dx)
+            grid_j = int(y / dx)
+            
+            # 确保网格索引在有效范围内
+            if 0 <= grid_i < grid_size and 0 <= grid_j < grid_size:
+                grid_center_x = grid_i * dx
+                grid_center_y = grid_j * dx
+                
+                # 找到粒子在该网格中对应的高斯积分点索引
+                gauss_idx = -1
+                min_dist = float('inf')
+                for g_idx, g_pos in enumerate(gauss_positions):
+                    expected_x = grid_center_x + g_pos[0]
+                    expected_y = grid_center_y + g_pos[1]
+                    dist = (x - expected_x)**2 + (y - expected_y)**2
+                    if dist < min_dist:
+                        min_dist = dist
+                        gauss_idx = g_idx
+                
+                if gauss_idx >= 0:
+                    # 使用对应的高斯积分权重
+                    weight = gauss_weights[gauss_idx]
+                    grid_key = (grid_i, grid_j)
+                    
+                    if grid_key not in grid_stress:
+                        grid_stress[grid_key] = np.zeros_like(particle_stress[p_idx])
+                        grid_strain[grid_key] = np.zeros_like(particle_strain[p_idx])
+                        grid_weights[grid_key] = 0.0
+                    
+                    # 加权累加
+                    grid_stress[grid_key] += particle_stress[p_idx] * weight
+                    grid_strain[grid_key] += particle_strain[p_idx] * weight
+                    grid_weights[grid_key] += weight
+        
+        # 归一化并生成最终的网格中心数据
+        final_positions = []
+        final_stress = []
+        final_strain = []
+        
+        for (grid_i, grid_j), total_weight in grid_weights.items():
+            if total_weight > 1e-10:  # 避免除零
+                # 网格中心位置
+                center_x = grid_i * dx
+                center_y = grid_j * dx
+                final_positions.append([center_x, center_y])
+                
+                # 归一化的应力应变
+                final_stress.append(grid_stress[(grid_i, grid_j)] / total_weight)
+                final_strain.append(grid_strain[(grid_i, grid_j)] / total_weight)
+        
+        print(f"高斯积分点加权完成: {len(particle_positions)} 个粒子 -> {len(final_positions)} 个网格点")
+        
+        return np.array(final_stress), np.array(final_strain), np.array(final_positions)
+
+    def _is_point_in_regions(self, point, regions_config):
+        """检查点是否在指定区域内（支持多个区域）"""
+        # 如果是单个区域配置（字典），转换为列表
+        if isinstance(regions_config, dict):
+            regions_config = [regions_config]
+        
+        # 检查点是否在任意一个区域内
+        for region in regions_config:
+            if self._is_point_in_single_region(point, region):
+                return True
+        
+        return False
+
     def save_stress_strain_data(self, frame_number):
         """保存最终帧的应力和应变数据"""
         import json
         import os
+        from datetime import datetime
         
         # 计算当前状态的应力和应变
         print("正在计算应力和应变...")
-        self.solver.compute_stress_strain()
+        self.solver.compute_stress_strain_with_averaging()
         
-        # 获取应力和应变数据
-        stress_data = self.particles.stress.to_numpy()
-        strain_data = self.particles.strain.to_numpy()
-        positions = self.particles.x.to_numpy()
+        # 检查采样方式，如果是高斯采样则进行加权处理
+        if self.particles.sampling_method == "gauss":
+            print("检测到高斯积分点采样，进行权重加权...")
+            stress_data, strain_data, positions = self._weight_gauss_data_to_grid()
+        else:
+            # 获取原始粒子的应力和应变数据
+            stress_data = self.particles.stress.to_numpy()
+            strain_data = self.particles.strain.to_numpy()
+            positions = self.particles.x.to_numpy()
         
         # 过滤掉位置为(0,0)的粒子
         if self.dim == 2:
@@ -211,6 +351,19 @@ class ImplicitMPM:
             # 3D情况：过滤(0,0,0)位置
             valid_mask = ~((positions[:, 0] == 0.0) & (positions[:, 1] == 0.0) & (positions[:, 2] == 0.0))
         
+        # 检查是否有应力输出区域配置
+        stress_output_regions = self.cfg.get("stress_output_regions", None)
+        # 为了向后兼容，也检查单数形式
+        if stress_output_regions is None:
+            stress_output_regions = self.cfg.get("stress_output_region", None)
+        
+        if stress_output_regions is not None:
+            print("应用应力输出区域过滤...")
+            # 应用区域过滤
+            region_mask = np.array([self._is_point_in_regions(pos, stress_output_regions) for pos in positions])
+            valid_mask = valid_mask & region_mask
+            print(f"区域过滤后剩余 {np.sum(region_mask)} / {len(positions)} 个粒子")
+        
         # 应用过滤掩码
         filtered_stress_data = stress_data[valid_mask]
         filtered_strain_data = strain_data[valid_mask]
@@ -219,8 +372,11 @@ class ImplicitMPM:
         print(f"Filtered out {np.sum(~valid_mask)} particles at origin position")
         print(f"Saving data for {len(filtered_positions)} particles")
         
-        # 创建输出目录
-        output_dir = "stress_strain_output"
+        # 创建带时间戳的输出目录
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_output_dir = "stress_strain_output"
+        timestamped_dir = f"frame_{frame_number}_{timestamp}"
+        output_dir = os.path.join(base_output_dir, timestamped_dir)
         os.makedirs(output_dir, exist_ok=True)
         
         # 保存为numpy文件（用于可视化）
@@ -248,6 +404,7 @@ class ImplicitMPM:
             "n_particles_total": int(stress_data.shape[0]),
             "n_particles_filtered": int(np.sum(~valid_mask)),
             "dimension": int(self.dim),
+            "stress_output_regions": stress_output_regions,
             "von_mises_stress": {
                 "min": float(np.min(von_mises_stress)),
                 "max": float(np.max(von_mises_stress)),
@@ -267,7 +424,7 @@ class ImplicitMPM:
 
 if __name__ == "__main__":
 
-    cfg=Config("config/config_2d_test1.json")
+    cfg=Config("config/config_2d.json")
     float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":
@@ -290,10 +447,11 @@ if __name__ == "__main__":
 
         # 自动停止条件
         if i >= mpm.recorder.max_frames:
-            # 在最后一帧记录应力和应变数据
-            print("记录最终帧的应力和应变数据...")
-            mpm.save_stress_strain_data(i)
             break
+
+                # 在最后一帧记录应力和应变数据
+    print("记录最终帧的应力和应变数据...")
+    mpm.save_stress_strain_data(i)
 
     if mpm.recorder is None:
         exit()

@@ -1,0 +1,28 @@
+{
+  "frame": 1115,
+  "n_particles": 421,
+  "n_particles_total": 10816,
+  "n_particles_filtered": 10395,
+  "dimension": 2,
+  "stress_output_regions": [
+    {
+      "type": "ellipse",
+      "params": {
+        "center": [
+          0.5,
+          0.5
+        ],
+        "semi_axes": [
+          0.09,
+          0.09
+        ]
+      }
+    }
+  ],
+  "von_mises_stress": {
+    "min": 62.82993055534484,
+    "max": 69.32265219232241,
+    "mean": 69.05432557157147,
+    "std": 0.8868230223449706
+  }
+}

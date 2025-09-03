@@ -491,6 +491,57 @@ class MPMSolver:
                 self.grid.v[I] += self.dt * self.grid.f[I] / self.grid.m[I]
     
     @ti.kernel
+    def p2g_F_averaging(self, F_grid: ti.template(), m_grid: ti.template()):
+        """P2G步骤：将粒子的F值传输到网格"""
+        # 初始化网格
+        for I in ti.grouped(F_grid):
+            F_grid[I] = ti.Matrix.zero(self.float_type, self.dim, self.dim)
+            m_grid[I] = 0.0
+        
+        # P2G: 将粒子的F值传输到网格
+        for p in range(self.particles.n_particles):
+            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
+            
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
+                grid_idx = (base + offset) % self.grid.size
+                weight = self.particles.wip[p, offset]
+                p_mass = self.particles.get_particle_mass(p)
+                
+                ti.atomic_add(m_grid[grid_idx], weight * p_mass)
+                for i in ti.static(range(self.dim)):
+                    for j in ti.static(range(self.dim)):
+                        ti.atomic_add(F_grid[grid_idx][i,j], weight * p_mass * self.particles.F[p][i,j])
+        
+        # 归一化网格上的F值
+        for I in ti.grouped(F_grid):
+            if m_grid[I] > 1e-10:
+                F_grid[I] /= m_grid[I]
+
+    @ti.kernel
+    def g2p_F_averaging(self, F_grid: ti.template()):
+        """G2P步骤：将网格的平均F值传输回粒子"""
+        for p in range(self.particles.n_particles):
+            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
+            new_F = ti.Matrix.zero(self.float_type, self.dim, self.dim)
+            
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
+                grid_idx = (base + offset) % self.grid.size
+                weight = self.particles.wip[p, offset]
+                new_F += weight * F_grid[grid_idx]
+            
+            self.particles.F[p] = new_F
+
+    def average_F_p2g_g2p(self):
+        """通过p2g和g2p操作对F[p]进行平均"""
+        # 创建临时网格字段存储F值
+        F_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.size,)*self.dim)
+        m_grid = ti.field(self.float_type, shape=(self.grid.size,)*self.dim)
+        
+        # 执行P2G和G2P
+        self.p2g_F_averaging(F_grid, m_grid)
+        self.g2p_F_averaging(F_grid)
+
+    @ti.kernel
     def compute_stress_strain(self):
         """计算并存储所有粒子的应力和应变（仅在需要时调用）"""
         for p in range(self.particles.n_particles):
@@ -511,3 +562,10 @@ class MPMSolver:
             # 计算并存储应变 (Green-Lagrange strain)
             F_transpose_F = F_corrected.transpose() @ F_corrected
             self.particles.strain[p] = 0.5 * (F_transpose_F - ti.Matrix.identity(self.float_type, self.dim))
+
+    def compute_stress_strain_with_averaging(self):
+        """计算应力应变前先对F[p]进行平均"""
+        # 首先对F[p]进行一次p2g，g2p进行平均
+        self.average_F_p2g_g2p()
+        # 然后计算应力应变
+        self.compute_stress_strain()
