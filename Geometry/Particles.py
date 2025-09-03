@@ -25,65 +25,39 @@ class Particles:
             for d in ti.static(range(self.dim)):
                 self.boundary_range[d] = ti.Vector(boundary_range[d])
 
-        # 计算每个形状的面积
-        self.areas = ti.field(self.float_type, self.num_areas)
-        for i in range(self.num_areas):
-            self.areas[i] = ShapeConfig.calculate_shape_area(self.shapes[i], self.dim)
-
-        max_n_per_area = 0
-            
+        # 存储配置参数，延后计算粒子数量
         self.particles_per_grid = config.get("particles_per_grid", 8)
         self.grid_size = config.get("grid_size", 16)
-        self.n_per_area = ti.field(ti.i32, shape=self.num_areas)
-        self.n_particles = 0
+        self.common_particles = common_particles
+        
+        # 计算每个形状的面积（Python数组）
+        self.areas = []
         for i in range(self.num_areas):
-            n = int(self.grid_size**self.dim * self.areas[i] * self.particles_per_grid)
-            self.n_per_area[i] = n
-            if n > max_n_per_area:
-                max_n_per_area = n
-            self.n_particles += n
-
-        self.common_particles = None
-
-        if common_particles is not None:
-            self.n_particles += common_particles.n_particles
-            self.common_particles = common_particles
+            area = ShapeConfig.calculate_shape_area(self.shapes[i], self.dim)
+            self.areas.append(area)
+            
+        # 粒子数量和相关字段将在generate_and_create_fields()中创建
+        self.n_particles = 0
+        self.particle_data_generated = False
 
         # 支持新旧配置格式
         sampling_method = config.get("sampling_method", None)
         if sampling_method is not None:
-            # 新格式：sampling_method 可以是 "uniform", "poisson", "regular"
+            # 新格式：sampling_method 可以是 "uniform", "poisson", "regular", "gauss"
             self.sampling_method = sampling_method
         else:
             # 兼容旧格式：use_possion_sampling 布尔值
             use_poisson = config.get("use_possion_sampling", True)
             self.sampling_method = "poisson" if use_poisson else "uniform"
-        self.pos_possion = ti.Vector.field(self.dim, self.float_type, shape=max_n_per_area)
+        # 存储基础参数
         self.p_rho = config.get("p_rho", 1)
         self.p_vol = (1.0/self.grid_size)**self.dim / self.particles_per_grid
         self.p_mass = self.p_vol * self.p_rho
         self.boundary_size = config.get("boundary_size", None)
-        
-        # 粒子字段
-        self.x = ti.Vector.field(self.dim, self.float_type, self.n_particles)
-        self.v = ti.Vector.field(self.dim, self.float_type, self.n_particles)
-        self.F = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
-        self.C = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
-        
-        # 应力和应变字段
-        self.stress = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
-        self.strain = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
-
-        shape = (self.n_particles, 3,3) if self.dim == 2 else (self.n_particles, 3,3,3)
-        self.wip=ti.field(self.float_type, shape)
-        self.dwip=ti.Vector.field(self.dim, self.float_type, shape)
-        
         self.init_vel_y = config.get("initial_velocity_y", -1)
-        self.is_boundary_particle = ti.field(ti.i32, self.n_particles)
         
-        # 材料参数表和粒子材料ID
+        # 材料参数表
         self.material_params = self._parse_material_params(config)
-        self.particle_material_id = ti.field(ti.i32, self.n_particles)
         
         # 两种材料的参数作为类成员变量（Python变量）
         if len(self.material_params) >= 1:
@@ -115,8 +89,8 @@ class Particles:
         # 初始化组件
         self._init_components(config)
         
-        # 初始化粒子
-        self.initialize()
+        # 生成粒子并创建字段
+        self.generate_and_create_fields()
 
         # 设置边界
         if self.boundary_size is not None:
@@ -204,7 +178,9 @@ class Particles:
         # 粒子生成器
         self.particle_generator = ParticleGenerator(
             dim=self.dim, 
-            sampling_method=self.sampling_method
+            sampling_method=self.sampling_method,
+            particles_per_grid=self.particles_per_grid,
+            grid_size=self.grid_size
         )
         
         # 粒子初始化器
@@ -238,28 +214,79 @@ class Particles:
         # 粒子合并器
         self.merger = ParticleMerger()
     
-    def initialize(self):
-        """初始化所有粒子，支持多种几何形状"""
-        # 使用粒子生成器生成粒子
+    def generate_and_create_fields(self):
+        """生成粒子数据，然后创建对应的Taichi字段"""
+        if self.particle_data_generated:
+            return
+        
+        # 第一步：计算每个shape需要的粒子数量
+        particles_per_area = []
+        for i in range(self.num_areas):
+            n = int(self.grid_size**self.dim * self.areas[i] * self.particles_per_grid)
+            particles_per_area.append(n)
+        
+        # 第二步：使用粒子生成器生成所有粒子
         all_particles = self.particle_generator.generate_particles_for_shapes(
             self.shapes, 
-            [self.n_per_area[i] for i in range(self.num_areas)]
+            particles_per_area
         )
         
-        # 将最终粒子数量写入Taichi字段
-        self.n_particles = min(len(all_particles), self.n_particles)
+        # 第三步：计算总粒子数量（包括common_particles）
+        generated_particle_count = len(all_particles)
+        common_particle_count = self.common_particles.n_particles if self.common_particles else 0
+        total_particle_count = generated_particle_count + common_particle_count
         
-        # 使用粒子初始化器初始化粒子属性
+        print(f"Generated particles: {generated_particle_count}")
+        print(f"Common particles: {common_particle_count}")
+        print(f"Total particles: {total_particle_count}")
+        
+        # 第四步：设置最终粒子数量并创建Taichi字段
+        self.n_particles = total_particle_count
+        self._create_taichi_fields()
+        
+        # 第五步：初始化粒子属性
         self.particle_initializer.initialize_particle_fields(
-            all_particles[:self.n_particles],
+            all_particles,
             self.x, self.v, self.F, self.C,
             self.particle_material_id
         )
         
-        # 处理公共粒子
+        # 第六步：处理公共粒子
         if self.common_particles is not None:
-            start_num = self.n_particles - self.common_particles.n_particles
-            self.merge_common_particles(start_num)
+            self.merge_common_particles(generated_particle_count)
+            
+        self.particle_data_generated = True
+    
+    def _create_taichi_fields(self):
+        """创建所有Taichi字段"""
+        # 粒子字段
+        self.x = ti.Vector.field(self.dim, self.float_type, self.n_particles)
+        self.v = ti.Vector.field(self.dim, self.float_type, self.n_particles)
+        self.F = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
+        self.C = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
+        
+        # 应力和应变字段
+        self.stress = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
+        self.strain = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
+
+        # 权重和梯度字段
+        shape = (self.n_particles, 3, 3) if self.dim == 2 else (self.n_particles, 3, 3, 3)
+        self.wip = ti.field(self.float_type, shape)
+        self.dwip = ti.Vector.field(self.dim, self.float_type, shape)
+        
+        # 边界和材料ID字段
+        self.is_boundary_particle = ti.field(ti.i32, self.n_particles)
+        self.particle_material_id = ti.field(ti.i32, self.n_particles)
+        
+        # Taichi字段用于计算每个area的粒子数（向后兼容）
+        self.n_per_area = ti.field(ti.i32, shape=self.num_areas)
+        for i in range(self.num_areas):
+            area_particles = int(self.grid_size**self.dim * self.areas[i] * self.particles_per_grid)
+            self.n_per_area[i] = area_particles
+            
+        # Poisson采样相关字段（如果需要）
+        max_n_per_area = max(int(self.grid_size**self.dim * area * self.particles_per_grid) for area in self.areas) if self.areas else 1
+        self.pos_possion = ti.Vector.field(self.dim, self.float_type, shape=max_n_per_area)
 
     def merge_common_particles(self, start_num):
         """合并公共粒子"""

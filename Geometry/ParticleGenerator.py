@@ -3,6 +3,7 @@
 """
 import numpy as np
 import math
+from .GaussQuadrature import GaussQuadrature
 
 
 class ShapeConfig:
@@ -67,16 +68,20 @@ class ShapeConfig:
 
 class ParticleGenerator:
     """粒子生成器"""
-    
-    def __init__(self, dim=2, sampling_method="poisson"):
+
+    def __init__(self, dim=2, sampling_method="poisson", particles_per_grid=8, grid_size=16):
         """
         初始化粒子生成器
         Args:
             dim: 维度 (2 or 3)
-            sampling_method: 采样方式，可选 "uniform", "poisson", "regular"
+            sampling_method: 采样方式，可选 "uniform", "poisson", "regular", "gauss"
+            particles_per_grid: 每个网格的粒子数
+            grid_size: 网格大小
         """
         self.dim = dim
         self.sampling_method = sampling_method
+        self.particles_per_grid = particles_per_grid
+        self.grid_size = grid_size
         self.last_poisson_radius = None  # 存储最后使用的Poisson采样半径
     
     def generate_particles_for_shapes(self, shapes, particles_per_area):
@@ -149,6 +154,9 @@ class ParticleGenerator:
         elif self.sampling_method == "regular":
             # 规则分布采样
             particles = self._generate_regular_grid_particles(rect_range, n_particles)
+        elif self.sampling_method == "gauss":
+            # 高斯积分点采样
+            particles = self._generate_gauss_quadrature_particles(rect_range, n_particles)
         else:
             # 均匀随机采样 (uniform)
             for _ in range(n_particles):
@@ -215,6 +223,51 @@ class ParticleGenerator:
         
         return particles
     
+    def _generate_gauss_quadrature_particles(self, rect_range, n_particles):
+        """生成基于高斯积分点的粒子分布，基于网格结构"""
+        if self.dim != 2:
+            raise ValueError("高斯积分点采样目前只支持2D")
+        
+        # 验证particles_per_grid是完全平方数
+        try:
+            n_1d = GaussQuadrature.validate_particles_per_grid(self.particles_per_grid)
+        except ValueError as e:
+            # 如果不是完全平方数，计算最接近的完全平方数
+            sqrt_n = int(self.particles_per_grid ** 0.5)
+            if sqrt_n * sqrt_n < self.particles_per_grid:
+                sqrt_n += 1
+            n_1d = min(sqrt_n, 10)  # 最大支持10个点
+            print(f"警告: {e}")
+            print(f"将使用{n_1d}x{n_1d}={n_1d*n_1d}个高斯积分点")
+        
+        particles = []
+        
+        # 计算网格间距
+        dx = 1.0 / self.grid_size
+        
+        # 获取高斯积分点的相对位置（在±0.5dx范围内）
+        gauss_positions, gauss_weights = GaussQuadrature.get_2d_grid_points_and_weights(n_1d, dx)
+        
+        # 遍历所有网格点
+        for i in range(self.grid_size):
+            for j in range(self.grid_size):
+                # 网格中心位置：I * dx，其中I是网格索引
+                grid_center_x = i * dx
+                grid_center_y = j * dx
+                
+                # 在每个网格中心周围放置高斯积分点
+                for pos in gauss_positions:
+                    particle_x = grid_center_x + pos[0]
+                    particle_y = grid_center_y + pos[1]
+                    
+                    # 检查粒子是否在指定的形状区域内
+                    if (rect_range[0][0] <= particle_x <= rect_range[0][1] and 
+                        rect_range[1][0] <= particle_y <= rect_range[1][1]):
+                        particles.append([particle_x, particle_y])
+        
+        
+        return particles
+    
     def _generate_ellipse_particles(self, params, n_particles):
         """生成椭圆区域内的粒子"""
         center = params["center"]
@@ -273,7 +326,7 @@ class ParticleGenerator:
         
         # 估算需要在包围盒中生成多少格点，使得椭圆内大约有n_particles个粒子
         fill_ratio = ellipse_area / bbox_area
-        estimated_bbox_particles = int(n_particles / fill_ratio)  # 1.2是安全系数
+        estimated_bbox_particles = int(0.8*n_particles / fill_ratio)  # 1.2是安全系数
         
         # 在包围盒中生成规则格点
         bbox_particles = self._generate_regular_grid_particles(rect_range, estimated_bbox_particles)

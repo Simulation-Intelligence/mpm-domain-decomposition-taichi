@@ -12,63 +12,194 @@ import glob
 
 def load_stress_data(output_dir, frame_number=None):
     """加载应力应变数据（单域版本）"""
+    # 首先搜索时间戳子目录
+    timestamped_dirs = []
+    if os.path.exists(output_dir):
+        for item in os.listdir(output_dir):
+            item_path = os.path.join(output_dir, item)
+            if os.path.isdir(item_path) and item.startswith('frame_'):
+                timestamped_dirs.append(item_path)
+    
     if frame_number is None:
-        # Automatically find the latest frame
-        stress_files = glob.glob(f"{output_dir}/stress_frame_*.npy")
-        if not stress_files:
-            raise FileNotFoundError(f"在 {output_dir} 中未找到应力数据文件")
-        frame_numbers = [int(f.split('_')[-1].split('.')[0]) for f in stress_files]
-        frame_number = max(frame_numbers)
+        if timestamped_dirs:
+            # 如果有时间戳目录，找到最新的时间戳目录
+            def extract_timestamp(dirname):
+                # 从 frame_100_20250902_142624 格式中提取时间戳
+                parts = dirname.split('_')
+                if len(parts) >= 4:
+                    date_part = parts[-2]  # 20250902
+                    time_part = parts[-1]  # 142624
+                    return date_part + time_part  # 20250902142624
+                return '00000000000000'  # 默认值
+            
+            # 按时间戳排序，取最新的
+            latest_dir = max(timestamped_dirs, key=lambda x: extract_timestamp(os.path.basename(x)))
+            
+            # 从最新目录中找到帧文件
+            stress_files = glob.glob(f"{latest_dir}/stress_frame_*.npy")
+            if not stress_files:
+                raise FileNotFoundError(f"在最新目录 {latest_dir} 中未找到应力数据文件")
+            
+            # 从文件名中提取帧号
+            frame_numbers = [int(f.split('_')[-1].split('.')[0]) for f in stress_files]
+            frame_number = max(frame_numbers)
+            
+            # 直接从最新目录加载
+            stress_file = f"{latest_dir}/stress_frame_{frame_number}.npy"
+            strain_file = f"{latest_dir}/strain_frame_{frame_number}.npy"
+            positions_file = f"{latest_dir}/positions_frame_{frame_number}.npy"
+            
+            if not all(os.path.exists(f) for f in [stress_file, strain_file, positions_file]):
+                raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件")
+                
+            found_files = (stress_file, strain_file, positions_file)
+        else:
+            # 如果没有时间戳目录，回退到旧的搜索方式
+            stress_files = glob.glob(f"{output_dir}/stress_frame_*.npy")
+            if not stress_files:
+                raise FileNotFoundError(f"在 {output_dir} 中未找到应力数据文件")
+            
+            frame_numbers = [int(f.split('_')[-1].split('.')[0]) for f in stress_files]
+            frame_number = max(frame_numbers)
+            
+            stress_file = f"{output_dir}/stress_frame_{frame_number}.npy"
+            strain_file = f"{output_dir}/strain_frame_{frame_number}.npy"
+            positions_file = f"{output_dir}/positions_frame_{frame_number}.npy"
+            
+            if not all(os.path.exists(f) for f in [stress_file, strain_file, positions_file]):
+                raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件")
+                
+            found_files = (stress_file, strain_file, positions_file)
+    else:
+        # 如果指定了帧号，在所有目录中搜索
+        search_dirs = timestamped_dirs if timestamped_dirs else [output_dir]
+        found_files = None
+        for search_dir in search_dirs:
+            stress_file = f"{search_dir}/stress_frame_{frame_number}.npy"
+            strain_file = f"{search_dir}/strain_frame_{frame_number}.npy"
+            positions_file = f"{search_dir}/positions_frame_{frame_number}.npy"
+            
+            if all(os.path.exists(f) for f in [stress_file, strain_file, positions_file]):
+                found_files = (stress_file, strain_file, positions_file)
+                break
+        
+        if found_files is None:
+            raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件")
     
-    stress_file = f"{output_dir}/stress_frame_{frame_number}.npy"
-    strain_file = f"{output_dir}/strain_frame_{frame_number}.npy"
-    positions_file = f"{output_dir}/positions_frame_{frame_number}.npy"
-    
-    if not all(os.path.exists(f) for f in [stress_file, strain_file, positions_file]):
-        raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件")
-    
-    stress_data = np.load(stress_file)
-    strain_data = np.load(strain_file)
-    positions = np.load(positions_file)
+    stress_data = np.load(found_files[0])
+    strain_data = np.load(found_files[1])
+    positions = np.load(found_files[2])
     
     return stress_data, strain_data, positions, frame_number
 
 def load_schwarz_stress_data(output_dir, frame_number=None):
     """加载Schwarz双域应力应变数据"""
+    # 首先搜索时间戳子目录
+    timestamped_dirs = []
+    if os.path.exists(output_dir):
+        for item in os.listdir(output_dir):
+            item_path = os.path.join(output_dir, item)
+            if os.path.isdir(item_path) and item.startswith('frame_'):
+                timestamped_dirs.append(item_path)
+    
     if frame_number is None:
-        # Automatically find the latest frame
-        domain1_files = glob.glob(f"{output_dir}/domain1_stress_frame_*.npy")
-        if not domain1_files:
-            raise FileNotFoundError(f"在 {output_dir} 中未找到Domain1应力数据文件")
-        frame_numbers = [int(f.split('_')[-1].split('.')[0]) for f in domain1_files]
-        frame_number = max(frame_numbers)
-    
-    # Domain1文件
-    d1_stress_file = f"{output_dir}/domain1_stress_frame_{frame_number}.npy"
-    d1_strain_file = f"{output_dir}/domain1_strain_frame_{frame_number}.npy"
-    d1_positions_file = f"{output_dir}/domain1_positions_frame_{frame_number}.npy"
-    
-    # Domain2文件
-    d2_stress_file = f"{output_dir}/domain2_stress_frame_{frame_number}.npy"
-    d2_strain_file = f"{output_dir}/domain2_strain_frame_{frame_number}.npy"
-    d2_positions_file = f"{output_dir}/domain2_positions_frame_{frame_number}.npy"
-    
-    all_files = [d1_stress_file, d1_strain_file, d1_positions_file, 
-                 d2_stress_file, d2_strain_file, d2_positions_file]
-    
-    if not all(os.path.exists(f) for f in all_files):
-        missing_files = [f for f in all_files if not os.path.exists(f)]
-        raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件: {missing_files}")
+        if timestamped_dirs:
+            # 如果有时间戳目录，找到最新的时间戳目录
+            def extract_timestamp(dirname):
+                # 从 frame_100_20250902_142624 格式中提取时间戳
+                parts = dirname.split('_')
+                if len(parts) >= 4:
+                    date_part = parts[-2]  # 20250902
+                    time_part = parts[-1]  # 142624
+                    return date_part + time_part  # 20250902142624
+                return '00000000000000'  # 默认值
+            
+            # 按时间戳排序，取最新的
+            latest_dir = max(timestamped_dirs, key=lambda x: extract_timestamp(os.path.basename(x)))
+            
+            # 从最新目录中找到domain1帧文件
+            domain1_files = glob.glob(f"{latest_dir}/domain1_stress_frame_*.npy")
+            if not domain1_files:
+                raise FileNotFoundError(f"在最新目录 {latest_dir} 中未找到Domain1应力数据文件")
+            
+            # 从文件名中提取帧号
+            frame_numbers = [int(f.split('_')[-1].split('.')[0]) for f in domain1_files]
+            frame_number = max(frame_numbers)
+            
+            # 直接从最新目录加载
+            d1_stress_file = f"{latest_dir}/domain1_stress_frame_{frame_number}.npy"
+            d1_strain_file = f"{latest_dir}/domain1_strain_frame_{frame_number}.npy"
+            d1_positions_file = f"{latest_dir}/domain1_positions_frame_{frame_number}.npy"
+            
+            d2_stress_file = f"{latest_dir}/domain2_stress_frame_{frame_number}.npy"
+            d2_strain_file = f"{latest_dir}/domain2_strain_frame_{frame_number}.npy"
+            d2_positions_file = f"{latest_dir}/domain2_positions_frame_{frame_number}.npy"
+            
+            all_files = [d1_stress_file, d1_strain_file, d1_positions_file,
+                         d2_stress_file, d2_strain_file, d2_positions_file]
+            
+            if not all(os.path.exists(f) for f in all_files):
+                raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件")
+                
+            found_files = all_files
+        else:
+            # 如果没有时间戳目录，回退到旧的搜索方式
+            domain1_files = glob.glob(f"{output_dir}/domain1_stress_frame_*.npy")
+            if not domain1_files:
+                raise FileNotFoundError(f"在 {output_dir} 中未找到Domain1应力数据文件")
+            
+            frame_numbers = [int(f.split('_')[-1].split('.')[0]) for f in domain1_files]
+            frame_number = max(frame_numbers)
+            
+            d1_stress_file = f"{output_dir}/domain1_stress_frame_{frame_number}.npy"
+            d1_strain_file = f"{output_dir}/domain1_strain_frame_{frame_number}.npy"
+            d1_positions_file = f"{output_dir}/domain1_positions_frame_{frame_number}.npy"
+            
+            d2_stress_file = f"{output_dir}/domain2_stress_frame_{frame_number}.npy"
+            d2_strain_file = f"{output_dir}/domain2_strain_frame_{frame_number}.npy"
+            d2_positions_file = f"{output_dir}/domain2_positions_frame_{frame_number}.npy"
+            
+            all_files = [d1_stress_file, d1_strain_file, d1_positions_file,
+                         d2_stress_file, d2_strain_file, d2_positions_file]
+            
+            if not all(os.path.exists(f) for f in all_files):
+                raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件")
+                
+            found_files = all_files
+    else:
+        # 如果指定了帧号，在所有目录中搜索
+        search_dirs = timestamped_dirs if timestamped_dirs else [output_dir]
+        found_files = None
+        for search_dir in search_dirs:
+            # Domain1文件
+            d1_stress_file = f"{search_dir}/domain1_stress_frame_{frame_number}.npy"
+            d1_strain_file = f"{search_dir}/domain1_strain_frame_{frame_number}.npy"
+            d1_positions_file = f"{search_dir}/domain1_positions_frame_{frame_number}.npy"
+            
+            # Domain2文件
+            d2_stress_file = f"{search_dir}/domain2_stress_frame_{frame_number}.npy"
+            d2_strain_file = f"{search_dir}/domain2_strain_frame_{frame_number}.npy"
+            d2_positions_file = f"{search_dir}/domain2_positions_frame_{frame_number}.npy"
+            
+            all_files = [d1_stress_file, d1_strain_file, d1_positions_file, 
+                         d2_stress_file, d2_strain_file, d2_positions_file]
+            
+            if all(os.path.exists(f) for f in all_files):
+                found_files = all_files
+                break
+        
+        if found_files is None:
+            raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件")
     
     # 加载Domain1数据
-    d1_stress = np.load(d1_stress_file)
-    d1_strain = np.load(d1_strain_file)
-    d1_positions = np.load(d1_positions_file)
+    d1_stress = np.load(found_files[0])
+    d1_strain = np.load(found_files[1])
+    d1_positions = np.load(found_files[2])
     
     # 加载Domain2数据
-    d2_stress = np.load(d2_stress_file)
-    d2_strain = np.load(d2_strain_file)
-    d2_positions = np.load(d2_positions_file)
+    d2_stress = np.load(found_files[3])
+    d2_strain = np.load(found_files[4])
+    d2_positions = np.load(found_files[5])
     
     return {
         'domain1': {'stress': d1_stress, 'strain': d1_strain, 'positions': d1_positions},
@@ -158,20 +289,18 @@ def calculate_adaptive_radius(positions, coverage_factor=0.8):
     
     return radius_points ** 2  # Return s parameter (area)
 
-def visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path=None, use_log=False):
+def visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path=None, use_log=False, stress_cmap='coolwarm'):
     """2D应力可视化"""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-    
-    # Calculate adaptive radius for particles
-    particle_size = calculate_adaptive_radius(positions)
-    
+
+    particle_size = 20
     if use_log:
         from matplotlib.colors import LogNorm, SymLogNorm
         
         # von Mises stress (using logarithmic scale)
         von_mises_positive = np.maximum(von_mises, 1e-10)  # 避免零值
         scatter1 = ax1.scatter(positions[:, 0], positions[:, 1], c=von_mises_positive, 
-                             cmap='viridis', s=particle_size, alpha=0.8, 
+                             cmap=stress_cmap, s=particle_size, alpha=0.8, 
                              norm=LogNorm(vmin=np.min(von_mises_positive), vmax=np.max(von_mises_positive)))
         ax1.set_title(f'von Mises Stress Distribution (Log Scale, Frame {frame_number})')
         cbar1_label = 'von Mises Stress (Log)'
@@ -190,7 +319,7 @@ def visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path=
     else:
         # von Mises stress (linear scale)
         scatter1 = ax1.scatter(positions[:, 0], positions[:, 1], c=von_mises, 
-                             cmap='viridis', s=particle_size, alpha=0.8)
+                             cmap=stress_cmap, s=particle_size, alpha=0.8)
         ax1.set_title(f'von Mises Stress Distribution (Frame {frame_number})')
         cbar1_label = 'von Mises Stress'
         
@@ -219,7 +348,7 @@ def visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path=
     plt.show()
 
 
-def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False):
+def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress_cmap='coolwarm'):
     """2D Schwarz双域应力可视化"""
     
     frame_number = data_dict['frame_number']
@@ -237,9 +366,8 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False):
     all_pressure = np.concatenate([d1_pressure, d2_pressure])
     
     # Calculate adaptive radius for each domain
-    d1_particle_size = calculate_adaptive_radius(d1_data['positions'])
-    d2_particle_size = calculate_adaptive_radius(d2_data['positions'])
-    d2_particle_size = 200
+    d1_particle_size = 20
+    d2_particle_size = 20
 
     print(f"Domain1 particle size (s parameter): {d1_particle_size:.2f}")
     print(f"Domain2 particle size (s parameter): {d2_particle_size:.2f}")
@@ -263,7 +391,7 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False):
         # Domain1 von Mises stress (log scale)
         d1_vm_positive = np.maximum(d1_von_mises, 1e-10)
         scatter1 = ax1.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], 
-                              c=d1_vm_positive, cmap='viridis', s=d1_particle_size, alpha=0.8, 
+                              c=d1_vm_positive, cmap=stress_cmap, s=d1_particle_size, alpha=0.8, 
                               norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none')
         ax1.set_title(f'Domain1 von Mises Stress (Log Scale, Frame {frame_number})')
         cbar1_label = 'von Mises Stress (Log)'
@@ -271,7 +399,7 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False):
         # Domain2 von Mises stress (log scale)
         d2_vm_positive = np.maximum(d2_von_mises, 1e-10)
         scatter2 = ax2.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], 
-                              c=d2_vm_positive, cmap='viridis', s=d2_particle_size, alpha=0.8, 
+                              c=d2_vm_positive, cmap=stress_cmap, s=d2_particle_size, alpha=0.8, 
                               norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none')
         ax2.set_title(f'Domain2 von Mises Stress (Log Scale, Frame {frame_number})')
         cbar2_label = 'von Mises Stress (Log)'
@@ -296,14 +424,14 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False):
         
         # Domain1 von Mises stress (linear scale)
         scatter1 = ax1.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], 
-                              c=d1_von_mises, cmap='viridis', s=d1_particle_size, alpha=0.8, 
+                              c=d1_von_mises, cmap=stress_cmap, s=d1_particle_size, alpha=0.8, 
                               vmin=vm_vmin, vmax=vm_vmax, edgecolors='none')
         ax1.set_title(f'Domain1 von Mises Stress (Frame {frame_number})')
         cbar1_label = 'von Mises Stress'
         
         # Domain2 von Mises stress (linear scale)
         scatter2 = ax2.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], 
-                              c=d2_von_mises, cmap='viridis', s=d2_particle_size, alpha=0.8, 
+                              c=d2_von_mises, cmap=stress_cmap, s=d2_particle_size, alpha=0.8, 
                               vmin=vm_vmin, vmax=vm_vmax, edgecolors='none')
         ax2.set_title(f'Domain2 von Mises Stress (Frame {frame_number})')
         cbar2_label = 'von Mises Stress'
@@ -350,7 +478,7 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False):
     
     plt.show()
 
-def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=False):
+def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=False, stress_cmap='coolwarm'):
     """2D Schwarz双域合并应力可视化"""
     
     frame_number = data_dict['frame_number']
@@ -395,11 +523,11 @@ def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=Fals
         d2_vm_positive = np.maximum(d2_von_mises, 1e-10)
         
         scatter1_d1 = ax1.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], 
-                                 c=d1_vm_positive, cmap='viridis', s=d1_particle_size, alpha=0.8, 
+                                 c=d1_vm_positive, cmap=stress_cmap, s=d1_particle_size, alpha=0.8, 
                                  norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), 
                                  edgecolors='black', linewidth=0.3, label='Domain1')
         scatter1_d2 = ax1.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], 
-                                 c=d2_vm_positive, cmap='viridis', s=d2_particle_size, alpha=0.8, 
+                                 c=d2_vm_positive, cmap=stress_cmap, s=d2_particle_size, alpha=0.8, 
                                  norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), 
                                  edgecolors='red', linewidth=0.3, marker='^', label='Domain2')
         ax1.set_title(f'Dual Domain von Mises Stress Distribution (Log Scale, Frame {frame_number})')
@@ -423,11 +551,11 @@ def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=Fals
         
         # Combined von Mises stress visualization (linear scale)
         scatter1_d1 = ax1.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], 
-                                 c=d1_von_mises, cmap='viridis', s=d1_particle_size, alpha=0.8, 
+                                 c=d1_von_mises, cmap=stress_cmap, s=d1_particle_size, alpha=0.8, 
                                  vmin=vm_vmin, vmax=vm_vmax, 
                                  edgecolors='black', linewidth=0.3, label='Domain1')
         scatter1_d2 = ax1.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], 
-                                 c=d2_von_mises, cmap='viridis', s=d2_particle_size, alpha=0.8, 
+                                 c=d2_von_mises, cmap=stress_cmap, s=d2_particle_size, alpha=0.8, 
                                  vmin=vm_vmin, vmax=vm_vmax, 
                                  edgecolors='red', linewidth=0.3, marker='^', label='Domain2')
         ax1.set_title(f'Dual Domain von Mises Stress Distribution (Frame {frame_number})')
@@ -547,6 +675,9 @@ def main():
                        help='Dual domain combined visualization (only for Schwarz mode)')
     parser.add_argument('--log', action='store_true',
                        help='Use logarithmic scale visualization (default: linear scale)')
+    parser.add_argument('--cmap', default='viridis',
+                       help='Colormap for stress visualization (default: coolwarm, options: viridis, plasma, inferno, magma, coolwarm, RdYlBu, seismic)')
+    
     
     args = parser.parse_args()
     
@@ -582,10 +713,10 @@ def main():
                 
             if args.combined:
                 # Combined visualization mode
-                visualize_schwarz_stress_combined_2d(data_dict, save_path, args.log)
+                visualize_schwarz_stress_combined_2d(data_dict, save_path, args.log, args.cmap)
             else:
                 # Separate visualization mode
-                visualize_schwarz_stress_2d(data_dict, save_path, args.log)
+                visualize_schwarz_stress_2d(data_dict, save_path, args.log, args.cmap)
                     
         else:
             # Single domain mode (original functionality)
@@ -614,7 +745,7 @@ def main():
                 print(f"Error: Only 2D data visualization is supported, current data dimension is {dim}D")
                 return 1
                 
-            visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path, args.log)
+            visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path, args.log, args.cmap)
             
     except Exception as e:
         print(f"Error: {e}")

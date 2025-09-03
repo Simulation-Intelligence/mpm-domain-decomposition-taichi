@@ -2,12 +2,12 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_size": 128,
+        "grid_size": 32,
         "scale": 1.0,
-        "particles_per_grid": 16,
-        "sampling_method": "gauss",
-        "dt": 1e-3,
-        "max_iter": 1,
+        "particles_per_grid": 64,
+        "sampling_method": "regular",
+        "dt": 1e-4,
+        "max_iter": 10,
         "solve_max_iter": 1000,
         "solve_init_iter": 100,
         "gravity": [
@@ -19,65 +19,45 @@
                 "type": "rectangle",
                 "params": {
                     "range": [
-                        [0.09, 0.11],
-                        [0.1, 0.9]
+                        [0.09, 0.12],
+                        [0, 1]
                     ]
                 },
-                "force": [-5.0, 0.0]
+                "force": [-10.0, 0.0]
             },
             {
                 "type": "rectangle",
                 "params": {
                     "range": [
-                        [0.89, 0.91],
-                        [0.1, 0.9]
+                        [0.88, 0.91],
+                        [0, 1]
                     ]
                 },
-                "force": [5.0, 0.0]
-            },
-            {
-                "type": "rectangle",
-                "params": {
-                    "range": [
-                        [0.1, 0.9],
-                        [0.09, 0.11]
-                    ]
-                },
-                "force": [0.0, -5.0]
-            },
-            {
-                "type": "rectangle",
-                "params": {
-                    "range": [
-                        [0.1, 0.9],
-                        [0.89, 0.91]
-                    ]
-                },
-                "force": [0.0, 5.0]
+                "force": [10.0, 0.0]
             }
         ],
         "material_params": [
             {
                 "id": 0,
                 "name": "default",
-                "E": 1e5,
+                "E": 1e6,
                 "nu": 0.3,
                 "rho": 1e3
             },
             {
                 "id": 1,
                 "name": "soft_material",
-                "E": 5e4,
-                "nu": 0.3,
+                "E": 1e3,
+                "nu": 0.4,
                 "rho": 1e3
             }
         ],
-        "implicit": true,
+        "implicit": false,
         "use_auto_diff": false,
         "compare_diff": false,
         "bound": 2,
         "initial_velocity_y": -0,
-        "damping":100,
+        "damping":10,
         "shapes": [
             {
                 "type": "rectangle",
@@ -88,8 +68,8 @@
                             0.9
                         ],
                         [
-                            0.1,
-                            0.9
+                            0.45,
+                            0.55
                         ]
                     ]
                 },
@@ -101,27 +81,49 @@
                 "params": {
                     "center": [
                         0.5,
-                        0.5
+                        0.55
                     ],
                     "semi_axes": [
-                        0.1,
-                        0.1
+                        0.03,
+                        0.03
+                    ]
+                },
+                "operation": "subtract"
+            },
+            {
+                "type": "ellipse",
+                "params": {
+                    "center": [
+                        0.5,
+                        0.45
+                    ],
+                    "semi_axes": [
+                        0.03,
+                        0.03
+                    ]
+                },
+                "operation": "subtract"
+            },
+            {
+                "type": "rectangle",
+                "params": {
+                 "range": [
+                        [
+                            0.45,
+                            0.55
+                        ],
+                        [
+                            0.45,
+                            0.55
+                        ]
                     ]
                 },
                 "operation": "change",
-                "material_id": 1
+                "material_id": 0
             }
 
-        ],"stress_output_regions": [
-        {
-            "type": "ellipse",
-            "params": {
-                "center": [0.5, 0.5],
-                "semi_axes": [0.09, 0.09]
-            }
-        }
-    ],
+        ],
         "implicit_solver": "Newton",
         "eta": 1e-4,
-        "record_frames": 10000
+        "record_frames": 1000
     }
