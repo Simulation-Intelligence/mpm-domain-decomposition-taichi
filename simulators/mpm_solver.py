@@ -28,6 +28,9 @@ class MPMSolver:
         self.solve_max_iter = config.get("solve_max_iter", 50)
         self.solve_init_iter = config.get("solve_init_iter", 10)
         
+        # 静力学求解选项
+        self.static_solve = config.get("static_solve", False)
+        
         # 保留兼容性的全局参数，但现在主要使用particles.material_params
         E = config.get("E", 4)
         nu = config.get("nu", 0.4)
@@ -123,7 +126,8 @@ class MPMSolver:
             e2=-mu*logJ
             e3=0.5*lam*(logJ**2)
             energy = e1 + e2 + e3
-            self.total_energy[None] += energy * self.particles.p_vol
+            weight = self.particles.get_particle_weight(p)
+            self.total_energy[None] += energy * self.particles.p_vol * weight
 
 
 
@@ -132,9 +136,12 @@ class MPMSolver:
         for I in ti.grouped(self.grid.v):
             vidx = self.get_idx(I)
             vel = self.get_vel(v_flat,vidx)
-            self.total_energy[None] += 0.5 * self.grid.m[I] * (vel - self.grid.v_prev[I]).norm_sqr()
+            
+            # 惯性项 - 静力学求解时跳过
+            if not ti.static(self.static_solve):
+                self.total_energy[None] += 0.5 * self.grid.m[I] * (vel - self.grid.v_prev[I]).norm_sqr()
 
-            # 计算重力势能
+            # 计算势能
             pos = I * self.grid.dx + vel * self.dt
             total_external_force = self.gravity
             if self.n_volume_forces > 0:
@@ -142,7 +149,8 @@ class MPMSolver:
             self.total_energy[None] -= total_external_force.dot(pos) * self.grid.m[I]
 
             # 计算阻尼
-            self.total_energy[None] += 0.5 * self.damping * self.grid.m[I] * vel.norm_sqr()
+            if not ti.static(self.static_solve):
+                self.total_energy[None] += 0.5 * self.damping * self.grid.m[I] * vel.norm_sqr()
 
     @ti.kernel
     def manual_particle_energy_grad(self, v_flat: ti.template(), grad_flat: ti.template()):
@@ -162,7 +170,8 @@ class MPMSolver:
             g1=mu * new_F
             g2=-mu * newF_inv_T
             g3=lam * ti.log(newJ) * newF_inv_T
-            dE_dvel_grad =(g1+g2+g3)@ F.transpose()*self.particles.p_vol
+            weight = self.particles.get_particle_weight(p)
+            dE_dvel_grad =(g1+g2+g3)@ F.transpose()*self.particles.p_vol * weight
 
             base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
             # 将梯度分配到网格点
@@ -182,7 +191,13 @@ class MPMSolver:
         for I in ti.grouped(self.grid.v):
             vidx = self.get_idx(I)
             vel = self.get_vel(v_flat,vidx)
-            grad = self.grid.m[I] * (vel - self.grid.v_prev[I])
+            
+            # 初始化梯度
+            grad = ti.Vector.zero(self.float_type, self.dim)
+            
+            # 惯性项梯度 - 静力学求解时跳过
+            if not ti.static(self.static_solve):
+                grad += self.grid.m[I] * (vel - self.grid.v_prev[I])
             
             # 计算外部力（重力 + 体积力）
             pos = I * self.grid.dx + vel * self.dt
@@ -190,8 +205,10 @@ class MPMSolver:
             if self.n_volume_forces > 0:
                 total_external_force += self._get_volume_force_at_position(pos)
             grad -= total_external_force * self.dt * self.grid.m[I]
-            
-            grad += self.damping * vel * self.grid.m[I] 
+
+            # 阻尼
+            if not ti.static(self.static_solve):
+                grad += self.damping * vel * self.grid.m[I] 
 
 
             # 累加梯度
@@ -218,13 +235,15 @@ class MPMSolver:
 
             mu, lam = self.particles.get_material_params(p)
 
+            weight = self.particles.get_particle_weight(p)
+
             for offset in ti.grouped(ti.ndrange(*self.neighbor)):
                 FTw=4 * self.dt * F.transpose() @ self.particles.dwip[p, offset]
                 FWWF=F_inv_T @ FTw.outer_product(FTw) @ F_inv
                 h1=mu *FTw.dot(FTw) * ti.Matrix.identity(self.float_type, self.dim)
                 h2=mu * FWWF
                 h3=lam * (1-ti.log(J)) * FWWF
-                hessian=(h1+h2+h3)*self.particles.p_vol
+                hessian=(h1+h2+h3)*self.particles.p_vol * weight
 
                 U ,sig, V = ti.svd(hessian)
                 for i in ti.static(range(self.dim)):
@@ -244,8 +263,11 @@ class MPMSolver:
     def manual_grid_energy_hess(self,hess: ti. sparse_matrix_builder()):
         for I in ti.grouped(self.grid.v):
             vidx= self.get_idx(I)
-            m = self.grid.m[I] *(1+ self.damping)
-            m= 1 if m ==0 else m
+            m = 0.0
+            # 惯性项 + 阻尼项
+            if not ti.static(self.static_solve):
+                m = self.grid.m[I] *(1+ self.damping)
+            m= 1 if self.grid.m[I] == 0.0 else m
 
             for d in ti.static(range(self.dim)):
                 if not self.grid.is_boundary_grid[I][d]:

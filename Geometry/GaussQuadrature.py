@@ -90,9 +90,8 @@ class GaussQuadrature:
                 pos = [scaled_points_1d[i], scaled_points_1d[j]]
                 positions.append(pos)
                 
-                # 2D权重是1D权重的乘积，需要缩放到正确的面积
-                # 原始权重和为2，缩放到dx^2/4的面积
-                weight = weights_1d[i] * weights_1d[j] * (dx * dx) / 4.0
+                # 2D权重是1D权重的乘积
+                weight = weights_1d[i] * weights_1d[j]
                 weights.append(weight)
         
         return np.array(positions), np.array(weights)
