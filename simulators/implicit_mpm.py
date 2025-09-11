@@ -34,6 +34,13 @@ class ImplicitMPM:
         self.implicit = self.cfg.get("implicit", True)
         self.max_iter = self.cfg.get("max_iter", 1)
         self.dt = self.cfg.get("dt", 2e-3)
+        
+        # 静力学求解配置
+        self.static_solve = self.cfg.get("static_solve", False)
+        if self.static_solve and not self.implicit:
+            raise ValueError("静力学求解要求使用隐式方法 (implicit=True)")
+        if self.static_solve:
+            print("启用静力学求解模式")
 
         self.scale = self.cfg.get("scale", 1.0)
         self.offset = self.cfg.get("offset", (0, 0))
@@ -95,7 +102,10 @@ class ImplicitMPM:
             self.solve()
             
             self.g2p(self.dt)
-            self.particles.advect(self.dt)
+            
+            # 静力学求解时不进行advect
+            if not self.static_solve:
+                self.particles.advect(self.dt)
 
     @ti.kernel
     def p2g(self):
@@ -422,6 +432,18 @@ class ImplicitMPM:
         
         return output_dir
 
+    def run_static_solve(self):
+        """执行静力学求解 - 只进行一步求解直到受力平衡"""
+        print("开始静力学求解...")
+        self.step()  # 执行一步求解
+        print("静力学求解完成")
+        
+        # 保存结果
+        self.save_stress_strain_data(1)
+        
+        # 渲染最终结果
+        self.render()
+
 if __name__ == "__main__":
 
     cfg=Config("config/config_2d.json")
@@ -437,24 +459,32 @@ if __name__ == "__main__":
     ti.init(arch=arch, default_fp=float_type, device_memory_GB=20)
     mpm = ImplicitMPM(cfg)
 
-    i = 0
-    while mpm.gui.running:
-        mpm.step()
-        
-        mpm.render()
+    # 检查是否是静力学求解模式
+    if mpm.static_solve:
+        mpm.run_static_solve()
+        # 保持GUI开启以显示结果
+        while mpm.gui.running:
+            mpm.gui.show()
+    else:
+        # 原有的动态求解模式
+        i = 0
+        while mpm.gui.running:
+            mpm.step()
+            
+            mpm.render()
 
-        i += 1
+            i += 1
 
-        # 自动停止条件
-        if i >= mpm.recorder.max_frames:
-            break
+            # 自动停止条件
+            if i >= mpm.recorder.max_frames:
+                break
 
-                # 在最后一帧记录应力和应变数据
-    print("记录最终帧的应力和应变数据...")
-    mpm.save_stress_strain_data(i)
+        # 在最后一帧记录应力和应变数据
+        print("记录最终帧的应力和应变数据...")
+        mpm.save_stress_strain_data(i)
 
-    if mpm.recorder is None:
-        exit()
-    print("Playback finished.")
-    # 播放录制动画
-    mpm.recorder.play(loop=True, fps=60)
+        if mpm.recorder is None:
+            exit()
+        print("Playback finished.")
+        # 播放录制动画
+        mpm.recorder.play(loop=True, fps=60)

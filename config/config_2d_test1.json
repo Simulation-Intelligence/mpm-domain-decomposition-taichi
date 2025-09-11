@@ -2,13 +2,15 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_size": 128,
+        "grid_size": 64,
         "scale": 1.0,
         "particles_per_grid": 16,
         "sampling_method": "gauss",
+        "static_solve":false, 
+        "implicit": true,
         "dt": 1e-3,
         "max_iter": 1,
-        "solve_max_iter": 1000,
+        "solve_max_iter": 10000,
         "solve_init_iter": 100,
         "gravity": [
             0.0,
@@ -23,7 +25,7 @@
                         [0.1, 0.9]
                     ]
                 },
-                "force": [-5.0, 0.0]
+                "force": [-1.0, 0.0]
             },
             {
                 "type": "rectangle",
@@ -33,7 +35,7 @@
                         [0.1, 0.9]
                     ]
                 },
-                "force": [5.0, 0.0]
+                "force": [1.0, 0.0]
             },
             {
                 "type": "rectangle",
@@ -43,7 +45,7 @@
                         [0.09, 0.11]
                     ]
                 },
-                "force": [0.0, -5.0]
+                "force": [0.0, -1.0]
             },
             {
                 "type": "rectangle",
@@ -53,31 +55,30 @@
                         [0.89, 0.91]
                     ]
                 },
-                "force": [0.0, 5.0]
+                "force": [0.0, 1.0]
             }
         ],
         "material_params": [
             {
                 "id": 0,
                 "name": "default",
-                "E": 1e5,
+                "E": 1e6,
                 "nu": 0.3,
                 "rho": 1e3
             },
             {
                 "id": 1,
                 "name": "soft_material",
-                "E": 5e4,
+                "E": 1e5,
                 "nu": 0.3,
                 "rho": 1e3
             }
         ],
-        "implicit": true,
         "use_auto_diff": false,
         "compare_diff": false,
         "bound": 2,
         "initial_velocity_y": -0,
-        "damping":100,
+        "damping":10,
         "shapes": [
             {
                 "type": "rectangle",
@@ -94,7 +95,7 @@
                     ]
                 },
                 "operation": "add",
-                "material_id": 0
+                "material_id": 1
             },
             {
                 "type": "ellipse",
@@ -109,7 +110,7 @@
                     ]
                 },
                 "operation": "change",
-                "material_id": 1
+                "material_id": 0
             }
 
         ],"stress_output_regions": [
@@ -117,11 +118,11 @@
             "type": "ellipse",
             "params": {
                 "center": [0.5, 0.5],
-                "semi_axes": [0.09, 0.09]
+                "semi_axes": [0.5, 0.5]
             }
         }
     ],
         "implicit_solver": "Newton",
         "eta": 1e-4,
-        "record_frames": 10000
+        "record_frames": 2000
     }

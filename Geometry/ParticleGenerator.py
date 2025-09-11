@@ -97,11 +97,15 @@ class ParticleGenerator:
                 
                 # 为每个粒子添加材料ID信息
                 particles_with_material = []
-                for pos in particles:
-                    particles_with_material.append({
+                for idx, pos in enumerate(particles):
+                    particle_data = {
                         "position": pos,
                         "material_id": material_id
-                    })
+                    }
+                    # 如果使用高斯积分点采样并且有权重数据，则添加权重
+                    if hasattr(self, 'gauss_weights') and self.gauss_weights is not None and idx < len(self.gauss_weights):
+                        particle_data["weight"] = self.gauss_weights[idx]
+                    particles_with_material.append(particle_data)
                 all_particles.extend(particles_with_material)
                 
             elif shape["operation"] == "subtract":
@@ -156,7 +160,9 @@ class ParticleGenerator:
             particles = self._generate_regular_grid_particles(rect_range, n_particles)
         elif self.sampling_method == "gauss":
             # 高斯积分点采样
-            particles = self._generate_gauss_quadrature_particles(rect_range, n_particles)
+            particles, weights = self._generate_gauss_quadrature_particles(rect_range, n_particles)
+            # 将权重信息附加到粒子数据中，以便后续使用
+            self.gauss_weights = weights
         else:
             # 均匀随机采样 (uniform)
             for _ in range(n_particles):
@@ -224,7 +230,11 @@ class ParticleGenerator:
         return particles
     
     def _generate_gauss_quadrature_particles(self, rect_range, n_particles):
-        """生成基于高斯积分点的粒子分布，基于网格结构"""
+        """生成基于高斯积分点的粒子分布，基于网格结构
+        
+        Returns:
+            tuple: (particles, weights) 其中particles是位置列表，weights是对应的权重列表
+        """
         if self.dim != 2:
             raise ValueError("高斯积分点采样目前只支持2D")
         
@@ -241,22 +251,23 @@ class ParticleGenerator:
             print(f"将使用{n_1d}x{n_1d}={n_1d*n_1d}个高斯积分点")
         
         particles = []
+        particle_weights = []
         
         # 计算网格间距
         dx = 1.0 / self.grid_size
         
-        # 获取高斯积分点的相对位置（在±0.5dx范围内）
+        # 获取高斯积分点的相对位置和权重（在±0.5dx范围内）
         gauss_positions, gauss_weights = GaussQuadrature.get_2d_grid_points_and_weights(n_1d, dx)
         
         # 遍历所有网格点
         for i in range(self.grid_size):
             for j in range(self.grid_size):
                 # 网格中心位置：I * dx，其中I是网格索引
-                grid_center_x = i * dx
-                grid_center_y = j * dx
-                
+                grid_center_x = (i+0.5) * dx
+                grid_center_y = (j+0.5) * dx
+
                 # 在每个网格中心周围放置高斯积分点
-                for pos in gauss_positions:
+                for idx, pos in enumerate(gauss_positions):
                     particle_x = grid_center_x + pos[0]
                     particle_y = grid_center_y + pos[1]
                     
@@ -264,9 +275,10 @@ class ParticleGenerator:
                     if (rect_range[0][0] <= particle_x <= rect_range[0][1] and 
                         rect_range[1][0] <= particle_y <= rect_range[1][1]):
                         particles.append([particle_x, particle_y])
+                        particle_weights.append(gauss_weights[idx])
         
         
-        return particles
+        return particles, particle_weights
     
     def _generate_ellipse_particles(self, params, n_particles):
         """生成椭圆区域内的粒子"""
@@ -498,35 +510,41 @@ class ParticleInitializer:
         self.float_type = float_type
         self.init_vel_y = init_vel_y
     
-    def initialize_particle_fields(self, particle_data, x_field, v_field, F_field, C_field, material_id_field=None):
+    def initialize_particle_fields(self, particle_data, x_field, v_field, F_field, C_field, material_id_field=None, weight_field=None):
         """初始化粒子的各种属性字段"""
         import taichi as ti
         n_particles = len(particle_data)
         
-        # 处理两种格式：旧格式(只有位置)和新格式(包含材料ID)
+        # 处理两种格式：旧格式(只有位置)和新格式(包含材料ID和权重)
         positions = []
         material_ids = []
+        weights = []
         
         for data in particle_data:
             if isinstance(data, dict) and "position" in data:
-                # 新格式：包含位置和材料ID
+                # 新格式：包含位置、材料ID和可选的权重
                 positions.append(data["position"])
                 material_ids.append(data.get("material_id", 0))
+                weights.append(data.get("weight", 1.0))  # 默认权重为1.0
             else:
                 # 旧格式：只有位置信息
                 positions.append(data)
                 material_ids.append(0)
+                weights.append(1.0)
         
-        # 创建临时numpy数组用于传递粒子位置
+        # 创建临时numpy数组用于传递粒子属性
         numpy_dtype = np.float32 if self.float_type == ti.f32 else np.float64
         positions_np = np.array(positions, dtype=numpy_dtype)
         material_ids_np = np.array(material_ids, dtype=np.int32)
+        weights_np = np.array(weights, dtype=numpy_dtype)
         
         temp_positions = ti.Vector.field(self.dim, self.float_type, shape=n_particles)
         temp_material_ids = ti.field(ti.i32, shape=n_particles)
+        temp_weights = ti.field(self.float_type, shape=n_particles)
         
         temp_positions.from_numpy(positions_np)
         temp_material_ids.from_numpy(material_ids_np)
+        temp_weights.from_numpy(weights_np)
         
         # 初始化粒子属性
         @ti.kernel
@@ -544,8 +562,17 @@ class ParticleInitializer:
             for i in range(n_particles):
                 material_id_field[i] = temp_material_ids[i]
         
+        @ti.kernel
+        def init_weights():
+            for i in range(n_particles):
+                weight_field[i] = temp_weights[i]
+        
         init_kernel()
         
         # 设置材料ID（如果提供了material_id_field）
         if material_id_field is not None:
             init_material_ids()
+        
+        # 设置权重（如果提供了weight_field）
+        if weight_field is not None:
+            init_weights()

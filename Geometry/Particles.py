@@ -53,6 +53,8 @@ class Particles:
         self.p_rho = config.get("p_rho", 1)
         self.p_vol = (1.0/self.grid_size)**self.dim / self.particles_per_grid
         self.p_mass = self.p_vol * self.p_rho
+        if self.sampling_method == "gauss":
+            self.p_vol = (1.0/self.grid_size/2)**self.dim
         self.boundary_size = config.get("boundary_size", None)
         self.init_vel_y = config.get("initial_velocity_y", -1)
         
@@ -166,6 +168,11 @@ class Particles:
         else:
             p_mass = self.p_mass_2
         return p_mass
+
+    @ti.func  
+    def get_particle_weight(self, particle_id):
+        """获取指定粒子的高斯积分权重"""
+        return self.particle_weight[particle_id]
         
     def get_material_param(self, material_id, param_name):
         """获取指定材料ID的参数值(Python函数)"""
@@ -248,7 +255,8 @@ class Particles:
         self.particle_initializer.initialize_particle_fields(
             all_particles,
             self.x, self.v, self.F, self.C,
-            self.particle_material_id
+            self.particle_material_id,
+            self.particle_weight
         )
         
         # 第六步：处理公共粒子
@@ -268,6 +276,9 @@ class Particles:
         # 应力和应变字段
         self.stress = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
         self.strain = ti.Matrix.field(self.dim, self.dim, self.float_type, self.n_particles)
+
+        # 权重字段 - 用于存储高斯积分点权重
+        self.particle_weight = ti.field(self.float_type, self.n_particles)
 
         # 权重和梯度字段
         shape = (self.n_particles, 3, 3) if self.dim == 2 else (self.n_particles, 3, 3, 3)
