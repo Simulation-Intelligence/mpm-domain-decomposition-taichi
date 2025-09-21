@@ -6,7 +6,7 @@
         "scale": 1.0,
         "particles_per_grid": 16,
         "sampling_method": "gauss",
-        "static_solve":false, 
+        "static_solve":true,
         "implicit": true,
         "dt": 1e-3,
         "max_iter": 1,
@@ -25,7 +25,7 @@
                         [0.1, 0.9]
                     ]
                 },
-                "force": [-1.0, 0.0]
+                "force": [-1, 0.0]
             },
             {
                 "type": "rectangle",
@@ -35,7 +35,7 @@
                         [0.1, 0.9]
                     ]
                 },
-                "force": [1.0, 0.0]
+                "force": [1, 0.0]
             },
             {
                 "type": "rectangle",
@@ -45,7 +45,7 @@
                         [0.09, 0.11]
                     ]
                 },
-                "force": [0.0, -1.0]
+                "force": [0.0, -1]
             },
             {
                 "type": "rectangle",
@@ -55,7 +55,7 @@
                         [0.89, 0.91]
                     ]
                 },
-                "force": [0.0, 1.0]
+                "force": [0.0, 1]
             }
         ],
         "material_params": [
@@ -69,7 +69,7 @@
             {
                 "id": 1,
                 "name": "soft_material",
-                "E": 1e5,
+                "E": 1e2,
                 "nu": 0.3,
                 "rho": 1e3
             }
@@ -95,7 +95,7 @@
                     ]
                 },
                 "operation": "add",
-                "material_id": 1
+                "material_id": 0
             },
             {
                 "type": "ellipse",
@@ -110,7 +110,7 @@
                     ]
                 },
                 "operation": "change",
-                "material_id": 0
+                "material_id": 1
             }
 
         ],"stress_output_regions": [
@@ -124,5 +124,5 @@
     ],
         "implicit_solver": "Newton",
         "eta": 1e-4,
-        "record_frames": 2000
+        "record_frames": 1388
     }
