@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 @ti.data_oriented
 class Newton:
-    def __init__(self, energy_fn, grad_fn, hess_fn, DBC_fn=None,dim=3, alpha=0.0, beta=0.6, eta=1e-3, grad_normalizer=1.0,float_type=ti.f32):
+    def __init__(self, energy_fn, grad_fn, hess_fn, DBC_fn=None,dim=3, alpha=0.5, beta=0.6, eta=1e-3, grad_normalizer=1.0,float_type=ti.f32):
         self.dim = dim
         self.energy_fn = energy_fn
         self.grad_fn = grad_fn
@@ -52,7 +52,7 @@ class Newton:
             for i in range(self.dim):
                 self.temp_x[i] = self.x[i] + a * d[i]
 
-        while True:
+        while alpha > 1e-6:
             update_temp(alpha,self.d)
             f_new = self.energy_fn(self.temp_x)
             if f_new <= self.f0+ self.alpha  * alpha * g0:

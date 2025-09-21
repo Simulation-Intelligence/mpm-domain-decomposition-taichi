@@ -7,7 +7,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from Geometry.Grid import Grid
 from Geometry.Particles import Particles
 
-from mpm_solver import MPMSolver
+from simulators.mpm_solver import MPMSolver
 
 from Util.Config import Config
 
@@ -342,17 +342,12 @@ class ImplicitMPM:
         # 计算当前状态的应力和应变
         print("正在计算应力和应变...")
         self.solver.compute_stress_strain_with_averaging()
-        
-        # 检查采样方式，如果是高斯采样则进行加权处理
-        if self.particles.sampling_method == "gauss":
-            print("检测到高斯积分点采样，进行权重加权...")
-            stress_data, strain_data, positions = self._weight_gauss_data_to_grid()
-        else:
-            # 获取原始粒子的应力和应变数据
-            stress_data = self.particles.stress.to_numpy()
-            strain_data = self.particles.strain.to_numpy()
-            positions = self.particles.x.to_numpy()
-        
+
+        # 获取原始粒子的应力和应变数据
+        stress_data = self.particles.stress.to_numpy()
+        strain_data = self.particles.strain.to_numpy()
+        positions = self.particles.x.to_numpy()
+
         # 过滤掉位置为(0,0)的粒子
         if self.dim == 2:
             # 2D情况：过滤(0,0)位置
@@ -446,7 +441,7 @@ class ImplicitMPM:
 
 if __name__ == "__main__":
 
-    cfg=Config("config/config_2d.json")
+    cfg=Config("config/config_2d_test1.json")
     float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":

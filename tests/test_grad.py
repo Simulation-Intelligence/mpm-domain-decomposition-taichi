@@ -8,7 +8,7 @@ from simulators.mpm_solver import MPMSolver
 config = Config(data={
         "dt": 0.001,
         "float_type": "f64",
-        "dim": 3,
+        "dim": 2,
         "E": 4.0,
         "nu": 0.4,
         "solve_max_iter": 1,
@@ -23,7 +23,7 @@ dim = config.get("dim", 2)
 dt = 0.001
 n_particles = 2
 # 初始化网格
-grid = Grid(size=grid_size, dim=dim, bound=2,float_type=float_type)
+grid = Grid(config)
 grid.dx = 1.0 / grid_size
 grid.inv_dx = grid_size
 
@@ -97,12 +97,12 @@ def test_gradient_derivative():
 def test_hessian_derivative():
     # 手动计算hessian
     manual_hessian = ti.linalg.SparseMatrixBuilder(n_vars, n_vars, max_num_triplets=n_vars*n_vars, dtype=float_type)
-    solver.compute_hess(solver.v_grad, manual_hessian)
+    solver.manual_particle_energy_hess(solver.v_grad, manual_hessian)
     H = manual_hessian.build()
 
 
     # finite difference hessian
-    h = 1e-10
+    h = 1e-5
     finite_diff_hessian = ti.field(float_type, shape=(n_vars, n_vars))
     finite_diff_hessian.fill(0.0)
     new_grad1 = ti.field(float_type, shape=n_vars)
@@ -111,9 +111,9 @@ def test_hessian_derivative():
         solver.v_grad[i] += h
         new_grad1.fill(0.0)
         new_grad2.fill(0.0)
-        solver.compute_energy_grad_manual(solver.v_grad, new_grad1)
+        solver.manual_particle_energy_grad(solver.v_grad, new_grad1)
         solver.v_grad[i] -= 2 * h
-        solver.compute_energy_grad_manual(solver.v_grad, new_grad2)
+        solver.manual_particle_energy_grad(solver.v_grad, new_grad2)
         for j in range(n_vars):
             finite_diff_hessian[i, j] = (new_grad1[j]- new_grad2[j]) / h/2
         solver.v_grad[i] += h

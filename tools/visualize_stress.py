@@ -289,8 +289,12 @@ def calculate_adaptive_radius(positions, coverage_factor=0.8):
     
     return radius_points ** 2  # Return s parameter (area)
 
-def visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path=None, use_log=False, stress_cmap='coolwarm'):
-    """2D应力可视化"""
+def visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path=None, use_log=False, stress_cmap='coolwarm', max_stress=None):
+    """2D应力可视化
+    
+    Args:
+        max_stress: Manual maximum value for von Mises stress color range. If None, uses data maximum.
+    """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
 
     particle_size = 20
@@ -299,9 +303,11 @@ def visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path=
         
         # von Mises stress (using logarithmic scale)
         von_mises_positive = np.maximum(von_mises, 1e-10)  # 避免零值
+        vm_vmin = np.min(von_mises_positive)
+        vm_vmax = max_stress if max_stress is not None else np.max(von_mises_positive)
         scatter1 = ax1.scatter(positions[:, 0], positions[:, 1], c=von_mises_positive, 
                              cmap=stress_cmap, s=particle_size, alpha=0.8, 
-                             norm=LogNorm(vmin=np.min(von_mises_positive), vmax=np.max(von_mises_positive)))
+                             norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax))
         ax1.set_title(f'von Mises Stress Distribution (Log Scale, Frame {frame_number})')
         cbar1_label = 'von Mises Stress (Log)'
         
@@ -318,8 +324,10 @@ def visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path=
         cbar2_label = 'Hydrostatic Pressure (SymLog)'
     else:
         # von Mises stress (linear scale)
+        vm_vmax = max_stress if max_stress is not None else np.max(von_mises)
         scatter1 = ax1.scatter(positions[:, 0], positions[:, 1], c=von_mises, 
-                             cmap=stress_cmap, s=particle_size, alpha=0.8)
+                             cmap=stress_cmap, s=particle_size, alpha=0.8,
+                             vmax=vm_vmax)
         ax1.set_title(f'von Mises Stress Distribution (Frame {frame_number})')
         cbar1_label = 'von Mises Stress'
         
@@ -348,7 +356,7 @@ def visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path=
     plt.show()
 
 
-def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress_cmap='coolwarm'):
+def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress_cmap='coolwarm', max_stress=None):
     """2D Schwarz双域应力可视化"""
     
     frame_number = data_dict['frame_number']
@@ -380,7 +388,8 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress
         
         # Calculate logarithmic scale range
         vm_positive = np.maximum(all_von_mises, 1e-10)
-        vm_vmin, vm_vmax = np.min(vm_positive), np.max(vm_positive)
+        vm_vmin = np.min(vm_positive)
+        vm_vmax = max_stress if max_stress is not None else np.max(vm_positive)
         
         pressure_abs_max = np.max(np.abs(all_pressure))
         if pressure_abs_max > 0:
@@ -419,7 +428,8 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress
         cbar4_label = 'Hydrostatic Pressure (SymLog)'
     else:
         # Linear scale
-        vm_vmin, vm_vmax = np.min(all_von_mises), np.max(all_von_mises)
+        vm_vmin = np.min(all_von_mises)
+        vm_vmax = max_stress if max_stress is not None else np.max(all_von_mises)
         p_vmin, p_vmax = np.min(all_pressure), np.max(all_pressure)
         
         # Domain1 von Mises stress (linear scale)
@@ -478,7 +488,7 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress
     
     plt.show()
 
-def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=False, stress_cmap='coolwarm'):
+def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=False, stress_cmap='coolwarm', max_stress=None):
     """2D Schwarz双域合并应力可视化"""
     
     frame_number = data_dict['frame_number']
@@ -510,7 +520,8 @@ def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=Fals
         
         # Calculate logarithmic scale range
         vm_positive = np.maximum(all_von_mises, 1e-10)
-        vm_vmin, vm_vmax = np.min(vm_positive), np.max(vm_positive)
+        vm_vmin = np.min(vm_positive)
+        vm_vmax = max_stress if max_stress is not None else np.max(vm_positive)
         
         pressure_abs_max = np.max(np.abs(all_pressure))
         if pressure_abs_max > 0:
@@ -546,7 +557,8 @@ def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=Fals
         cbar2_label = 'Hydrostatic Pressure (SymLog)'
     else:
         # Linear scale范围
-        vm_vmin, vm_vmax = np.min(all_von_mises), np.max(all_von_mises)
+        vm_vmin = np.min(all_von_mises)
+        vm_vmax = max_stress if max_stress is not None else np.max(all_von_mises)
         p_vmin, p_vmax = np.min(all_pressure), np.max(all_pressure)
         
         # Combined von Mises stress visualization (linear scale)
@@ -677,6 +689,8 @@ def main():
                        help='Use logarithmic scale visualization (default: linear scale)')
     parser.add_argument('--cmap', default='viridis',
                        help='Colormap for stress visualization (default: coolwarm, options: viridis, plasma, inferno, magma, coolwarm, RdYlBu, seismic)')
+    parser.add_argument('--max-stress', type=float, default=None,
+                       help='Manually specify maximum value for stress color range (applies to von Mises stress only)')
     
     
     args = parser.parse_args()
@@ -713,10 +727,10 @@ def main():
                 
             if args.combined:
                 # Combined visualization mode
-                visualize_schwarz_stress_combined_2d(data_dict, save_path, args.log, args.cmap)
+                visualize_schwarz_stress_combined_2d(data_dict, save_path, args.log, args.cmap, args.max_stress)
             else:
                 # Separate visualization mode
-                visualize_schwarz_stress_2d(data_dict, save_path, args.log, args.cmap)
+                visualize_schwarz_stress_2d(data_dict, save_path, args.log, args.cmap, args.max_stress)
                     
         else:
             # Single domain mode (original functionality)
@@ -745,7 +759,7 @@ def main():
                 print(f"Error: Only 2D data visualization is supported, current data dimension is {dim}D")
                 return 1
                 
-            visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path, args.log, args.cmap)
+            visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path, args.log, args.cmap, args.max_stress)
             
     except Exception as e:
         print(f"Error: {e}")
