@@ -288,6 +288,9 @@ class Particles:
         # 边界和材料ID字段
         self.is_boundary_particle = ti.field(ti.i32, self.n_particles)
         self.particle_material_id = ti.field(ti.i32, self.n_particles)
+
+        # 粒子体积力字段
+        self.volume_force = ti.Vector.field(self.dim, self.float_type, self.n_particles)
         
         # Taichi字段用于计算每个area的粒子数（向后兼容）
         self.n_per_area = ti.field(ti.i32, shape=self.num_areas)

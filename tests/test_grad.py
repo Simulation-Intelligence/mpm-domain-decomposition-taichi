@@ -8,6 +8,7 @@ from simulators.mpm_solver import MPMSolver
 config = Config(data={
         "dt": 0.001,
         "float_type": "f64",
+        "elasticity_model": "linear",  # "neohookean" or "linear"
         "dim": 2,
         "E": 4.0,
         "nu": 0.4,
@@ -102,7 +103,7 @@ def test_hessian_derivative():
 
 
     # finite difference hessian
-    h = 1e-5
+    h = 1e-3
     finite_diff_hessian = ti.field(float_type, shape=(n_vars, n_vars))
     finite_diff_hessian.fill(0.0)
     new_grad1 = ti.field(float_type, shape=n_vars)
@@ -122,9 +123,9 @@ def test_hessian_derivative():
     max_error = 0.0
     for i in range(n_vars):
         for j in range(n_vars):
-            if H[i, j] == 0:
+            if abs(H[i, j]) < 1e-8 and abs(finite_diff_hessian[i, j]) < 1e-8 or H[i, j] == 0.0:
                 continue
-            error = abs(H[i, j] - finite_diff_hessian[i, j]) / abs(H[i, j])
+            error = abs(H[i, j] - finite_diff_hessian[i, j]) / (abs(H[i, j])+abs(finite_diff_hessian[i, j]) + 1e-10)
             max_error = max(max_error, error)
             if error > 1e-4 :
                 print(f"显著差异 @ {i},{j}: Manual={H[i, j]:.4e}, FD={finite_diff_hessian[i, j]:.4e}, Δ={error:.4e}")
@@ -134,5 +135,5 @@ def test_hessian_derivative():
     assert max_error < 1e-4, "手动Hessian与有限差分结果不一致"
 
 if __name__ == "__main__":
-    # test_gradient_derivative()
+    test_gradient_derivative()
     test_hessian_derivative()

@@ -22,6 +22,7 @@ class Grid:
         self.m = ti.field(self.float_type, (size,)*dim)
         self.v_prev = ti.Vector.field(dim, self.float_type, (size,)*dim)
         self.f = ti.Vector.field(dim, self.float_type, (size,)*dim)  # 力场
+        self.volume_force = ti.Vector.field(dim, self.float_type, (size,)*dim)  # 体积力场
         
         # 隐式求解相关
         self.particles = ti.field(ti.i32, (size, size, 32))
@@ -133,6 +134,7 @@ class Grid:
         for I in ti.grouped(self.v):
             self.m[I] = 0.0
             self.v[I] = [0.0]*self.dim
+            self.volume_force[I] = [0.0]*self.dim
             self.is_particle_boundary_grid[I] = 0
             self.is_boundary_grid[I] = [0]*self.dim
 

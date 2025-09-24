@@ -27,9 +27,12 @@ class MPMSolver:
         self.dt = config.get("dt", 2e-3)
         self.solve_max_iter = config.get("solve_max_iter", 50)
         self.solve_init_iter = config.get("solve_init_iter", 10)
-        
+
         # 静力学求解选项
         self.static_solve = config.get("static_solve", False)
+
+        # 弹性模型选项
+        self.elasticity_model = config.get("elasticity_model", "neohookean")
         
         # 保留兼容性的全局参数，但现在主要使用particles.material_params
         E = config.get("E", 4)
@@ -45,6 +48,8 @@ class MPMSolver:
         
         # 解析体积力配置
         self._parse_volume_forces(config.get("volume_forces", []))
+
+        # 体积力初始化将在调用initialize_volume_forces()时进行
 
         
         self.v_grad=ti.field(self.float_type, grid.size**self.dim * self.dim,needs_grad=True)
@@ -131,7 +136,7 @@ class MPMSolver:
         
     
     @ti.kernel
-    def compute_particle_energy(self, v_flat: ti.template()):
+    def compute_particle_energy_neohookean(self, v_flat: ti.template()):
         for p in range(self.particles.n_particles):
             vel_grad = self.cal_vel_grad(v_flat,p)
 
@@ -149,7 +154,27 @@ class MPMSolver:
             weight = self.particles.get_particle_weight(p)
             self.total_energy[None] += energy * self.particles.p_vol * weight
 
+    @ti.kernel
+    def compute_particle_energy_linear(self, v_flat: ti.template()):
+        for p in range(self.particles.n_particles):
+            vel_grad = self.cal_vel_grad(v_flat,p)
 
+            F = self.particles.F[p]
+            new_F = (ti.Matrix.identity(self.float_type, self.dim) + vel_grad) @ F
+
+            # Linear elasticity: strain = 0.5*(F + F^T) - I
+            I = ti.Matrix.identity(self.float_type, self.dim)
+            eps = 0.5 * (new_F + new_F.transpose()) - I
+
+            mu, lam = self.particles.get_material_params(p)
+
+            # Energy = mu * tr(eps^2) + 0.5 * lambda * tr(eps)^2
+            eps_sqr_trace = eps.norm_sqr()
+            eps_trace = eps.trace()
+
+            energy = mu * eps_sqr_trace + 0.5 * lam * (eps_trace ** 2)
+            weight = self.particles.get_particle_weight(p)
+            self.total_energy[None] += energy * self.particles.p_vol * weight
 
     @ti.kernel
     def compute_grid_energy(self, v_flat: ti.template()):
@@ -163,9 +188,7 @@ class MPMSolver:
 
             # 计算势能
             pos = I * self.grid.dx + vel * self.dt
-            total_external_force = self.gravity
-            if self.n_volume_forces > 0:
-                total_external_force += self._get_volume_force_at_position(pos)
+            total_external_force = self.gravity + self.grid.volume_force[I]
             self.total_energy[None] -= total_external_force.dot(pos) * self.grid.m[I]
 
             # 计算阻尼
@@ -173,7 +196,7 @@ class MPMSolver:
                 self.total_energy[None] += 0.5 * self.damping * self.grid.m[I] * vel.norm_sqr()
 
     @ti.kernel
-    def manual_particle_energy_grad(self, v_flat: ti.template(), grad_flat: ti.template()):
+    def manual_particle_energy_grad_neohookean(self, v_flat: ti.template(), grad_flat: ti.template()):
         for p in range(self.particles.n_particles):
             # 计算速度梯度
             vel_grad = self.cal_vel_grad(v_flat,p)
@@ -206,6 +229,42 @@ class MPMSolver:
                     ti.atomic_add(grad_flat[vidx+d], grad[d])
 
     @ti.kernel
+    def manual_particle_energy_grad_linear(self, v_flat: ti.template(), grad_flat: ti.template()):
+        for p in range(self.particles.n_particles):
+            # 计算速度梯度
+            vel_grad = self.cal_vel_grad(v_flat,p)
+
+            # 计算变形梯度
+            F = self.particles.F[p]
+            new_F = (ti.Matrix.identity(self.float_type, self.dim) + vel_grad) @ F
+
+            # Linear elasticity: strain = 0.5*(F + F^T) - I
+            I = ti.Matrix.identity(self.float_type, self.dim)
+            eps = 0.5 * (new_F + new_F.transpose()) - I
+
+            mu, lam = self.particles.get_material_params(p)
+
+            # Gradient: dE/dF = mu * (F + F^T - 2*I) + lambda * tr(eps) * I
+            eps_trace = eps.trace()
+
+            grad_F = 2 * mu * eps  + lam * eps_trace * I
+
+            weight = self.particles.get_particle_weight(p)
+            dE_dvel_grad = grad_F @ F.transpose() * self.particles.p_vol * weight
+
+            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
+            # 将梯度分配到网格点
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
+                grid_idx = (base + offset) % self.grid.size
+                vidx = self.get_idx(grid_idx)
+
+                grad = 4*self.dt*dE_dvel_grad @ self.particles.dwip[p, offset]
+
+                # 累加梯度
+                for d in ti.static(range(self.dim)):
+                    ti.atomic_add(grad_flat[vidx+d], grad[d])
+
+    @ti.kernel
     def manual_grid_energy_grad(self, v_flat: ti.template(), grad_flat: ti.template()):
 
         for I in ti.grouped(self.grid.v):
@@ -221,9 +280,7 @@ class MPMSolver:
             
             # 计算外部力（重力 + 体积力）
             pos = I * self.grid.dx + vel * self.dt
-            total_external_force = self.gravity
-            if self.n_volume_forces > 0:
-                total_external_force += self._get_volume_force_at_position(pos)
+            total_external_force = self.gravity + self.grid.volume_force[I]
             grad -= total_external_force * self.dt * self.grid.m[I]
 
             # 阻尼
@@ -235,7 +292,7 @@ class MPMSolver:
             for d in ti.static(range(self.dim)):
                 ti.atomic_add(grad_flat[vidx+d], grad[d])
     @ti.kernel
-    def manual_particle_energy_hess(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
+    def manual_particle_energy_hess_neohookean(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
 
         for p in range(self.particles.n_particles):
             # 计算速度梯度
@@ -263,7 +320,7 @@ class MPMSolver:
                 h3=lam * (1-ti.log(J)) * FWWF
                 hessian=(h1+h2+h3)*self.particles.p_vol * weight
 
-                hessian=self.make_PSD(hessian)
+                # hessian=self.make_PSD(hessian)
 
                 grid_idx = (base + offset) % self.grid.size
                 vidx = self.get_idx(grid_idx)
@@ -272,7 +329,7 @@ class MPMSolver:
                     if not self.grid.is_boundary_grid[grid_idx][i] and not self.grid.is_boundary_grid[grid_idx][j]:
                         hess[vidx+i, vidx+j] += hessian[i,j]
     @ti.kernel
-    def manual_particle_energy_hess_1(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
+    def manual_particle_energy_hess_1_neohookean(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
 
         for p in range(self.particles.n_particles):
             # 计算速度梯度
@@ -399,24 +456,65 @@ class MPMSolver:
                         hess_val *= coeff
                         if not self.grid.is_boundary_grid[grid_idx][vi] and not self.grid.is_boundary_grid[grid_idx][vj]:
                             hess[vidx + vi, vidx + vj] += hess_val
-                
-
 
     @ti.kernel
-    def manual_grid_energy_hess(self,hess: ti. sparse_matrix_builder()):
-        for I in ti.grouped(self.grid.v):
-            vidx= self.get_idx(I)
-            m = 0.0
-            # 惯性项 + 阻尼项
-            if not ti.static(self.static_solve):
-                m = self.grid.m[I] *(1+ self.damping)
-            m= 1 if self.grid.m[I] == 0.0 else m
+    def manual_particle_energy_hess_linear(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
+        for p in range(self.particles.n_particles):
+            # 计算变形梯度导数
+            F = self.particles.F[p]
 
+            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
+
+            mu, lam = self.particles.get_material_params(p)
+            weight = self.particles.get_particle_weight(p)
+
+            for offset in ti.grouped(ti.ndrange(*self.neighbor)):
+                FTw = 4 * self.dt * F.transpose() @ self.particles.dwip[p, offset]
+                FTw_norm_sqr = FTw.norm_sqr()
+                # Simplified linear elasticity Hessian: mu*(I+I) + lambda*outer_product(I)
+                # For linear elasticity, the Hessian is constant
+                hessian = ti.Matrix.zero(self.float_type, self.dim, self.dim)
+                for i in ti.static(range(self.dim)):
+                    for j in ti.static(range(self.dim)):
+                        if i == j:
+                            hessian[i, j] = mu * FTw_norm_sqr
+                        hessian[i, j] += (lam + mu) * FTw[i] * FTw[j]
+
+                hessian *= self.particles.p_vol * weight
+
+                grid_idx = (base + offset) % self.grid.size
+                vidx = self.get_idx(grid_idx)
+
+                for (i,j) in ti.static(ti.ndrange(self.dim, self.dim)):
+                    if not self.grid.is_boundary_grid[grid_idx][i] and not self.grid.is_boundary_grid[grid_idx][j]:
+                        hess[vidx+i, vidx+j] += hessian[i,j]
+
+    @ti.kernel
+    def manual_grid_energy_hess(self, hess: ti.sparse_matrix_builder()):
+        for I in ti.grouped(self.grid.v):
+            vidx = self.get_idx(I)
+            m_node = self.grid.m[I]
+
+            if m_node == 0.0:
+                # 空节点：没有物理能量贡献，但为了数值稳定加一个单位刚度
+                for d in ti.static(range(self.dim)):
+                   hess[vidx + d, vidx + d] += 1.0
+                continue
+
+            # 惯性项 Hessian: m * I
             for d in ti.static(range(self.dim)):
                 if not self.grid.is_boundary_grid[I][d]:
-                    hess[vidx+d, vidx+d] += m
+                    hess[vidx + d, vidx + d] += m_node
                 else:
-                    hess[vidx+d, vidx+d] += 1.0
+                    # 边界节点固定：加一个单位刚度
+                    hess[vidx + d, vidx + d] += 1.0
+
+            # 阻尼项 Hessian: alpha * m * I
+            if not ti.static(self.static_solve):
+                for d in ti.static(range(self.dim)):
+                    if not self.grid.is_boundary_grid[I][d]:
+                        hess[vidx + d, vidx + d] += self.damping * m_node
+
 
     def compute_energy(self, v_flat: ti.template()):
         self.grid.set_boundary_v_grid(v_flat)
@@ -425,13 +523,15 @@ class MPMSolver:
         self.compute_grid_energy(v_flat)
         return self.total_energy[None]
     
+    def compute_particle_energy(self, v_flat: ti.template()):
+        if self.elasticity_model == "linear":
+            self.compute_particle_energy_linear(v_flat)
+        else:  # default to neohookean
+            self.compute_particle_energy_neohookean(v_flat)
+    
     def compute_energy_grad_manual(self, v_flat: ti.template(), grad_flat: ti.template()):
 
         self.grid.set_boundary_v_grid(v_flat)
-
-        self.total_energy[None] = 0.0
-        self.compute_particle_energy(v_flat)
-        self.compute_grid_energy(v_flat)
 
         grad_flat.fill(0.0)
         self.manual_particle_energy_grad(v_flat, grad_flat)
@@ -439,7 +539,7 @@ class MPMSolver:
 
         self.grid.set_boundary_grad(grad_flat)
 
-        return self.total_energy[None]
+        # return self.total_energy[None]
 
     def compute_energy_grad_auto(self, v_flat: ti.template(), grad_flat: ti.template()):
         @ti.kernel
@@ -482,12 +582,23 @@ class MPMSolver:
 
         return self.total_energy[None]
 
+    def manual_particle_energy_grad(self, v_flat: ti.template(), grad_flat: ti.template()):
+        if self.elasticity_model == "linear":
+            self.manual_particle_energy_grad_linear(v_flat, grad_flat)
+        else:  # default to neohookean
+            self.manual_particle_energy_grad_neohookean(v_flat, grad_flat)
+
     def compute_hess(self, v_flat: ti.template(), hess: ti.sparse_matrix_builder()):
         self.grid.set_boundary_v_grid(v_flat)
-        
+
         self.manual_particle_energy_hess(v_flat, hess)
         self.manual_grid_energy_hess(hess)
         
+    def manual_particle_energy_hess(self, v_flat: ti.template(), hess: ti.sparse_matrix_builder()):
+        if self.elasticity_model == "linear":
+            self.manual_particle_energy_hess_linear(v_flat, hess)
+        else:  # default to neohookean
+            self.manual_particle_energy_hess_neohookean(v_flat, hess)
 
     def set_hess_DBC(self, hess):
         num_rows = self.grid.size**self.dim * self.dim
@@ -566,32 +677,41 @@ class MPMSolver:
                     for d in range(min(self.dim, len(semi_axes))):
                         self.volume_force_ellipse_params[i, self.dim + d] = semi_axes[d]
     
-    @ti.func
-    def _get_volume_force_at_position(self, pos):
-        """获取位置处的体积力"""
-        total_force = ti.Vector.zero(self.float_type, self.dim)
-        for i in range(self.n_volume_forces):
-            in_region = True
-            if self.volume_force_types[i] == 0:  # rectangle
-                for d in ti.static(range(self.dim)):
-                    min_val = self.volume_force_rect_ranges[i, d*2]
-                    max_val = self.volume_force_rect_ranges[i, d*2+1]
-                    if pos[d] < min_val or pos[d] > max_val:
-                        in_region = False
-                        
-            elif self.volume_force_types[i] == 1:  # ellipse
-                sum_normalized = 0.0
-                for d in ti.static(range(self.dim)):
-                    center_d = self.volume_force_ellipse_params[i, d]
-                    semi_axis_d = self.volume_force_ellipse_params[i, self.dim + d]
-                    diff = pos[d] - center_d
-                    sum_normalized += (diff / semi_axis_d)**2
-                in_region = sum_normalized <= 1.0
-            
-            if in_region:
-                total_force += self.volume_force_vectors[i]
-                
-        return total_force
+
+    @ti.kernel
+    def _mark_particles_with_volume_forces(self):
+        """标记所有在体积力区域内的粒子"""
+        for p in range(self.particles.n_particles):
+            total_force = ti.Vector.zero(self.float_type, self.dim)
+            pos = self.particles.x[p]
+
+            for i in range(self.n_volume_forces):
+                in_region = True
+                if self.volume_force_types[i] == 0:  # rectangle
+                    for d in ti.static(range(self.dim)):
+                        min_val = self.volume_force_rect_ranges[i, d*2]
+                        max_val = self.volume_force_rect_ranges[i, d*2+1]
+                        if pos[d] < min_val or pos[d] > max_val:
+                            in_region = False
+
+                elif self.volume_force_types[i] == 1:  # ellipse
+                    sum_normalized = 0.0
+                    for d in ti.static(range(self.dim)):
+                        center_d = self.volume_force_ellipse_params[i, d]
+                        semi_axis_d = self.volume_force_ellipse_params[i, self.dim + d]
+                        diff = pos[d] - center_d
+                        sum_normalized += (diff / semi_axis_d)**2
+                    in_region = sum_normalized <= 1.0
+
+                if in_region:
+                    total_force += self.volume_force_vectors[i]
+
+            self.particles.volume_force[p] = total_force
+
+    def initialize_volume_forces(self):
+        """初始化粒子体积力（在粒子数据生成后调用）"""
+        if self.n_volume_forces > 0:
+            self._mark_particles_with_volume_forces()
 
     # =============== Explicit Solver Methods ===============
     def solve_explicit(self):
@@ -601,28 +721,57 @@ class MPMSolver:
         self.grid.set_boundary_v()
         return 0
     
+    @ti.func
+    def compute_stress_neohookean(self, p):
+        """计算Neo-Hookean模型的应力"""
+        U, sig, V = ti.svd(self.particles.F[p])
+        if sig.determinant() < 0:
+            sig[1,1] = -sig[1,1]
+        self.particles.F[p] = U @ sig @ V.transpose()
+
+        J = self.particles.F[p].determinant()
+        logJ = ti.log(J)
+        mu, lam = self.particles.get_material_params(p)
+        cauchy = mu * (self.particles.F[p] @ self.particles.F[p].transpose()) + ti.Matrix.identity(self.float_type, self.dim) * (lam * logJ - mu)
+        stress = -(self.particles.p_vol) * cauchy
+        return stress
+
+    @ti.func
+    def compute_stress_linear(self, p):
+        """计算线性弹性模型的应力"""
+        F = self.particles.F[p]
+        I = ti.Matrix.identity(self.float_type, self.dim)
+        eps = 0.5 * (F + F.transpose()) - I
+
+        mu, lam = self.particles.get_material_params(p)
+        eps_trace = eps.trace()
+
+        # Cauchy stress: sigma = 2*mu*eps + lambda*tr(eps)*I
+        cauchy = 2 * mu * eps + lam * eps_trace * I
+        stress = -(self.particles.p_vol) * cauchy
+        return stress
+
+    @ti.func
+    def compute_stress(self, p):
+        """根据弹性模型计算应力"""
+        if ti.static(self.elasticity_model == "linear"):
+            return self.compute_stress_linear(p)
+        else:  # default to neohookean
+            return self.compute_stress_neohookean(p)
+
     @ti.kernel
     def compute_forces_explicit(self):
         """计算所有力并存储到网格力场中"""
         # 初始化网格力场
         for I in ti.grouped(self.grid.f):
             self.grid.f[I] = ti.Vector.zero(self.float_type, self.dim)
-        
+
         # 第一步：计算应力力并分配到网格
         for p in range(self.particles.n_particles):
             Xp = self.particles.x[p] / self.grid.dx
             base = (Xp - 0.5).cast(int)
 
-            U, sig, V = ti.svd(self.particles.F[p])
-            if sig.determinant() < 0:
-                sig[1,1] = -sig[1,1]
-            self.particles.F[p] = U @ sig @ V.transpose()
-            
-            J = self.particles.F[p].determinant()
-            logJ = ti.log(J)
-            mu, lam = self.particles.get_material_params(p)
-            cauchy = mu * (self.particles.F[p] @ self.particles.F[p].transpose()) + ti.Matrix.identity(self.float_type, self.dim) * (lam * logJ - mu)
-            stress = -(self.particles.p_vol ) * cauchy
+            stress = self.compute_stress(p)
 
             for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
                 grid_idx = base + offset
@@ -632,19 +781,12 @@ class MPMSolver:
         # 第二步：在网格上计算外部力（重力、体积力、阻尼力）
         for I in ti.grouped(self.grid.f):
             if self.grid.m[I] > 1e-10:
-                # 计算网格点的物理位置
-                grid_pos = I * self.grid.dx
-                
-                # 添加重力
-                self.grid.f[I] += self.gravity * self.grid.m[I]
-                
-                # 添加体积力
-                if self.n_volume_forces > 0:
-                    volume_force = self._get_volume_force_at_position(grid_pos)
-                    self.grid.f[I] += volume_force * self.grid.m[I]
+                # 添加重力和体积力
+                total_external_force = self.gravity + self.grid.volume_force[I]
+                self.grid.f[I] += total_external_force * self.grid.m[I]
                 
                 # 添加阻尼力（基于当前速度）
-                damping_force = -self.damping * self.grid.v[I] * self.grid.m[I]
+                damping_force = -self.damping * self.grid.v[I] / self.grid.v[I].norm() * self.grid.f[I].norm() if self.grid.v[I].norm() > 1e-10 else ti.Vector.zero(self.float_type, self.dim)
                 self.grid.f[I] += damping_force
     
     @ti.kernel  
@@ -706,27 +848,53 @@ class MPMSolver:
         self.p2g_F_averaging(F_grid, m_grid)
         self.g2p_F_averaging(F_grid)
 
+    @ti.func
+    def compute_stress_strain_neohookean(self, p):
+        """计算Neo-Hookean模型的应力和应变"""
+        U, sig, V = ti.svd(self.particles.F[p])
+        if sig.determinant() < 0:
+            sig[1,1] = -sig[1,1]
+        F_corrected = U @ sig @ V.transpose()
+
+        J = F_corrected.determinant()
+        logJ = ti.log(J)
+        mu, lam = self.particles.get_material_params(p)
+        cauchy = mu * (F_corrected @ F_corrected.transpose()) + ti.Matrix.identity(self.float_type, self.dim) * (lam * logJ - mu)
+
+        # 存储应力
+        self.particles.stress[p] = cauchy
+
+        # 计算并存储应变 (Green-Lagrange strain)
+        F_transpose_F = F_corrected.transpose() @ F_corrected
+        self.particles.strain[p] = 0.5 * (F_transpose_F - ti.Matrix.identity(self.float_type, self.dim))
+
+    @ti.func
+    def compute_stress_strain_linear(self, p):
+        """计算线性弹性模型的应力和应变"""
+        F = self.particles.F[p]
+        I = ti.Matrix.identity(self.float_type, self.dim)
+
+        # 线性应变: eps = 0.5*(F + F^T) - I
+        eps = 0.5 * (F + F.transpose()) - I
+
+        mu, lam = self.particles.get_material_params(p)
+        eps_trace = eps.trace()
+
+        # Cauchy stress: sigma = 2*mu*eps + lambda*tr(eps)*I
+        cauchy = 2 * mu * eps + lam * eps_trace * I
+
+        # 存储应力和应变
+        self.particles.stress[p] = cauchy
+        self.particles.strain[p] = eps
+
     @ti.kernel
     def compute_stress_strain(self):
         """计算并存储所有粒子的应力和应变（仅在需要时调用）"""
         for p in range(self.particles.n_particles):
-            # 重新计算应力
-            U, sig, V = ti.svd(self.particles.F[p])
-            if sig.determinant() < 0:
-                sig[1,1] = -sig[1,1]
-            F_corrected = U @ sig @ V.transpose()
-            
-            J = F_corrected.determinant()
-            logJ = ti.log(J)
-            mu, lam = self.particles.get_material_params(p)
-            cauchy = mu * (F_corrected @ F_corrected.transpose()) + ti.Matrix.identity(self.float_type, self.dim) * (lam * logJ - mu)
-            
-            # 存储应力
-            self.particles.stress[p] = cauchy
-            
-            # 计算并存储应变 (Green-Lagrange strain)
-            F_transpose_F = F_corrected.transpose() @ F_corrected
-            self.particles.strain[p] = 0.5 * (F_transpose_F - ti.Matrix.identity(self.float_type, self.dim))
+            if ti.static(self.elasticity_model == "linear"):
+                self.compute_stress_strain_linear(p)
+            else:  # default to neohookean
+                self.compute_stress_strain_neohookean(p)
 
     def compute_stress_strain_with_averaging(self):
         """计算应力应变前先对F[p]进行平均"""

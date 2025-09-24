@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 @ti.data_oriented
 class Newton:
-    def __init__(self, energy_fn, grad_fn, hess_fn, DBC_fn=None,dim=3, alpha=0.5, beta=0.6, eta=1e-3, grad_normalizer=1.0,float_type=ti.f32):
+    def __init__(self, energy_fn, grad_fn, hess_fn, DBC_fn=None,dim=3, alpha=0.0, beta=0.6, eta=1e-3, grad_normalizer=1.0,float_type=ti.f32):
         self.dim = dim
         self.energy_fn = energy_fn
         self.grad_fn = grad_fn
@@ -52,7 +52,7 @@ class Newton:
             for i in range(self.dim):
                 self.temp_x[i] = self.x[i] + a * d[i]
 
-        while alpha > 1e-6:
+        while True:
             update_temp(alpha,self.d)
             f_new = self.energy_fn(self.temp_x)
             if f_new <= self.f0+ self.alpha  * alpha * g0:
@@ -73,7 +73,8 @@ class Newton:
         start_time = time.time()
         for it in range(max_iter):
             # 计算当前能量和梯度
-            self.f0 = self.grad_fn(self.x, self.grad)
+            self.f0 = self.energy_fn(self.x)
+            self.grad_fn(self.x, self.grad)
             print(f"Iteration {it}, Energy: {self.f0:.4e}")
 
             # 检查收敛

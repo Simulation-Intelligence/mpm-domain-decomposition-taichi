@@ -3,16 +3,6 @@ import numpy as np
 def calculate_eshelby_stress(x, y, E1, nu1, E2, nu2, a, sigma_inf_xx, sigma_inf_yy, sigma_inf_xy=0.0):
     """
     计算Eshelby夹杂问题中点(x,y)处的应力解析解
-    
-    参数:
-    x, y: 场点坐标
-    E1, nu1: 基体材料的杨氏模量和泊松比
-    E2, nu2: 夹杂材料的杨氏模量和泊松比  
-    a: 夹杂半径
-    sigma_inf_xx, sigma_inf_yy, sigma_inf_xy: 远场应力分量
-    
-    返回:
-    sigma_xx, sigma_yy, sigma_xy: 该点的应力分量
     """
     
     # ========== Step 1: 计算基体材料的Lamé常数 ==========
@@ -43,7 +33,7 @@ def calculate_eshelby_stress(x, y, E1, nu1, E2, nu2, a, sigma_inf_xx, sigma_inf_
         inside_inclusion = False
     
     # ========== Step 4: 计算Eshelby张量 ==========
-    S_tensor = calculate_eshelby_tensor(inside_inclusion, rho, e1, e2, nu1)
+    S_tensor = calculate_eshelby_tensor_corrected(inside_inclusion, rho, e1, e2, nu1)
     
     # ========== Step 5: 构建弹性张量 ==========
     C_tensor = construct_elasticity_tensor(lambda1, mu1)
@@ -80,7 +70,7 @@ def calculate_equivalent_eigenstrain(E1, nu1, E2, nu2, sigma_inf_xx, sigma_inf_y
     """计算等效本征应变"""
     
     # 平面应变条件下的Eshelby张量分量（夹杂内部，使用基体材料泊松比）
-    nu = nu1  # 应该使用基体材料的泊松比，不是固定的0.25
+    nu = nu1  # 应该使用基体材料的泊松比
     S1111 = S2222 = (3 - 4*nu) / (8*(1 - nu))  
     S1122 = S2211 = (4*nu - 1) / (8*(1 - nu))  
     S1212 = (3 - 4*nu) / (8*(1 - nu))
@@ -102,8 +92,8 @@ def calculate_equivalent_eigenstrain(E1, nu1, E2, nu2, sigma_inf_xx, sigma_inf_y
     
     return eps_star_xx, eps_star_yy, eps_star_xy
 
-def calculate_eshelby_tensor(inside_inclusion, rho, e1, e2, nu):
-    """计算4阶Eshelby张量"""
+def calculate_eshelby_tensor_corrected(inside_inclusion, rho, e1, e2, nu):
+    """计算4阶Eshelby张量 - 修正版"""
     
     S = np.zeros((2, 2, 2, 2))
     
@@ -120,36 +110,58 @@ def calculate_eshelby_tensor(inside_inclusion, rho, e1, e2, nu):
         S[0,1,0,1] = S[0,1,1,0] = S[1,0,0,1] = S[1,0,1,0] = factor1
         
     else:
-        # 夹杂外部 (公式中的S^{E,∞})
+        # 夹杂外部 (公式中的S^{E,∞}) - 修正版
         factor = rho**2 / (8*(1 - nu))
         
-        # 各项系数
-        coeff1 = rho**2 + 4*nu - 2
-        coeff2 = 4*(1 - rho**2)
-        coeff3 = rho**2 - 4*nu + 2
-        coeff4 = 4*(1 - 2*nu - rho**2)
-        coeff5 = 4*(nu - rho**2)
-        coeff6 = 8*(3*rho**2 - 2)
-        
         # S₁₁₁₁
-        S[0,0,0,0] = factor * (coeff1 + coeff2*e1*e1 + coeff3 + coeff4*e1*e1 + 
-                               coeff5*(e1*e1 + e1*e1) + coeff6*e1*e1*e1*e1)
+        S[0,0,0,0] = factor * (
+            (rho**2 + 4*nu - 2) +                    # δ₁₁δ₁₁项
+            4*(1 - rho**2)*e1*e1 +                   # δ₁₁r₁r₁项 
+            (rho**2 - 4*nu + 2) +                    # δ₁₁δ₁₁项
+            4*(1 - 2*nu - rho**2)*e1*e1 +            # δ₁₁r₁r₁项
+            4*(nu - rho**2)*e1*e1 +                  # δ₁₁e₁e₁项
+            8*(3*rho**2 - 2)*e1*e1*e1*e1             # e₁e₁e₁e₁项
+        )
         
         # S₂₂₂₂  
-        S[1,1,1,1] = factor * (coeff1 + coeff2*e2*e2 + coeff3 + coeff4*e2*e2 + 
-                               coeff5*(e2*e2 + e2*e2) + coeff6*e2*e2*e2*e2)
+        S[1,1,1,1] = factor * (
+            (rho**2 + 4*nu - 2) +                    
+            4*(1 - rho**2)*e2*e2 +                   
+            (rho**2 - 4*nu + 2) +                    
+            4*(1 - 2*nu - rho**2)*e2*e2 +            
+            4*(nu - rho**2)*e2*e2 +                  
+            8*(3*rho**2 - 2)*e2*e2*e2*e2             
+        )
         
         # S₁₁₂₂
-        S[0,0,1,1] = factor * (coeff1 + coeff2*e2*e2 + coeff4*e1*e1 + 
-                               coeff5*(e2*e2 + e2*e2) + coeff6*e1*e1*e2*e2)
+        S[0,0,1,1] = factor * (
+            (rho**2 + 4*nu - 2) +                    
+            4*(1 - rho**2)*e2*e2 +                   
+            0 +                                      
+            4*(1 - 2*nu - rho**2)*e1*e1 +            
+            4*(nu - rho**2)*e2*e2 +                  
+            8*(3*rho**2 - 2)*e1*e1*e2*e2             
+        )
         
-        # S₂₂₁₁
-        S[1,1,0,0] = factor * (coeff1 + coeff2*e1*e1 + coeff4*e2*e2 + 
-                               coeff5*(e1*e1 + e1*e1) + coeff6*e2*e2*e1*e1)
+        # S₂₂₁₁ 
+        S[1,1,0,0] = factor * (
+            (rho**2 + 4*nu - 2) +                    
+            4*(1 - rho**2)*e1*e1 +                   
+            0 +                                      
+            4*(1 - 2*nu - rho**2)*e2*e2 +            
+            4*(nu - rho**2)*e1*e1 +                  
+            8*(3*rho**2 - 2)*e2*e2*e1*e1             
+        )
         
-        # 剪切分量 S₁₂₁₂
+        # S₁₂₁₂ (剪切分量)
         S[0,1,0,1] = S[0,1,1,0] = S[1,0,0,1] = S[1,0,1,0] = factor * (
-            coeff3 + coeff4*e1*e2 + coeff5*(e1*e2 + e1*e2) + coeff6*e1*e1*e2*e2)
+            0 +                                      
+            0 +                                      
+            (rho**2 - 4*nu + 2) +                    
+            0 +                                      
+            4*(nu - rho**2)*e1*e2 +                  
+            8*(3*rho**2 - 2)*e1*e2*e1*e2             
+        )
     
     return S
 
@@ -176,34 +188,118 @@ def construct_elasticity_tensor(lam, mu):
     
     return C
 
-# ========== 使用示例 ==========
-if __name__ == "__main__":
-    # 材料参数
-    E1, nu1 = 70e9, 0.3    # 基体 (Pa)
-    E2, nu2 = 200e9, 0.3   # 夹杂 (Pa)
-    a = 1.0                # 夹杂半径 (m)
+def calculate_stress_concentration_factor(x, y, E1, nu1, E2, nu2, a, sigma_inf=1.0):
+    """
+    计算应力集中系数（归一化应力）
     
-    # 远场应力 (Pa)
-    sigma_inf_xx = 1e6     # 1 MPa拉伸
-    sigma_inf_yy = 0.0
-    sigma_inf_xy = 0.0
-    
-    # 计算网格点的应力
-    x_coords = np.linspace(-3*a, 3*a, 101)
-    y_coords = np.linspace(-3*a, 3*a, 101)
-    
-    # 示例：计算单点应力
-    x, y = 0.5*a, 0.0  # 夹杂内部点
+    返回: 应力集中系数 = σ(x,y) / σ_∞
+    """
     sigma_xx, sigma_yy, sigma_xy = calculate_eshelby_stress(
-        x, y, E1, nu1, E2, nu2, a, sigma_inf_xx, sigma_inf_yy, sigma_inf_xy)
+        x, y, E1, nu1, E2, nu2, a, sigma_inf, sigma_inf, 0.0)
     
-    print(f"在点({x:.2f}, {y:.2f})处的应力:")
-    print(f"σ_xx = {sigma_xx/1e6:.3f} MPa")
-    print(f"σ_yy = {sigma_yy/1e6:.3f} MPa") 
-    print(f"σ_xy = {sigma_xy/1e6:.3f} MPa")
+    concentration_factor_xx = sigma_xx / sigma_inf
+    concentration_factor_yy = sigma_yy / sigma_inf
+    concentration_factor_xy = sigma_xy / sigma_inf
     
-    # 批量计算可以用以下方式：
-    # for x in x_coords:
-    #     for y in y_coords:
-    #         sigma_xx, sigma_yy, sigma_xy = calculate_eshelby_stress(
-    #             x, y, E1, nu1, E2, nu2, a, sigma_inf_xx, sigma_inf_yy, sigma_inf_xy)
+    return concentration_factor_xx, concentration_factor_yy, concentration_factor_xy
+
+def test_special_cases():
+    """测试特殊情况（简化输出）"""
+    print("=== 特殊情况测试 ===")
+    
+    a = 0.08
+    sigma_inf = 1.0  # 归一化应力
+    
+    # 测试1：均匀材料（E1 = E2）
+    print("\n测试1: 均匀材料 (E₁ = E₂)")
+    E1 = E2 = 1e6
+    nu1 = nu2 = 0.3
+    
+    kx, ky, kxy = calculate_stress_concentration_factor(0.0, 0.0, E1, nu1, E2, nu2, a, sigma_inf)
+    print(f"  夹杂中心应力集中系数: Kx={kx:.3f}, Ky={ky:.3f}")
+    print(f"  期望值: 1.000 (均匀材料)")
+    print(f"  误差: {abs(kx - 1.0):.6f}")
+    
+    # 测试2：中等刚度比
+    print("\n测试2: 中等刚度比 (E₂/E₁ = 0.1)")
+    E1 = 1e6
+    E2 = 1e5
+    nu1 = nu2 = 0.3
+    
+    kx, ky, kxy = calculate_stress_concentration_factor(0.0, 0.0, E1, nu1, E2, nu2, a, sigma_inf)
+    print(f"  夹杂中心应力集中系数: Kx={kx:.3f}, Ky={ky:.3f}")
+    print(f"  物理意义: 软夹杂，应力应该较小")
+    
+    # 测试3：极端刚度比
+    print("\n测试3: 极端刚度比 (E₂/E₁ = 0.0001)")
+    E1 = 1e6
+    E2 = 1e2
+    nu1 = nu2 = 0.3
+    
+    kx, ky, kxy = calculate_stress_concentration_factor(0.0, 0.0, E1, nu1, E2, nu2, a, sigma_inf)
+    print(f"  夹杂中心应力集中系数: Kx={kx:.3f}, Ky={ky:.3f}")
+    print(f"  物理意义: 接近空洞，应力应该很小")
+    
+    # 测试4：空间分布检查
+    print("\n测试4: 空间分布检查 (E₂/E₁ = 0.1)")
+    E1 = 1e6
+    E2 = 1e5
+    nu1 = nu2 = 0.3
+    
+    test_points = [
+        (0.0, 0.0, "夹杂中心"),
+        (a, 0.0, "x轴界面"),
+        (0.0, a, "y轴界面"),  
+        (2*a, 0.0, "近场"),
+        (5*a, 0.0, "远场")
+    ]
+    
+    print("  位置           应力集中系数Kx    应力集中系数Ky")
+    print("  " + "-"*50)
+    for x, y, desc in test_points:
+        kx, ky, kxy = calculate_stress_concentration_factor(x, y, E1, nu1, E2, nu2, a, sigma_inf)
+        r = np.sqrt(x**2 + y**2)
+        location = "内" if r <= a else "外"
+        print(f"  {desc:12s} ({location}):  {kx:8.3f}        {ky:8.3f}")
+    
+    print(f"\n远场期望值: 1.000")
+
+def generate_stress_field_data(E1, nu1, E2, nu2, a, nx=51, ny=51, domain_size=5):
+    """
+    生成应力场数据用于验证
+    
+    参数:
+    nx, ny: 网格点数
+    domain_size: 域大小（以夹杂半径为单位）
+    
+    返回: x_grid, y_grid, stress_concentration_xx, stress_concentration_yy
+    """
+    
+    # 创建网格
+    x_range = np.linspace(-domain_size*a, domain_size*a, nx)
+    y_range = np.linspace(-domain_size*a, domain_size*a, ny)
+    x_grid, y_grid = np.meshgrid(x_range, y_range)
+    
+    # 计算应力集中系数
+    kx_field = np.zeros_like(x_grid)
+    ky_field = np.zeros_like(y_grid)
+    
+    for i in range(nx):
+        for j in range(ny):
+            x, y = x_grid[j,i], y_grid[j,i]
+            kx, ky, kxy = calculate_stress_concentration_factor(x, y, E1, nu1, E2, nu2, a)
+            kx_field[j,i] = kx
+            ky_field[j,i] = ky
+    
+    return x_grid, y_grid, kx_field, ky_field
+
+# ========== 主函数测试 ==========
+if __name__ == "__main__":
+    test_special_cases()
+    
+    print("\n" + "="*60)
+    print("使用建议:")
+    print("1. 对于MPM验证，使用归一化的应力集中系数")
+    print("2. 重点关注应力分布模式，而不是绝对数值")
+    print("3. 使用 calculate_stress_concentration_factor() 函数")
+    print("4. 用 generate_stress_field_data() 生成验证数据")
