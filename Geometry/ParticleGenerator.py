@@ -74,7 +74,7 @@ class ParticleGenerator:
         初始化粒子生成器
         Args:
             dim: 维度 (2 or 3)
-            sampling_method: 采样方式，可选 "uniform", "poisson", "regular", "gauss"
+            sampling_method: 采样方式，可选 "uniform", "poisson", "regular", "gauss", "mesh"
             particles_per_grid: 每个网格的粒子数
             grid_size: 网格大小
         """
@@ -135,21 +135,21 @@ class ParticleGenerator:
         """生成矩形区域内的粒子"""
         particles = []
         rect_range = params["range"]
-        
+
         # 计算边界框大小
         region_size = []
         for d in range(self.dim):
             region_size.append(rect_range[d][1] - rect_range[d][0])
-        
+
         if self.sampling_method == "poisson":
             # 使用泊松采样
             from Util.poisson_disk_sampling import poisson_disk_sampling_by_count_cached as poisson_disk_sampling_by_count
             points_np, radius_info = self._poisson_sampling_with_radius(region_size, n_particles)
-            
+
             # 存储半径信息用于边界检测
             if radius_info is not None:
                 self.last_poisson_radius = radius_info
-            
+
             for point in points_np:
                 pos = []
                 for d in range(self.dim):
@@ -163,6 +163,9 @@ class ParticleGenerator:
             particles, weights = self._generate_gauss_quadrature_particles(rect_range, n_particles)
             # 将权重信息附加到粒子数据中，以便后续使用
             self.gauss_weights = weights
+        elif self.sampling_method == "mesh":
+            # 基于Triangle的网格采样
+            particles = self._generate_mesh_particles_rectangle(rect_range, n_particles)
         else:
             # 均匀随机采样 (uniform)
             for _ in range(n_particles):
@@ -172,7 +175,7 @@ class ParticleGenerator:
                     max_val = rect_range[d][1]
                     pos.append(np.random.uniform(min_val, max_val))
                 particles.append(pos)
-        
+
         return particles
     
     def _generate_regular_grid_particles(self, rect_range, n_particles):
@@ -303,10 +306,13 @@ class ParticleGenerator:
         elif self.sampling_method == "regular":
             # 椭圆的规则采样
             particles = self._generate_regular_ellipse_particles(center, semi_axes, n_particles)
+        elif self.sampling_method == "mesh":
+            # 基于Triangle的网格采样
+            particles = self._generate_mesh_particles_ellipse(center, semi_axes, n_particles)
         else:
             # 传统随机采样方法 (uniform)
             particles = self._traditional_ellipse_sampling(center, semi_axes, n_particles)
-        
+
         return particles
     
     def _generate_regular_ellipse_particles(self, center, semi_axes, n_particles):
@@ -498,8 +504,213 @@ class ParticleGenerator:
             semi_axes = params["semi_axes"]
             
             return self._is_point_in_ellipse(particle_pos, center, semi_axes)
-        
+
         return False
+
+    def _generate_mesh_particles_rectangle(self, rect_range, n_particles):
+        """使用Triangle为矩形区域生成网格粒子"""
+        if self.dim != 2:
+            raise ValueError("Mesh sampling目前只支持2D")
+
+        # 创建矩形的.poly文件
+        poly_data = self._create_rectangle_poly(rect_range)
+
+        # 调用Triangle生成网格
+        vertices = self._call_triangle_and_extract_vertices(poly_data, n_particles)
+
+        return vertices
+
+    def _generate_mesh_particles_ellipse(self, center, semi_axes, n_particles):
+        """使用Triangle为椭圆区域生成网格粒子"""
+        if self.dim != 2:
+            raise ValueError("Mesh sampling目前只支持2D")
+
+        # 创建椭圆的.poly文件（通过多边形近似）
+        poly_data = self._create_ellipse_poly(center, semi_axes, n_particles)
+
+        # 调用Triangle生成网格
+        vertices = self._call_triangle_and_extract_vertices(poly_data, n_particles)
+
+        return vertices
+
+    def _create_rectangle_poly(self, rect_range):
+        """创建矩形的.poly格式数据"""
+        x_min, x_max = rect_range[0][0], rect_range[0][1]
+        y_min, y_max = rect_range[1][0], rect_range[1][1]
+
+        # 定义矩形的四个顶点 (逆时针顺序)
+        vertices = [
+            (x_min, y_min),  # 左下
+            (x_max, y_min),  # 右下
+            (x_max, y_max),  # 右上
+            (x_min, y_max)   # 左上
+        ]
+
+        # 构建.poly格式的字符串
+        poly_content = f"4 2 0 0\n"  # 4个顶点，2维，0个属性，0个边界标记
+        for i, (x, y) in enumerate(vertices, 1):
+            poly_content += f"{i} {x:.6f} {y:.6f}\n"
+
+        poly_content += "4 0\n"  # 4条边，0个边界标记
+        for i in range(4):
+            next_i = (i + 1) % 4 + 1
+            poly_content += f"{i+1} {i+1} {next_i}\n"
+
+        poly_content += "0\n"  # 0个hole
+
+        return poly_content
+
+    def _create_ellipse_poly(self, center, semi_axes, n_particles):
+        """创建椭圆的.poly格式数据（通过多边形近似）"""
+        import math
+
+        # 根据粒子数量动态计算边界分段数
+        # 分段数与粒子数的平方根成正比，确保边界精度与粒子密度匹配
+        n_segments = max(16, min(128, int(math.sqrt(n_particles) * 4)))
+
+        vertices = []
+        for i in range(n_segments):
+            angle = 2 * math.pi * i / n_segments
+            x = center[0] + semi_axes[0] * math.cos(angle)
+            y = center[1] + semi_axes[1] * math.sin(angle)
+            vertices.append((x, y))
+
+        # 构建.poly格式的字符串
+        poly_content = f"{n_segments} 2 0 0\n"
+        for i, (x, y) in enumerate(vertices, 1):
+            poly_content += f"{i} {x:.6f} {y:.6f}\n"
+
+        poly_content += f"{n_segments} 0\n"
+        for i in range(n_segments):
+            next_i = (i + 1) % n_segments + 1
+            poly_content += f"{i+1} {i+1} {next_i}\n"
+
+        poly_content += "0\n"  # 0个hole
+
+        return poly_content
+
+    def _call_triangle_and_extract_vertices(self, poly_data, n_particles):
+        """调用Triangle工具并提取顶点"""
+        import tempfile
+        import os
+        import subprocess
+
+        vertices = []
+
+        try:
+            # 创建临时目录
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # 写入.poly文件
+                poly_file = os.path.join(temp_dir, "input.poly")
+                with open(poly_file, 'w') as f:
+                    f.write(poly_data)
+
+                # 计算目标面积约束
+                area_constraint = self._calculate_area_constraint(poly_data, n_particles)
+
+                # 调用Triangle
+                triangle_path = "/Users/zhaofen2/Desktop/work/SIG/triangle/triangle"
+                cmd = [triangle_path, f"-pqa{area_constraint}", "input"]
+
+                result = subprocess.run(cmd, cwd=temp_dir, capture_output=True, text=True)
+
+                if result.returncode != 0:
+                    print(f"Triangle执行失败: {result.stderr}")
+                    return self._fallback_sampling(poly_data, n_particles)
+
+                # 读取生成的.node文件
+                node_file = os.path.join(temp_dir, "input.1.node")
+                if os.path.exists(node_file):
+                    vertices = self._parse_node_file(node_file)
+                else:
+                    print("未找到Triangle输出的.node文件")
+                    return self._fallback_sampling(poly_data, n_particles)
+
+        except Exception as e:
+            print(f"调用Triangle时出错: {e}")
+            return self._fallback_sampling(poly_data, n_particles)
+
+        return vertices
+
+    def _calculate_area_constraint(self, poly_data, n_particles):
+        """根据目标粒子数计算面积约束"""
+        # 估算形状总面积
+        total_area = self._estimate_poly_area(poly_data)
+        # 计算每个三角形的平均面积
+        avg_triangle_area = total_area / n_particles
+        return f"{avg_triangle_area:.8f}"
+
+    def _estimate_poly_area(self, poly_data):
+        """估算多边形面积"""
+        lines = poly_data.strip().split('\n')
+        n_vertices = int(lines[0].split()[0])
+
+        vertices = []
+        for i in range(1, n_vertices + 1):
+            parts = lines[i].split()
+            x, y = float(parts[1]), float(parts[2])
+            vertices.append((x, y))
+
+        # 使用鞋带公式计算面积
+        area = 0.0
+        for i in range(n_vertices):
+            j = (i + 1) % n_vertices
+            area += vertices[i][0] * vertices[j][1]
+            area -= vertices[j][0] * vertices[i][1]
+
+        return abs(area) / 2.0
+
+    def _parse_node_file(self, node_file):
+        """解析Triangle输出的.node文件"""
+        vertices = []
+
+        with open(node_file, 'r') as f:
+            lines = f.readlines()
+
+        # 跳过注释和空行
+        data_lines = [line.strip() for line in lines if line.strip() and not line.strip().startswith('#')]
+
+        if not data_lines:
+            return vertices
+
+        # 第一行：顶点数 维度 属性数 边界标记数
+        header = data_lines[0].split()
+        n_vertices = int(header[0])
+
+        # 读取顶点数据
+        for i in range(1, min(len(data_lines), n_vertices + 1)):
+            parts = data_lines[i].split()
+            if len(parts) >= 3:  # 顶点索引 x y [其他数据]
+                x, y = float(parts[1]), float(parts[2])
+                vertices.append([x, y])
+
+        return vertices
+
+    def _fallback_sampling(self, poly_data, n_particles):
+        """Triangle失败时的后备采样方法"""
+        print("使用后备的均匀随机采样")
+
+        # 从poly_data中提取边界框
+        lines = poly_data.strip().split('\n')
+        n_vertices = int(lines[0].split()[0])
+
+        x_coords, y_coords = [], []
+        for i in range(1, n_vertices + 1):
+            parts = lines[i].split()
+            x_coords.append(float(parts[1]))
+            y_coords.append(float(parts[2]))
+
+        # 在边界框内随机采样
+        x_min, x_max = min(x_coords), max(x_coords)
+        y_min, y_max = min(y_coords), max(y_coords)
+
+        vertices = []
+        for _ in range(n_particles):
+            x = np.random.uniform(x_min, x_max)
+            y = np.random.uniform(y_min, y_max)
+            vertices.append([x, y])
+
+        return vertices
 
 
 class ParticleInitializer:

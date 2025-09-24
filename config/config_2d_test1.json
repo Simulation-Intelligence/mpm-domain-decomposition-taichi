@@ -8,6 +8,7 @@
         "sampling_method": "gauss",
         "static_solve":true,
         "implicit": true,
+        "elasticity_model": "neohookean",
         "dt": 1e-3,
         "max_iter": 1,
         "solve_max_iter": 10000,
@@ -21,7 +22,7 @@
                 "type": "rectangle",
                 "params": {
                     "range": [
-                        [0.09, 0.11],
+                        [0.10, 0.12],
                         [0.1, 0.9]
                     ]
                 },
@@ -31,7 +32,7 @@
                 "type": "rectangle",
                 "params": {
                     "range": [
-                        [0.89, 0.91],
+                        [0.88, 0.90],
                         [0.1, 0.9]
                     ]
                 },
@@ -42,7 +43,7 @@
                 "params": {
                     "range": [
                         [0.1, 0.9],
-                        [0.09, 0.11]
+                        [0.10, 0.12]
                     ]
                 },
                 "force": [0.0, -1]
@@ -52,7 +53,7 @@
                 "params": {
                     "range": [
                         [0.1, 0.9],
-                        [0.89, 0.91]
+                        [0.88, 0.90]
                     ]
                 },
                 "force": [0.0, 1]
@@ -105,8 +106,8 @@
                         0.5
                     ],
                     "semi_axes": [
-                        0.1,
-                        0.1
+                        0.08,
+                        0.08
                     ]
                 },
                 "operation": "change",

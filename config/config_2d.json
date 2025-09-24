@@ -5,9 +5,10 @@
         "grid_size": 32,
         "scale": 1.0,
         "particles_per_grid": 9,
-        "sampling_method": "gauss",
-        "dt": 1e-3,
-        "max_iter": 1,
+        "sampling_method": "mesh",
+        "elasticity_model": "linear",
+        "dt": 1e-4,
+        "max_iter": 10,
         "solve_max_iter": 1000,
         "solve_init_iter": 100,
         "gravity": [
@@ -30,7 +31,7 @@
                 "rho": 1e3
             }
         ],
-        "implicit": true,
+        "implicit": false,
         "use_auto_diff": false,
         "compare_diff": false,
         "bound": 2,

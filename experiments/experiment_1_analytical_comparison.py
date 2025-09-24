@@ -56,14 +56,62 @@ def extract_geometry_params(config):
 def extract_loading_conditions(config):
     """从配置中提取载荷条件"""
     # 从体力中推断远场应力
-    # 这里需要根据具体的体力配置来推断等效的远场应力
     volume_forces = config['volume_forces']
 
-    # 简化处理：假设体力可以等效为远场应力
-    # 这里可能需要根据具体问题进行调整
-    sigma_inf_xx = 1e6  # 1 MPa，可根据体力调整
-    sigma_inf_yy = 0.0
+    # 获取基本参数
+    materials = config['material_params']
+    base_material = next(m for m in materials if m['id'] == 0)
+    rho = base_material['rho']  # 密度
+
+    stress_contributions_x = []
+    stress_contributions_y = []
+
+    print("体力到远场应力转换:")
+    print("-" * 40)
+
+    for force_config in volume_forces:
+        if force_config['type'] == 'rectangle':
+            range_x = force_config['params']['range'][0]
+            range_y = force_config['params']['range'][1]
+            force = force_config['force']
+
+            # 计算区域面积
+            width = range_x[1] - range_x[0]
+            height = range_y[1] - range_y[0]
+            region_area = width * height
+
+            # 计算区域内总质量
+            total_mass = rho * region_area
+
+            # 计算总力 = 区域内总质量 × 体力加速度
+            total_force_x = total_mass * force[0]  # N/m (2D情况)
+            total_force_y = total_mass * force[1]  # N/m (2D情况)
+
+            # 根据力的方向判断边界并计算等效应力
+            if force[0] != 0:  # X方向有力，影响σ_xx
+                boundary_length = height  # Y方向长度作为边界长度
+                stress_contribution = total_force_x / boundary_length
+                stress_contributions_x.append(abs(stress_contribution))  # 取绝对值
+                force_direction = "左边界" if force[0] < 0 else "右边界"
+                print(f"{force_direction}: 区域面积={region_area:.4f}, 总力={total_force_x:.4f} N/m, 边界长度={boundary_length:.2f}, 应力贡献={stress_contribution:.4f} Pa")
+
+            if force[1] != 0:  # Y方向有力，影响σ_yy
+                boundary_length = width  # X方向长度作为边界长度
+                stress_contribution = total_force_y / boundary_length
+                stress_contributions_y.append(abs(stress_contribution))  # 取绝对值
+                force_direction = "下边界" if force[1] < 0 else "上边界"
+                print(f"{force_direction}: 区域面积={region_area:.4f}, 总力={total_force_y:.4f} N/m, 边界长度={boundary_length:.2f}, 应力贡献={stress_contribution:.4f} Pa")
+
+    # 计算等效远场应力：取各边界应力的平均值
+    sigma_inf_xx = sum(stress_contributions_x) / len(stress_contributions_x) if stress_contributions_x else 0.0
+    sigma_inf_yy = sum(stress_contributions_y) / len(stress_contributions_y) if stress_contributions_y else 0.0
     sigma_inf_xy = 0.0
+
+    # 暂时假设无剪切载荷
+    sigma_inf_xy = 0.0
+
+    print(f"最终远场应力: σ_xx={sigma_inf_xx:.4f} Pa, σ_yy={sigma_inf_yy:.4f} Pa, σ_xy={sigma_inf_xy:.4f} Pa")
+    print()
 
     return sigma_inf_xx, sigma_inf_yy, sigma_inf_xy
 
@@ -88,15 +136,19 @@ def calculate_analytical_solution(config_path):
     # 计算网格点
     grid_size = config['grid_size']
     scale = config['scale']
+    particles_per_grid = config['particles_per_grid']
+
+    # 考虑粒子密度的有效分辨率
+    effective_resolution = grid_size * int(np.sqrt(particles_per_grid))
 
     # 创建计算网格 (归一化坐标)
-    x_coords = np.linspace(0, scale, grid_size)
-    y_coords = np.linspace(0, scale, grid_size)
+    x_coords = np.linspace(0, scale, effective_resolution)
+    y_coords = np.linspace(0, scale, effective_resolution)
 
     # 存储结果
-    stress_xx = np.zeros((grid_size, grid_size))
-    stress_yy = np.zeros((grid_size, grid_size))
-    stress_xy = np.zeros((grid_size, grid_size))
+    stress_xx = np.zeros((effective_resolution, effective_resolution))
+    stress_yy = np.zeros((effective_resolution, effective_resolution))
+    stress_xy = np.zeros((effective_resolution, effective_resolution))
 
     # 计算每个网格点的应力
     for i, x in enumerate(x_coords):
@@ -344,10 +396,64 @@ def compare_results(analytical_results, simulation_results, output_dir):
 
     return comparison_stats
 
+def visualize_analytical_results(analytical_results, output_dir, save_image=True):
+    """可视化解析解结果"""
+    from tools.visualize_stress import visualize_stress_2d, compute_von_mises_stress, compute_hydrostatic_pressure
+
+    # 从解析解结果中构造粒子位置和应力数据
+    x_coords = analytical_results['x_coords']
+    y_coords = analytical_results['y_coords']
+    stress_xx = analytical_results['stress_xx']
+    stress_yy = analytical_results['stress_yy']
+    stress_xy = analytical_results['stress_xy']
+
+    # 创建粒子位置数组 (N, 2)
+    X, Y = np.meshgrid(x_coords, y_coords)
+    positions = np.column_stack([X.ravel(), Y.ravel()])
+
+    # 创建应力张量数组 (N, 2, 2)
+    n_points = len(positions)
+    stress_tensor = np.zeros((n_points, 2, 2))
+    stress_tensor[:, 0, 0] = stress_xx.ravel()  # σ_xx
+    stress_tensor[:, 1, 1] = stress_yy.ravel()  # σ_yy
+    stress_tensor[:, 0, 1] = stress_xy.ravel()  # σ_xy
+    stress_tensor[:, 1, 0] = stress_xy.ravel()  # σ_yx = σ_xy
+
+    # 计算von Mises应力和静水压力
+    von_mises = compute_von_mises_stress(stress_tensor)
+    pressure = compute_hydrostatic_pressure(stress_tensor)
+
+    # 保存图像路径
+    save_path = None
+    if save_image:
+        save_path = os.path.join(output_dir, 'analytical_stress_visualization.png')
+
+    # 调用可视化函数
+    visualize_stress_2d(positions, von_mises, pressure,
+                       frame_number="Analytical", save_path=save_path)
+
+    print(f"\n解析解可视化完成!")
+    if save_image:
+        print(f"图像已保存到: {save_path}")
+
 def main():
     """主函数"""
-    config_path = "config/config_2d_test1.json"
-    output_dir = "experiments/experiment_1_results"
+    import argparse
+
+    parser = argparse.ArgumentParser(description='实验1: 模拟结果与解析解对比')
+    parser.add_argument('--analytical-only', action='store_true',
+                       help='仅计算和可视化解析解，不运行MPM模拟')
+    parser.add_argument('--config', default="config/config_2d_test1.json",
+                       help='配置文件路径 (默认: config/config_2d_test1.json)')
+    parser.add_argument('--output-dir', default="experiments/experiment_1_results",
+                       help='输出目录 (默认: experiments/experiment_1_results)')
+    parser.add_argument('--no-save-image', action='store_true',
+                       help='不保存可视化图像，仅显示')
+
+    args = parser.parse_args()
+
+    config_path = args.config
+    output_dir = args.output_dir
 
     print("实验1: 模拟结果与解析解对比")
     print("=" * 50)
@@ -361,15 +467,24 @@ def main():
     print(f"σ_xx: 最小值={analytical_results['stress_xx'].min():.2e}, 最大值={analytical_results['stress_xx'].max():.2e}")
     print(f"σ_yy: 最小值={analytical_results['stress_yy'].min():.2e}, 最大值={analytical_results['stress_yy'].max():.2e}")
 
-    # 2. 运行模拟并对比
-    print("\n2. 运行MPM模拟")
+    # 2. 可视化解析解
+    print("\n2. 可视化解析解")
+    visualize_analytical_results(analytical_results, output_dir, save_image=not args.no_save_image)
+
+    # 3. 根据参数决定是否运行模拟
+    if args.analytical_only:
+        print(f"\n仅解析解模式完成! 结果保存在: {output_dir}")
+        return
+
+    # 4. 运行模拟并对比
+    print("\n3. 运行MPM模拟")
     simulation_results = run_simulation_and_compare(config_path, output_dir)
 
     if simulation_results is not None:
         print(f"模拟结果: {len(simulation_results['positions'])} 个粒子")
 
-        # 3. 对比结果
-        print("\n3. 对比分析")
+        # 5. 对比结果
+        print("\n4. 对比分析")
         comparison_stats = compare_results(analytical_results, simulation_results, output_dir)
 
         print(f"\n实验完成! 结果保存在: {output_dir}")

@@ -2,12 +2,13 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_size": 128,
+        "grid_size": 256,
         "scale": 1.0,
-        "particles_per_grid": 16,
-        "sampling_method": "regular",
-        "dt": 1e-4,
-        "max_iter": 10,
+        "particles_per_grid": 8,
+        "sampling_method": "mesh",
+        "elasticity_model": "linear",
+        "dt": 1e-5,
+        "max_iter": 100,
         "solve_max_iter": 1000,
         "solve_init_iter": 100,
         "gravity": [
@@ -20,10 +21,10 @@
                 "params": {
                     "range": [
                         [0, 1],
-                        [0.4, 0.55]
+                        [0.415, 0.42]
                     ]
                 },
-                "force": [0.0, -1000.0]
+                "force": [0.0, -200.0]
             }
         ],
         "material_params": [
@@ -40,7 +41,7 @@
         "compare_diff": false,
         "bound": 2,
         "initial_velocity_y": -0,
-        "damping":500,
+        "damping":0.5,
         "shapes": [
             {
                 "type": "ellipse",
@@ -84,7 +85,7 @@
                             1
                         ],
                         [
-                            0.02,
+                            0,
                             1
                         ]
                     ]
@@ -93,5 +94,5 @@
     ],
         "implicit_solver": "Newton",
         "eta": 1e-4,
-        "record_frames": 2000
+        "record_frames": 1000
     }

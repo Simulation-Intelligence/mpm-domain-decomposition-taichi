@@ -54,6 +54,8 @@ class ImplicitMPM:
         # 统一创建solver，用于参数管理和求解
         self.solver = MPMSolver(self.grid, self.particles, self.cfg)
 
+        # 初始化粒子体积力（在粒子数据生成后）
+        self.solver.initialize_volume_forces()
 
         # 其他公共参数初始化
         self.max_schwarz_iter = config.get("max_schwarz_iter", 1)  # Schwarz迭代次数
@@ -117,14 +119,21 @@ class ImplicitMPM:
                 grid_idx = (base + offset) % self.grid.size
                 dpos = (offset - fx) * self.grid.dx
                 p_mass = self.particles.get_particle_mass(p)
-                self.grid.m[grid_idx] += self.particles.wip[p,offset] * p_mass
-                self.grid.v[grid_idx] += self.particles.wip[p,offset] * p_mass * (self.particles.v[p] + self.particles.C[p] @ dpos)
+                weight = self.particles.wip[p,offset]
+                self.grid.m[grid_idx] += weight * p_mass
+                self.grid.v[grid_idx] += weight * p_mass * (self.particles.v[p] + self.particles.C[p] @ dpos)
+
+                # 插值体积力到网格，按质量加权
+                self.grid.volume_force[grid_idx] += weight * p_mass * self.particles.volume_force[p]
+
                 if self.particles.is_boundary_particle[p]:
                     self.grid.is_particle_boundary_grid[grid_idx] = 1
 
         for I in ti.grouped(self.grid.m):
             if self.grid.m[I] > 1e-10:
                 self.grid.v[I] /= self.grid.m[I]
+                self.grid.volume_force[I] /= self.grid.m[I]
+
 
     @ti.kernel
     def g2p(self, dt: ti.f32):
@@ -441,7 +450,7 @@ class ImplicitMPM:
 
 if __name__ == "__main__":
 
-    cfg=Config("config/config_2d_test1.json")
+    cfg=Config("config/config_2d.json")
     float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":
