@@ -25,8 +25,6 @@ class Newton:
         self.f0 =0.0
 
 
-
-
         # 历史记录
         self.f_his = []
         self.time_his = []

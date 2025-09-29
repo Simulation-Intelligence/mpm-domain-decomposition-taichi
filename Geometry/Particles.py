@@ -128,21 +128,28 @@ class Particles:
             E = param["E"]
             nu = param["nu"]
             rho = param.get("rho", config.get("p_rho", 1))
-            
+
             # 计算拉梅参数
             mu = E / (2 * (1 + nu))
             lam = E * nu / ((1 + nu) * (1 - 2 * nu))
-            
+
             # 计算粒子质量：p_mass = p_vol * rho
             p_mass = self.p_vol * rho
-            
+
+            # 初始变形梯度F，默认为二维单位矩阵
+            initial_F = param.get("initial_F", None)
+            if initial_F is None:
+                # 默认二维单位矩阵
+                initial_F = [[1.0, 0.0], [0.0, 1.0]]
+
             params_dict[mat_id] = {
                 "E": E,
                 "nu": nu,
                 "rho": rho,
                 "mu": mu,
                 "lambda": lam,
-                "p_mass": p_mass
+                "p_mass": p_mass,
+                "initial_F": initial_F
             }
 
         return params_dict
@@ -256,7 +263,8 @@ class Particles:
             all_particles,
             self.x, self.v, self.F, self.C,
             self.particle_material_id,
-            self.particle_weight
+            self.particle_weight,
+            self.material_params
         )
         
         # 第六步：处理公共粒子
