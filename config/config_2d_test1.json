@@ -6,9 +6,9 @@
         "scale": 1.0,
         "particles_per_grid": 16,
         "sampling_method": "gauss",
-        "static_solve":true,
+        "static_solve":false,
         "implicit": true,
-        "elasticity_model": "neohookean",
+        "elasticity_model": "linear",
         "dt": 1e-3,
         "max_iter": 1,
         "solve_max_iter": 10000,
@@ -17,69 +17,37 @@
             0.0,
             -0.0
         ],
-        "volume_forces": [
-            {
-                "type": "rectangle",
-                "params": {
-                    "range": [
-                        [0.10, 0.12],
-                        [0.1, 0.9]
-                    ]
-                },
-                "force": [-1, 0.0]
-            },
-            {
-                "type": "rectangle",
-                "params": {
-                    "range": [
-                        [0.88, 0.90],
-                        [0.1, 0.9]
-                    ]
-                },
-                "force": [1, 0.0]
-            },
-            {
-                "type": "rectangle",
-                "params": {
-                    "range": [
-                        [0.1, 0.9],
-                        [0.10, 0.12]
-                    ]
-                },
-                "force": [0.0, -1]
-            },
-            {
-                "type": "rectangle",
-                "params": {
-                    "range": [
-                        [0.1, 0.9],
-                        [0.88, 0.90]
-                    ]
-                },
-                "force": [0.0, 1]
-            }
-        ],
         "material_params": [
             {
                 "id": 0,
-                "name": "default",
-                "E": 1e6,
+                "name": "base",
+                "E": 1e5,
                 "nu": 0.3,
                 "rho": 1e3
             },
             {
                 "id": 1,
-                "name": "soft_material",
-                "E": 1e2,
+                "name": "includsion",
+                "E": 1e6,
                 "nu": 0.3,
-                "rho": 1e3
+                "rho": 1e3,
+                "initial_F": [
+                    [
+                        0.999,
+                        0.0
+                    ],
+                    [
+                        0.0,
+                        0.999
+                    ]
+                ]
             }
         ],
         "use_auto_diff": false,
         "compare_diff": false,
         "bound": 2,
         "initial_velocity_y": -0,
-        "damping":10,
+        "damping":0.5,
         "shapes": [
             {
                 "type": "rectangle",
@@ -125,5 +93,5 @@
     ],
         "implicit_solver": "Newton",
         "eta": 1e-4,
-        "record_frames": 1388
+        "record_frames": 5000
     }

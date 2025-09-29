@@ -28,7 +28,17 @@
                 "name": "soft_material",
                 "E": 1e2,
                 "nu": 0.4,
-                "rho": 1e3
+                "rho": 1e3,
+                "initial_F": [
+                    [
+                        2.0,
+                        0.0
+                    ],
+                    [
+                        0.0,
+                        1.0
+                    ]
+                ]
             }
         ],
         "implicit": false,

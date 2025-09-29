@@ -209,7 +209,7 @@ def run_mpm_simulation(config_path):
         exit()
     print("Simulation completed.")
 
-def load_mpm_bottom_layer_stress(thickness=0.01):
+def load_mpm_bottom_layer_stress(thickness=0.005):
     """加载MPM模拟结果中最底层的应力数据"""
     stress_output_dir = "stress_strain_output"
 
@@ -331,7 +331,7 @@ def compare_with_mpm(analytical_results, mpm_results, output_dir, save_image=Tru
     center_x = params['center'][0]
 
     # 只在接触区域内显示
-    contact_indices = (x_coords >= center_x - contact_width) & (x_coords <= center_x + contact_width)
+    contact_indices = (x_coords >= center_x - contact_width*1.2) & (x_coords <= center_x + contact_width*1.2)
     x_analytical = x_coords[contact_indices]
     pressure_analytical = -stress_yy[contact_indices]/1000
 

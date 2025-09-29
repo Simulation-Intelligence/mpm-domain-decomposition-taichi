@@ -25,20 +25,44 @@ def load_config(config_path):
 def extract_material_params(config):
     """从配置中提取材料参数"""
     materials = config['material_params']
+    shapes = config.get('shapes', [])
 
-    # 默认材料 (基体)
-    base_material = next(m for m in materials if m['id'] == 0)
-    E1 = base_material['E']
-    nu1 = base_material['nu']
-    rho1 = base_material['rho']
+    # 从shapes配置中识别哪个是夹杂材料（通常是operation="change"的shape）
+    inclusion_material_id = None
+    matrix_material_id = None
 
-    # 软材料 (夹杂)
-    inclusion_material = next(m for m in materials if m['id'] == 1)
+    for shape in shapes:
+        if shape.get('operation') == 'change':
+            inclusion_material_id = shape.get('material_id')
+        elif shape.get('operation') == 'add':
+            if matrix_material_id is None:  # 取第一个add操作的材料作为基体
+                matrix_material_id = shape.get('material_id')
+
+    # 如果没找到，使用默认假设
+    if inclusion_material_id is None:
+        inclusion_material_id = 1
+    if matrix_material_id is None:
+        matrix_material_id = 0
+
+    # 基体材料 (外部)
+    matrix_material = next(m for m in materials if m['id'] == matrix_material_id)
+    E1 = matrix_material['E']
+    nu1 = matrix_material['nu']
+    rho1 = matrix_material['rho']
+
+    # 夹杂材料 (内部)
+    inclusion_material = next(m for m in materials if m['id'] == inclusion_material_id)
     E2 = inclusion_material['E']
     nu2 = inclusion_material['nu']
     rho2 = inclusion_material['rho']
 
-    return E1, nu1, rho1, E2, nu2, rho2
+    # 提取初始F矩阵（从夹杂材料中）
+    initial_F = inclusion_material.get('initial_F', [[1.0, 0.0], [0.0, 1.0]])
+    initial_F = np.array(initial_F)
+
+    print(f"基体材料ID: {matrix_material_id}, 夹杂材料ID: {inclusion_material_id}")
+
+    return E1, nu1, rho1, E2, nu2, rho2, initial_F
 
 def extract_geometry_params(config):
     """从配置中提取几何参数"""
@@ -55,62 +79,12 @@ def extract_geometry_params(config):
 
 def extract_loading_conditions(config):
     """从配置中提取载荷条件"""
-    # 从体力中推断远场应力
-    volume_forces = config['volume_forces']
+    # 使用默认的单位载荷进行解析解计算
+    sigma_inf_xx = 1.0  # 单位正应力
+    sigma_inf_yy = 1.0  # 单位正应力
+    sigma_inf_xy = 0.0  # 无剪切
 
-    # 获取基本参数
-    materials = config['material_params']
-    base_material = next(m for m in materials if m['id'] == 0)
-    rho = base_material['rho']  # 密度
-
-    stress_contributions_x = []
-    stress_contributions_y = []
-
-    print("体力到远场应力转换:")
-    print("-" * 40)
-
-    for force_config in volume_forces:
-        if force_config['type'] == 'rectangle':
-            range_x = force_config['params']['range'][0]
-            range_y = force_config['params']['range'][1]
-            force = force_config['force']
-
-            # 计算区域面积
-            width = range_x[1] - range_x[0]
-            height = range_y[1] - range_y[0]
-            region_area = width * height
-
-            # 计算区域内总质量
-            total_mass = rho * region_area
-
-            # 计算总力 = 区域内总质量 × 体力加速度
-            total_force_x = total_mass * force[0]  # N/m (2D情况)
-            total_force_y = total_mass * force[1]  # N/m (2D情况)
-
-            # 根据力的方向判断边界并计算等效应力
-            if force[0] != 0:  # X方向有力，影响σ_xx
-                boundary_length = height  # Y方向长度作为边界长度
-                stress_contribution = total_force_x / boundary_length
-                stress_contributions_x.append(abs(stress_contribution))  # 取绝对值
-                force_direction = "左边界" if force[0] < 0 else "右边界"
-                print(f"{force_direction}: 区域面积={region_area:.4f}, 总力={total_force_x:.4f} N/m, 边界长度={boundary_length:.2f}, 应力贡献={stress_contribution:.4f} Pa")
-
-            if force[1] != 0:  # Y方向有力，影响σ_yy
-                boundary_length = width  # X方向长度作为边界长度
-                stress_contribution = total_force_y / boundary_length
-                stress_contributions_y.append(abs(stress_contribution))  # 取绝对值
-                force_direction = "下边界" if force[1] < 0 else "上边界"
-                print(f"{force_direction}: 区域面积={region_area:.4f}, 总力={total_force_y:.4f} N/m, 边界长度={boundary_length:.2f}, 应力贡献={stress_contribution:.4f} Pa")
-
-    # 计算等效远场应力：取各边界应力的平均值
-    sigma_inf_xx = sum(stress_contributions_x) / len(stress_contributions_x) if stress_contributions_x else 0.0
-    sigma_inf_yy = sum(stress_contributions_y) / len(stress_contributions_y) if stress_contributions_y else 0.0
-    sigma_inf_xy = 0.0
-
-    # 暂时假设无剪切载荷
-    sigma_inf_xy = 0.0
-
-    print(f"最终远场应力: σ_xx={sigma_inf_xx:.4f} Pa, σ_yy={sigma_inf_yy:.4f} Pa, σ_xy={sigma_inf_xy:.4f} Pa")
+    print(f"使用单位远场应力: σ_xx={sigma_inf_xx:.1f} Pa, σ_yy={sigma_inf_yy:.1f} Pa, σ_xy={sigma_inf_xy:.1f} Pa")
     print()
 
     return sigma_inf_xx, sigma_inf_yy, sigma_inf_xy
@@ -121,13 +95,14 @@ def calculate_analytical_solution(config_path):
     config = load_config(config_path)
 
     # 提取参数
-    E1, nu1, rho1, E2, nu2, rho2 = extract_material_params(config)
+    E1, nu1, rho1, E2, nu2, rho2, initial_F = extract_material_params(config)
     center, radius = extract_geometry_params(config)
     sigma_inf_xx, sigma_inf_yy, sigma_inf_xy = extract_loading_conditions(config)
 
     print("材料参数:")
     print(f"基体材料: E1={E1:.0e} Pa, nu1={nu1}, rho1={rho1}")
     print(f"夹杂材料: E2={E2:.0e} Pa, nu2={nu2}, rho2={rho2}")
+    print(f"初始F矩阵:\n{initial_F}")
     print(f"夹杂中心: {center}")
     print(f"夹杂半径: {radius}")
     print(f"远场应力: σ_xx={sigma_inf_xx:.0e} Pa, σ_yy={sigma_inf_yy}, σ_xy={sigma_inf_xy}")
@@ -160,7 +135,7 @@ def calculate_analytical_solution(config_path):
             # 计算解析解
             sigma_xx, sigma_yy, sigma_xy = calculate_eshelby_stress(
                 x_rel, y_rel, E1, nu1, E2, nu2, radius,
-                sigma_inf_xx, sigma_inf_yy, sigma_inf_xy
+                sigma_inf_xx, sigma_inf_yy, sigma_inf_xy, initial_F
             )
 
             stress_xx[j, i] = sigma_xx
@@ -176,7 +151,8 @@ def calculate_analytical_solution(config_path):
         'config': config,
         'material_params': {
             'E1': E1, 'nu1': nu1, 'rho1': rho1,
-            'E2': E2, 'nu2': nu2, 'rho2': rho2
+            'E2': E2, 'nu2': nu2, 'rho2': rho2,
+            'initial_F': initial_F.tolist()
         },
         'geometry': {'center': center, 'radius': radius},
         'loading': {'sigma_inf_xx': sigma_inf_xx, 'sigma_inf_yy': sigma_inf_yy, 'sigma_inf_xy': sigma_inf_xy}
@@ -326,6 +302,7 @@ def compare_results(analytical_results, simulation_results, output_dir):
     nu1 = analytical_results['material_params']['nu1']
     E2 = analytical_results['material_params']['E2']
     nu2 = analytical_results['material_params']['nu2']
+    initial_F = np.array(analytical_results['material_params']['initial_F'])
     center = analytical_results['geometry']['center']
     radius = analytical_results['geometry']['radius']
     sigma_inf_xx = analytical_results['loading']['sigma_inf_xx']
@@ -341,7 +318,7 @@ def compare_results(analytical_results, simulation_results, output_dir):
 
         sigma_xx, sigma_yy, sigma_xy = calculate_eshelby_stress(
             x_rel, y_rel, E1, nu1, E2, nu2, radius,
-            sigma_inf_xx, sigma_inf_yy, sigma_inf_xy
+            sigma_inf_xx, sigma_inf_yy, sigma_inf_xy, initial_F
         )
 
         analytical_stress_at_particles.append([[sigma_xx, sigma_xy], [sigma_xy, sigma_yy]])

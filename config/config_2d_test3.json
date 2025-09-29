@@ -2,7 +2,7 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_size": 256,
+        "grid_size": 512,
         "scale": 1.0,
         "particles_per_grid": 8,
         "sampling_method": "mesh",
@@ -21,17 +21,17 @@
                 "params": {
                     "range": [
                         [0, 1],
-                        [0.415, 0.42]
+                        [0.41, 0.42]
                     ]
                 },
-                "force": [0.0, -200.0]
+                "force": [0.0, -100.0]
             }
         ],
         "material_params": [
             {
                 "id": 0,
                 "name": "default",
-                "E": 2e5,
+                "E": 2e4,
                 "nu": 0.3,
                 "rho": 1000
             }

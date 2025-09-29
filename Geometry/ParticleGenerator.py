@@ -721,7 +721,7 @@ class ParticleInitializer:
         self.float_type = float_type
         self.init_vel_y = init_vel_y
     
-    def initialize_particle_fields(self, particle_data, x_field, v_field, F_field, C_field, material_id_field=None, weight_field=None):
+    def initialize_particle_fields(self, particle_data, x_field, v_field, F_field, C_field, material_id_field=None, weight_field=None, material_params=None):
         """初始化粒子的各种属性字段"""
         import taichi as ti
         n_particles = len(particle_data)
@@ -748,15 +748,46 @@ class ParticleInitializer:
         positions_np = np.array(positions, dtype=numpy_dtype)
         material_ids_np = np.array(material_ids, dtype=np.int32)
         weights_np = np.array(weights, dtype=numpy_dtype)
-        
+
         temp_positions = ti.Vector.field(self.dim, self.float_type, shape=n_particles)
         temp_material_ids = ti.field(ti.i32, shape=n_particles)
         temp_weights = ti.field(self.float_type, shape=n_particles)
-        
+
         temp_positions.from_numpy(positions_np)
         temp_material_ids.from_numpy(material_ids_np)
         temp_weights.from_numpy(weights_np)
-        
+
+        # 准备初始F矩阵数据
+        use_custom_F = material_params is not None
+        temp_initial_F = None
+
+        if use_custom_F:
+            # 为每个粒子准备初始F矩阵
+            initial_F_list = []
+            for i in range(n_particles):
+                material_id = material_ids[i]
+                if material_id in material_params:
+                    initial_F = material_params[material_id].get("initial_F", [[1.0, 0.0], [0.0, 1.0]])
+                    # 确保矩阵大小与维度匹配
+                    if self.dim == 2:
+                        if len(initial_F) != 2 or len(initial_F[0]) != 2:
+                            initial_F = [[1.0, 0.0], [0.0, 1.0]]  # 默认二维单位矩阵
+                    elif self.dim == 3:
+                        if len(initial_F) != 3 or len(initial_F[0]) != 3:
+                            initial_F = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]  # 默认三维单位矩阵
+                else:
+                    # 默认单位矩阵
+                    if self.dim == 2:
+                        initial_F = [[1.0, 0.0], [0.0, 1.0]]
+                    else:
+                        initial_F = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+                initial_F_list.append(initial_F)
+
+            # 转换为numpy数组
+            initial_F_np = np.array(initial_F_list, dtype=numpy_dtype)
+            temp_initial_F = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=n_particles)
+            temp_initial_F.from_numpy(initial_F_np)
+
         # 初始化粒子属性
         @ti.kernel
         def init_kernel():
@@ -765,7 +796,13 @@ class ParticleInitializer:
                 v_field[i] = ti.Vector.zero(self.float_type, self.dim)
                 if self.dim >= 2:
                     v_field[i][1] = self.init_vel_y
-                F_field[i] = ti.Matrix.identity(self.float_type, self.dim)
+
+                # 根据材料参数设置初始F矩阵
+                if use_custom_F:
+                    F_field[i] = temp_initial_F[i]
+                else:
+                    F_field[i] = ti.Matrix.identity(self.float_type, self.dim)
+
                 C_field[i] = ti.Matrix.zero(self.float_type, self.dim, self.dim)
         
         @ti.kernel
