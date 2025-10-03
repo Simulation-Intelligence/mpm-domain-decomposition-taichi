@@ -50,7 +50,7 @@ class Newton:
             for i in range(self.dim):
                 self.temp_x[i] = self.x[i] + a * d[i]
 
-        while True:
+        while alpha > 1e-6:
             update_temp(alpha,self.d)
             f_new = self.energy_fn(self.temp_x)
             if f_new <= self.f0+ self.alpha  * alpha * g0:

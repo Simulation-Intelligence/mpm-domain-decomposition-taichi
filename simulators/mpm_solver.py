@@ -649,6 +649,9 @@ class MPMSolver:
         # 为椭圆力区域存储中心和半轴
         max_ellipse_params = self.dim * 2  # 中心坐标 + 半轴长度
         self.volume_force_ellipse_params = ti.field(self.float_type, shape=(field_size, max_ellipse_params))
+
+        # 记录每个体积力对应的实际粒子总质量
+        self.volume_force_total_mass = ti.field(self.float_type, shape=field_size)
         
         # 填充数据
         if self.n_volume_forces > 0:
@@ -680,10 +683,22 @@ class MPMSolver:
 
     @ti.kernel
     def _mark_particles_with_volume_forces(self):
-        """标记所有在体积力区域内的粒子"""
+        """标记所有在体积力区域内的粒子并记录每个体积力的粒子总质量"""
+        # 初始化每个体积力的总质量为0
+        for i in range(self.n_volume_forces):
+            self.volume_force_total_mass[i] = 0.0
+
+        # 遍历所有粒子，标记体积力并累计质量
         for p in range(self.particles.n_particles):
             total_force = ti.Vector.zero(self.float_type, self.dim)
             pos = self.particles.x[p]
+
+            # 根据材料ID获取粒子质量
+            particle_mass = 0.0
+            if self.particles.particle_material_id[p] == 0:
+                particle_mass = self.particles.p_mass_1
+            else:
+                particle_mass = self.particles.p_mass_2
 
             for i in range(self.n_volume_forces):
                 in_region = True
@@ -705,6 +720,7 @@ class MPMSolver:
 
                 if in_region:
                     total_force += self.volume_force_vectors[i]
+                    self.volume_force_total_mass[i] += particle_mass
 
             self.particles.volume_force[p] = total_force
 
@@ -712,6 +728,15 @@ class MPMSolver:
         """初始化粒子体积力（在粒子数据生成后调用）"""
         if self.n_volume_forces > 0:
             self._mark_particles_with_volume_forces()
+
+    def get_volume_force_masses(self):
+        """获取每个体积力对应的粒子总质量"""
+        if self.n_volume_forces > 0:
+            masses = []
+            for i in range(self.n_volume_forces):
+                masses.append(self.volume_force_total_mass[i])
+            return masses
+        return []
 
     # =============== Explicit Solver Methods ===============
     def solve_explicit(self):

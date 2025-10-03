@@ -86,15 +86,20 @@ class ParticleGenerator:
     
     def generate_particles_for_shapes(self, shapes, particles_per_area):
         """为多个形状生成粒子，按照config中的顺序依次执行添加和挖空操作"""
+
+        # 如果使用mesh采样方法，使用特殊的处理流程
+        if self.sampling_method == "mesh":
+            return self._generate_mesh_particles_for_shapes(shapes, particles_per_area)
+
         all_particles = []
-        
+
         # 按照shapes的顺序依次执行操作
         for i, shape in enumerate(shapes):
             if shape["operation"] == "add":
                 # 添加操作：生成新粒子并加入总列表
                 particles = self.generate_particles_for_shape(shape, particles_per_area[i])
                 material_id = shape.get("material_id", 0)  # 获取材料ID，默认为0
-                
+
                 # 为每个粒子添加材料ID信息
                 particles_with_material = []
                 for idx, pos in enumerate(particles):
@@ -107,16 +112,16 @@ class ParticleGenerator:
                         particle_data["weight"] = self.gauss_weights[idx]
                     particles_with_material.append(particle_data)
                 all_particles.extend(particles_with_material)
-                
+
             elif shape["operation"] == "subtract":
                 # 挖空操作：从现有粒子中移除在该形状内的粒子
                 all_particles = self._remove_particles_in_shape_with_material(all_particles, shape)
-                
+
             elif shape["operation"] == "change":
                 # 改变操作：改变指定形状内粒子的材料ID
                 material_id = shape.get("material_id", 0)
                 all_particles = self._change_particles_material_in_shape(all_particles, shape, material_id)
-        
+
         return all_particles
     
     def generate_particles_for_shape(self, shape, n_particles):
@@ -564,9 +569,24 @@ class ParticleGenerator:
         """创建椭圆的.poly格式数据（通过多边形近似）"""
         import math
 
-        # 根据粒子数量动态计算边界分段数
-        # 分段数与粒子数的平方根成正比，确保边界精度与粒子密度匹配
-        n_segments = max(16, min(128, int(math.sqrt(n_particles) * 4)))
+        # 根据椭圆几何特性和目标粒子密度计算边界分段数
+        # 计算椭圆面积和周长
+        ellipse_area = math.pi * semi_axes[0] * semi_axes[1]
+
+        # 椭圆周长的近似公式（Ramanujan第二近似）
+        a, b = semi_axes[0], semi_axes[1]
+        h = ((a - b) / (a + b)) ** 2
+        ellipse_perimeter = math.pi * (a + b) * (1 + (3 * h) / (10 + math.sqrt(4 - 3 * h)))
+
+        # 计算理想的粒子间距：假设粒子均匀分布在椭圆面积内
+        particle_density = n_particles / ellipse_area
+        ideal_particle_spacing = 1.0 / math.sqrt(particle_density)
+
+        # 基于理想间距计算边界分段数
+        n_segments = max(16, int(ellipse_perimeter / ideal_particle_spacing))
+
+        # 为避免边界过密，限制最大分段数
+        n_segments = min(n_segments, n_particles // 2)
 
         vertices = []
         for i in range(n_segments):
@@ -589,7 +609,7 @@ class ParticleGenerator:
 
         return poly_content
 
-    def _call_triangle_and_extract_vertices(self, poly_data, n_particles):
+    def _call_triangle_and_extract_vertices(self, poly_data, target_particle_spacing):
         """调用Triangle工具并提取顶点"""
         import tempfile
         import os
@@ -605,17 +625,21 @@ class ParticleGenerator:
                 with open(poly_file, 'w') as f:
                     f.write(poly_data)
 
-                # 计算目标面积约束
-                area_constraint = self._calculate_area_constraint(poly_data, n_particles)
+                # 基于目标粒子间距计算面积约束
+                # 目标三角形边长应该与粒子间距相当
+                target_triangle_area = (target_particle_spacing ** 2) * 0.5  # 等边三角形面积
+                area_constraint = f"{target_triangle_area:.8f}"
 
                 # 调用Triangle
                 triangle_path = "/Users/zhaofen2/Desktop/work/SIG/triangle/triangle"
-                cmd = [triangle_path, f"-pqa{area_constraint}", "input"]
+                # 对于复杂边界，移除YY参数，让Triangle有更多自由度处理边界
+                cmd = [triangle_path, f"-pYYqa{area_constraint}", "input"]
 
+                print(f"调用Triangle命令: {triangle_path} -pYYqa{area_constraint} input")
                 result = subprocess.run(cmd, cwd=temp_dir, capture_output=True, text=True)
 
                 if result.returncode != 0:
-                    print(f"Triangle执行失败: {result.stderr}")
+                    print(f"Triangle执行失败，返回码: {result.returncode}")
                     return self._fallback_sampling(poly_data, n_particles)
 
                 # 读取生成的.node文件
@@ -623,11 +647,9 @@ class ParticleGenerator:
                 if os.path.exists(node_file):
                     vertices = self._parse_node_file(node_file)
                 else:
-                    print("未找到Triangle输出的.node文件")
                     return self._fallback_sampling(poly_data, n_particles)
 
         except Exception as e:
-            print(f"调用Triangle时出错: {e}")
             return self._fallback_sampling(poly_data, n_particles)
 
         return vertices
@@ -688,7 +710,6 @@ class ParticleGenerator:
 
     def _fallback_sampling(self, poly_data, n_particles):
         """Triangle失败时的后备采样方法"""
-        print("使用后备的均匀随机采样")
 
         # 从poly_data中提取边界框
         lines = poly_data.strip().split('\n')
@@ -711,6 +732,651 @@ class ParticleGenerator:
             vertices.append([x, y])
 
         return vertices
+
+    def _generate_mesh_particles_for_shapes(self, shapes, particles_per_area):
+        """为mesh采样方法专门设计的粒子生成流程
+        先构建最终的几何边界，然后用triangle生成网格粒子
+        """
+        if self.dim != 2:
+            raise ValueError("Mesh采样目前只支持2D")
+
+        print("使用mesh采样方法，先构建最终边界...")
+
+        # 基于particles_per_grid计算粒子间距
+        # particles_per_grid表示每个网格单元的粒子数
+        # 网格单元大小为 1/grid_size
+        grid_cell_size = 1.0 / self.grid_size
+        particles_per_unit_area = self.particles_per_grid / (grid_cell_size ** 2)
+        target_particle_spacing = 1.0 / (particles_per_unit_area ** 0.5)
+
+        # 基于粒子间距确定统一的边界段长度
+        target_segment_length = target_particle_spacing * 0.5  # 边界段长度为粒子间距的一半
+
+        print(f"网格大小: {self.grid_size}, 每网格粒子数: {self.particles_per_grid}")
+        print(f"目标粒子间距: {target_particle_spacing:.6f}")
+        print(f"统一边界段长度: {target_segment_length:.6f}")
+
+        # 4. 构建综合的.poly文件，使用统一的段长度
+        poly_content = self._build_combined_poly_file(shapes, target_segment_length)
+
+        # 5. 调用Triangle生成网格
+        vertices = self._call_triangle_and_extract_vertices(poly_content, target_particle_spacing)
+
+        # 6. 为粒子分配材料ID
+        particles_with_material = []
+        for pos in vertices:
+            # 确定粒子所属的材料
+            material_id = self._determine_particle_material(pos, shapes)
+            particle_data = {
+                "position": pos,
+                "material_id": material_id
+            }
+            particles_with_material.append(particle_data)
+
+        print(f"Mesh采样生成了 {len(particles_with_material)} 个粒子")
+        return particles_with_material
+
+    def _build_combined_poly_file(self, shapes, target_segment_length):
+        """构建包含所有几何操作的综合.poly文件
+        按照shapes顺序统一处理，每个边界点都进行有效性检查
+        """
+        import math
+
+        print("构建综合几何边界，按顺序统一处理...")
+
+        all_segments = []
+        all_holes = []
+        vertex_id_counter = 1
+
+        # 按照shapes顺序统一处理
+        for i, shape in enumerate(shapes):
+            print(f"处理第 {i+1} 个形状: {shape['type']} ({shape['operation']})")
+
+            if shape["operation"] == "add":
+                # 生成add边界，但排除后续subtract区域内的点
+                later_subtract_shapes = [s for s in shapes[i+1:] if s["operation"] == "subtract"]
+                segments, vertex_id_counter = self._add_shape_boundary_with_exclusion(
+                    shape, later_subtract_shapes, vertex_id_counter, boundary_marker=1, target_segment_length=target_segment_length)
+                all_segments.extend(segments)
+                print(f"  添加了 {len(segments)} 个边界段")
+
+            elif shape["operation"] == "subtract":
+                # 检查hole点是否在之前的add区域内
+                previous_add_shapes = [s for s in shapes[:i] if s["operation"] == "add"]
+                hole_point = self._get_shape_center(shape)
+
+                # 检查subtract是否与add区域相交
+                intersects_add = self._subtract_intersects_add(shape, previous_add_shapes)
+
+                if self._point_in_add_regions(hole_point, previous_add_shapes):
+                    # hole点在add内部：正常的subtract操作
+                    segments, vertex_id_counter = self._add_shape_boundary_with_inclusion(
+                        shape, previous_add_shapes, vertex_id_counter, boundary_marker=1, target_segment_length=target_segment_length)
+                    all_segments.extend(segments)
+                    print(f"  添加了 {len(segments)} 个边界段")
+
+                    # 只有当subtract完全在add内部时才添加hole点
+                    if self._subtract_completely_inside_add(shape, previous_add_shapes):
+                        all_holes.append(hole_point)
+                        print(f"  添加hole点")
+
+                elif intersects_add:
+                    # hole点不在add内部但与add相交：添加相交部分的边界以闭合边界
+                    segments, vertex_id_counter = self._add_shape_boundary_with_inclusion(
+                        shape, previous_add_shapes, vertex_id_counter, boundary_marker=1, target_segment_length=target_segment_length)
+                    all_segments.extend(segments)
+                    print(f"  添加了 {len(segments)} 个边界段（相交部分，用于闭合边界）")
+                else:
+                    print(f"  跳过subtract形状（与add区域无交集）")
+
+        # 构建.poly文件内容
+        poly_content = self._assemble_poly_content(all_segments, all_holes)
+
+        return poly_content
+
+    def _add_rectangle_to_poly(self, params, start_vertex_id, boundary_marker=1, target_segment_length=None):
+        """将矩形添加到poly文件中，根据target_segment_length细分边界"""
+        rect_range = params["range"]
+        x_min, x_max = rect_range[0][0], rect_range[0][1]
+        y_min, y_max = rect_range[1][0], rect_range[1][1]
+
+        if target_segment_length is None:
+            target_segment_length = 0.01  # 默认段长度
+
+        # 计算矩形的周长和各边长度
+        width = x_max - x_min
+        height = y_max - y_min
+
+        # 计算每条边需要的分段数
+        n_segments_horizontal = max(1, int(width / target_segment_length))
+        n_segments_vertical = max(1, int(height / target_segment_length))
+
+        # 生成所有边界点 (逆时针顺序)
+        vertices = []
+
+        # 底边 (从左到右)
+        for i in range(n_segments_horizontal):
+            x = x_min + (i * width) / n_segments_horizontal
+            vertices.append((x, y_min))
+
+        # 右边 (从下到上)
+        for i in range(n_segments_vertical):
+            y = y_min + ((i + 1) * height) / n_segments_vertical
+            vertices.append((x_max, y))
+
+        # 顶边 (从右到左)
+        for i in range(n_segments_horizontal):
+            x = x_max - ((i + 1) * width) / n_segments_horizontal
+            vertices.append((x, y_max))
+
+        # 左边 (从上到下)
+        for i in range(n_segments_vertical - 1):
+            y = y_max - ((i + 1) * height) / n_segments_vertical
+            vertices.append((x_min, y))
+
+        # 创建边界段
+        segments = []
+        total_vertices = len(vertices)
+        for i in range(total_vertices):
+            vertex1_id = start_vertex_id + i
+            vertex2_id = start_vertex_id + (i + 1) % total_vertices
+            segments.append({
+                "id": len(segments) + 1,
+                "vertex1": vertex1_id,
+                "vertex2": vertex2_id,
+                "vertex1_pos": vertices[i],
+                "vertex2_pos": vertices[(i + 1) % total_vertices],
+                "boundary_marker": boundary_marker
+            })
+
+        return segments, start_vertex_id + total_vertices
+
+    def _add_ellipse_to_poly(self, params, start_vertex_id, boundary_marker=1, target_segment_length=None):
+        """将椭圆添加到poly文件中"""
+        import math
+
+        center = params["center"]
+        semi_axes = params["semi_axes"]
+
+        # 计算椭圆周长
+        a, b = semi_axes[0], semi_axes[1]
+        h = ((a - b) / (a + b)) ** 2
+        ellipse_perimeter = math.pi * (a + b) * (1 + (3 * h) / (10 + math.sqrt(4 - 3 * h)))
+
+        # 使用统一的目标段长度确定分段数
+        if target_segment_length is None:
+            target_segment_length = 0.01  # 默认段长度
+
+        n_segments = max(16, int(ellipse_perimeter / target_segment_length))
+
+        vertices = []
+        for i in range(n_segments):
+            angle = 2 * math.pi * i / n_segments
+            x = center[0] + semi_axes[0] * math.cos(angle)
+            y = center[1] + semi_axes[1] * math.sin(angle)
+            vertices.append((x, y))
+
+        segments = []
+        for i in range(n_segments):
+            vertex1_id = start_vertex_id + i
+            vertex2_id = start_vertex_id + (i + 1) % n_segments
+            segments.append({
+                "id": len(segments) + 1,
+                "vertex1": vertex1_id,
+                "vertex2": vertex2_id,
+                "vertex1_pos": vertices[i],
+                "vertex2_pos": vertices[(i + 1) % n_segments],
+                "boundary_marker": boundary_marker
+            })
+
+        return segments, start_vertex_id + n_segments
+
+    def _get_shape_center(self, shape):
+        """获取形状的中心点，用作hole点"""
+        if shape["type"] == "rectangle":
+            rect_range = shape["params"]["range"]
+            center_x = (rect_range[0][0] + rect_range[0][1]) / 2
+            center_y = (rect_range[1][0] + rect_range[1][1]) / 2
+            return (center_x, center_y)
+        elif shape["type"] == "ellipse":
+            center = shape["params"]["center"]
+            return (center[0], center[1])
+        return (0, 0)
+
+    def _assemble_poly_content(self, all_segments, all_holes):
+        """组装.poly文件内容，并修复边界连接缺口"""
+        # 收集所有唯一顶点
+        vertices = {}
+        vertex_positions = []
+
+        for segment in all_segments:
+            pos1 = segment["vertex1_pos"]
+            pos2 = segment["vertex2_pos"]
+
+            if pos1 not in vertices:
+                vertices[pos1] = len(vertex_positions) + 1
+                vertex_positions.append(pos1)
+
+            if pos2 not in vertices:
+                vertices[pos2] = len(vertex_positions) + 1
+                vertex_positions.append(pos2)
+
+        # 检测并修复边界连接缺口
+        print("检测边界连接缺口...")
+        fixed_segments = self._fix_boundary_gaps(all_segments, vertices)
+
+        # 构建.poly内容
+        poly_content = f"{len(vertex_positions)} 2 0 0\n"
+
+        # 顶点
+        for i, (x, y) in enumerate(vertex_positions, 1):
+            poly_content += f"{i} {x:.6f} {y:.6f}\n"
+
+        # 边
+        poly_content += f"{len(fixed_segments)} 1\n"  # 包含边界标记
+        for i, segment in enumerate(fixed_segments, 1):
+            v1_id = vertices[segment["vertex1_pos"]]
+            v2_id = vertices[segment["vertex2_pos"]]
+            marker = segment["boundary_marker"]
+            poly_content += f"{i} {v1_id} {v2_id} {marker}\n"
+
+        # holes
+        poly_content += f"{len(all_holes)}\n"
+        for i, (x, y) in enumerate(all_holes, 1):
+            poly_content += f"{i} {x:.6f} {y:.6f}\n"
+
+        return poly_content
+
+    def _fix_boundary_gaps(self, segments, vertices):
+        """检测并修复边界段之间的缺口"""
+        if not segments:
+            return segments
+
+        # 构建边界图：顶点 -> 连接的顶点
+        graph = {}
+        for segment in segments:
+            v1_pos = segment["vertex1_pos"]
+            v2_pos = segment["vertex2_pos"]
+
+            if v1_pos not in graph:
+                graph[v1_pos] = []
+            if v2_pos not in graph:
+                graph[v2_pos] = []
+
+            graph[v1_pos].append(v2_pos)
+            graph[v2_pos].append(v1_pos)
+
+        # 找到度数为1的顶点（边界端点）
+        endpoints = []
+        for vertex, neighbors in graph.items():
+            if len(neighbors) == 1:
+                endpoints.append(vertex)
+
+        print(f"发现 {len(endpoints)} 个边界端点")
+
+        # 如果有2个端点，连接它们
+        if len(endpoints) == 2:
+            v1_pos, v2_pos = endpoints
+            gap_segment = {
+                "id": len(segments) + 1,
+                "vertex1": None,  # 稍后设置
+                "vertex2": None,  # 稍后设置
+                "vertex1_pos": v1_pos,
+                "vertex2_pos": v2_pos,
+                "boundary_marker": 1
+            }
+            fixed_segments = segments + [gap_segment]
+            print(f"添加连接段，距离: {((v1_pos[0] - v2_pos[0])**2 + (v1_pos[1] - v2_pos[1])**2)**0.5:.6f}")
+            return fixed_segments
+
+        elif len(endpoints) > 2:
+            # 多个端点，需要连接成对来形成闭合边界
+            print(f"需要配对连接多个端点")
+
+            # 贪心算法：重复寻找最近的端点对并连接
+            remaining_endpoints = endpoints.copy()
+            gap_segments = []
+
+            while len(remaining_endpoints) >= 2:
+                # 寻找当前剩余端点中最近的一对
+                min_distance = float('inf')
+                best_pair = None
+                best_indices = None
+
+                for i in range(len(remaining_endpoints)):
+                    for j in range(i + 1, len(remaining_endpoints)):
+                        v1, v2 = remaining_endpoints[i], remaining_endpoints[j]
+                        # 计算欧氏距离
+                        distance = ((v1[0] - v2[0])**2 + (v1[1] - v2[1])**2)**0.5
+                        if distance < min_distance:
+                            min_distance = distance
+                            best_pair = (v1, v2)
+                            best_indices = (i, j)
+
+                if best_pair:
+                    v1_pos, v2_pos = best_pair
+                    gap_segment = {
+                        "id": len(segments) + len(gap_segments) + 1,
+                        "vertex1": None,
+                        "vertex2": None,
+                        "vertex1_pos": v1_pos,
+                        "vertex2_pos": v2_pos,
+                        "boundary_marker": 1
+                    }
+                    gap_segments.append(gap_segment)
+                    print(f"添加连接段 {len(gap_segments)}, 距离: {min_distance:.6f}")
+
+                    # 从剩余端点中移除已配对的点
+                    remaining_endpoints.pop(best_indices[1])  # 先移除较大索引
+                    remaining_endpoints.pop(best_indices[0])
+                else:
+                    break
+
+            if gap_segments:
+                fixed_segments = segments + gap_segments
+                return fixed_segments
+
+        return segments
+
+    def _determine_particle_material(self, position, shapes):
+        """根据粒子位置和形状层次确定材料ID"""
+        material_id = 0  # 默认材料
+
+        # 按shapes顺序处理，后面的操作会覆盖前面的
+        for shape in shapes:
+            if self._is_particle_in_shape(position, shape):
+                if shape["operation"] == "add":
+                    material_id = shape.get("material_id", 0)
+                elif shape["operation"] == "change":
+                    material_id = shape.get("material_id", 0)
+                # subtract操作不改变材料ID，因为粒子不应该在subtract区域内
+
+        return material_id
+
+    def _shape_intersects_with_add_regions(self, subtract_shape, add_shapes):
+        """检查subtract形状是否与任何add形状有交集"""
+        for add_shape in add_shapes:
+            if self._shapes_intersect(subtract_shape, add_shape):
+                return True
+        return False
+
+    def _point_in_add_regions(self, point, add_shapes):
+        """检查点是否在任何add区域内"""
+        for add_shape in add_shapes:
+            if self._is_particle_in_shape(point, add_shape):
+                return True
+        return False
+
+    def _shapes_intersect(self, shape1, shape2):
+        """检查两个形状是否相交（简化版本）"""
+        # 使用边界框快速检测
+        bbox1 = self._get_shape_bbox(shape1)
+        bbox2 = self._get_shape_bbox(shape2)
+
+        # 检查边界框是否相交
+        return not (bbox1[1][0] < bbox2[0][0] or  # shape1右边 < shape2左边
+                   bbox1[0][0] > bbox2[1][0] or   # shape1左边 > shape2右边
+                   bbox1[1][1] < bbox2[0][1] or   # shape1上边 < shape2下边
+                   bbox1[0][1] > bbox2[1][1])     # shape1下边 > shape2上边
+
+    def _get_shape_bbox(self, shape):
+        """获取形状的边界框 [(x_min, y_min), (x_max, y_max)]"""
+        if shape["type"] == "rectangle":
+            rect_range = shape["params"]["range"]
+            return [(rect_range[0][0], rect_range[1][0]),
+                   (rect_range[0][1], rect_range[1][1])]
+        elif shape["type"] == "ellipse":
+            center = shape["params"]["center"]
+            semi_axes = shape["params"]["semi_axes"]
+            return [(center[0] - semi_axes[0], center[1] - semi_axes[1]),
+                   (center[0] + semi_axes[0], center[1] + semi_axes[1])]
+        return [(0, 0), (0, 0)]
+
+    def _add_clipped_subtract_boundary(self, subtract_shape, add_shapes, start_vertex_id, target_segment_length):
+        """添加裁剪后的subtract边界，只保留在add区域内的部分"""
+        # 先生成完整的subtract边界
+        if subtract_shape["type"] == "rectangle":
+            segments, _ = self._add_rectangle_to_poly(
+                subtract_shape["params"], start_vertex_id, boundary_marker=2, target_segment_length=target_segment_length)
+        elif subtract_shape["type"] == "ellipse":
+            segments, _ = self._add_ellipse_to_poly(
+                subtract_shape["params"], start_vertex_id, boundary_marker=2, target_segment_length=target_segment_length)
+        else:
+            return [], start_vertex_id
+
+        # 过滤掉不在add区域内的边界段
+        clipped_segments = []
+        vertex_mapping = {}
+        new_vertex_id = start_vertex_id
+
+        for segment in segments:
+            # 检查边界段的中点是否在add区域内
+            v1_pos = segment["vertex1_pos"]
+            v2_pos = segment["vertex2_pos"]
+            midpoint = ((v1_pos[0] + v2_pos[0]) / 2, (v1_pos[1] + v2_pos[1]) / 2)
+
+            if self._point_in_add_regions(midpoint, add_shapes):
+                # 重新映射顶点ID
+                if v1_pos not in vertex_mapping:
+                    vertex_mapping[v1_pos] = new_vertex_id
+                    new_vertex_id += 1
+                if v2_pos not in vertex_mapping:
+                    vertex_mapping[v2_pos] = new_vertex_id
+                    new_vertex_id += 1
+
+                clipped_segment = {
+                    "id": len(clipped_segments) + 1,
+                    "vertex1": vertex_mapping[v1_pos],
+                    "vertex2": vertex_mapping[v2_pos],
+                    "vertex1_pos": v1_pos,
+                    "vertex2_pos": v2_pos,
+                    "boundary_marker": 2
+                }
+                clipped_segments.append(clipped_segment)
+
+        return clipped_segments, new_vertex_id
+
+    def _add_shape_boundary_with_exclusion(self, shape, exclude_shapes, start_vertex_id, boundary_marker=1, target_segment_length=None):
+        """添加形状边界，但排除在exclude_shapes内的边界点"""
+        # 先生成完整的边界
+        if shape["type"] == "rectangle":
+            segments, _ = self._add_rectangle_to_poly(
+                shape["params"], start_vertex_id, boundary_marker, target_segment_length)
+        elif shape["type"] == "ellipse":
+            segments, _ = self._add_ellipse_to_poly(
+                shape["params"], start_vertex_id, boundary_marker, target_segment_length)
+        else:
+            return [], start_vertex_id
+
+        # 过滤掉在exclude_shapes内的边界段
+        filtered_segments = []
+        vertex_mapping = {}
+        new_vertex_id = start_vertex_id
+
+        for segment in segments:
+            # 检查边界段的中点是否在任何exclude_shape内
+            v1_pos = segment["vertex1_pos"]
+            v2_pos = segment["vertex2_pos"]
+            midpoint = ((v1_pos[0] + v2_pos[0]) / 2, (v1_pos[1] + v2_pos[1]) / 2)
+
+            # 如果中点不在任何exclude区域内，则保留该边界段
+            if not self._point_in_shapes(midpoint, exclude_shapes):
+                # 重新映射顶点ID
+                if v1_pos not in vertex_mapping:
+                    vertex_mapping[v1_pos] = new_vertex_id
+                    new_vertex_id += 1
+                if v2_pos not in vertex_mapping:
+                    vertex_mapping[v2_pos] = new_vertex_id
+                    new_vertex_id += 1
+
+                filtered_segment = {
+                    "id": len(filtered_segments) + 1,
+                    "vertex1": vertex_mapping[v1_pos],
+                    "vertex2": vertex_mapping[v2_pos],
+                    "vertex1_pos": v1_pos,
+                    "vertex2_pos": v2_pos,
+                    "boundary_marker": boundary_marker
+                }
+                filtered_segments.append(filtered_segment)
+
+        return filtered_segments, new_vertex_id
+
+    def _add_shape_boundary_with_inclusion(self, shape, include_shapes, start_vertex_id, boundary_marker=2, target_segment_length=None):
+        """添加形状边界，但只保留在include_shapes内的边界点"""
+        # 先生成完整的边界
+        if shape["type"] == "rectangle":
+            segments, _ = self._add_rectangle_to_poly(
+                shape["params"], start_vertex_id, boundary_marker, target_segment_length)
+        elif shape["type"] == "ellipse":
+            segments, _ = self._add_ellipse_to_poly(
+                shape["params"], start_vertex_id, boundary_marker, target_segment_length)
+        else:
+            return [], start_vertex_id
+
+        # 只保留在include_shapes内的边界段
+        filtered_segments = []
+        vertex_mapping = {}
+        new_vertex_id = start_vertex_id
+
+        for segment in segments:
+            # 检查边界段的中点是否在任何include_shape内
+            v1_pos = segment["vertex1_pos"]
+            v2_pos = segment["vertex2_pos"]
+            midpoint = ((v1_pos[0] + v2_pos[0]) / 2, (v1_pos[1] + v2_pos[1]) / 2)
+
+            # 如果中点在任何include区域内，则保留该边界段
+            if self._point_in_shapes(midpoint, include_shapes):
+                # 重新映射顶点ID
+                if v1_pos not in vertex_mapping:
+                    vertex_mapping[v1_pos] = new_vertex_id
+                    new_vertex_id += 1
+                if v2_pos not in vertex_mapping:
+                    vertex_mapping[v2_pos] = new_vertex_id
+                    new_vertex_id += 1
+
+                filtered_segment = {
+                    "id": len(filtered_segments) + 1,
+                    "vertex1": vertex_mapping[v1_pos],
+                    "vertex2": vertex_mapping[v2_pos],
+                    "vertex1_pos": v1_pos,
+                    "vertex2_pos": v2_pos,
+                    "boundary_marker": boundary_marker
+                }
+                filtered_segments.append(filtered_segment)
+
+        return filtered_segments, new_vertex_id
+
+    def _point_in_shapes(self, point, shapes):
+        """检查点是否在任何给定形状内"""
+        for shape in shapes:
+            if self._is_particle_in_shape(point, shape):
+                return True
+        return False
+
+    def _subtract_completely_inside_add(self, subtract_shape, add_shapes):
+        """检查subtract形状是否完全在add区域内部（不与边界相交）"""
+        # 获取subtract形状的边界框
+        subtract_bbox = self._get_shape_bbox(subtract_shape)
+
+        # 检查边界框的所有角点是否都在add区域内
+        corner_points = [
+            subtract_bbox[0],  # (x_min, y_min)
+            (subtract_bbox[1][0], subtract_bbox[0][1]),  # (x_max, y_min)
+            subtract_bbox[1],  # (x_max, y_max)
+            (subtract_bbox[0][0], subtract_bbox[1][1])   # (x_min, y_max)
+        ]
+
+        for point in corner_points:
+            if not self._point_in_add_regions(point, add_shapes):
+                return False
+
+        # 进一步检查：采样subtract边界上的点
+        if subtract_shape["type"] == "rectangle":
+            boundary_points = self._sample_rectangle_boundary(subtract_shape["params"], 8)
+        elif subtract_shape["type"] == "ellipse":
+            boundary_points = self._sample_ellipse_boundary(subtract_shape["params"], 16)
+        else:
+            return True
+
+        for point in boundary_points:
+            if not self._point_in_add_regions(point, add_shapes):
+                return False
+
+        return True
+
+    def _subtract_intersects_add(self, subtract_shape, add_shapes):
+        """检查subtract形状是否与add形状相交"""
+        if not add_shapes:
+            return False
+
+        # 采样subtract形状的边界点
+        if subtract_shape["type"] == "rectangle":
+            boundary_points = self._sample_rectangle_boundary(subtract_shape["params"], 20)
+        elif subtract_shape["type"] == "ellipse":
+            boundary_points = self._sample_ellipse_boundary(subtract_shape["params"], 20)
+        else:
+            return False
+
+        # 检查是否有任何边界点在add区域内
+        for point in boundary_points:
+            if self._point_in_add_regions(point, add_shapes):
+                return True
+
+        # 反向检查：采样add形状的边界点，看是否有在subtract内
+        for add_shape in add_shapes:
+            if add_shape["type"] == "rectangle":
+                add_boundary_points = self._sample_rectangle_boundary(add_shape["params"], 20)
+            elif add_shape["type"] == "ellipse":
+                add_boundary_points = self._sample_ellipse_boundary(add_shape["params"], 20)
+            else:
+                continue
+
+            for point in add_boundary_points:
+                if self._point_in_shapes(point, [subtract_shape]):
+                    return True
+
+        return False
+
+    def _sample_rectangle_boundary(self, params, n_samples):
+        """在矩形边界上采样点"""
+        rect_range = params["range"]
+        x_min, x_max = rect_range[0][0], rect_range[0][1]
+        y_min, y_max = rect_range[1][0], rect_range[1][1]
+
+        points = []
+        # 底边
+        for i in range(n_samples // 4):
+            x = x_min + (i / (n_samples // 4 - 1)) * (x_max - x_min) if n_samples > 4 else (x_min + x_max) / 2
+            points.append((x, y_min))
+        # 右边
+        for i in range(n_samples // 4):
+            y = y_min + (i / (n_samples // 4 - 1)) * (y_max - y_min) if n_samples > 4 else (y_min + y_max) / 2
+            points.append((x_max, y))
+        # 顶边
+        for i in range(n_samples // 4):
+            x = x_max - (i / (n_samples // 4 - 1)) * (x_max - x_min) if n_samples > 4 else (x_min + x_max) / 2
+            points.append((x, y_max))
+        # 左边
+        for i in range(n_samples // 4):
+            y = y_max - (i / (n_samples // 4 - 1)) * (y_max - y_min) if n_samples > 4 else (y_min + y_max) / 2
+            points.append((x_min, y))
+
+        return points
+
+    def _sample_ellipse_boundary(self, params, n_samples):
+        """在椭圆边界上采样点"""
+        import math
+        center = params["center"]
+        semi_axes = params["semi_axes"]
+
+        points = []
+        for i in range(n_samples):
+            angle = 2 * math.pi * i / n_samples
+            x = center[0] + semi_axes[0] * math.cos(angle)
+            y = center[1] + semi_axes[1] * math.sin(angle)
+            points.append((x, y))
+
+        return points
 
 
 class ParticleInitializer:
