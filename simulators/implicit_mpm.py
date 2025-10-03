@@ -386,11 +386,10 @@ class ImplicitMPM:
         print(f"Filtered out {np.sum(~valid_mask)} particles at origin position")
         print(f"Saving data for {len(filtered_positions)} particles")
         
-        # 创建带时间戳的输出目录
+        # 创建统一的输出目录结构
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_output_dir = "stress_strain_output"
-        timestamped_dir = f"frame_{frame_number}_{timestamp}"
-        output_dir = os.path.join(base_output_dir, timestamped_dir)
+        base_output_dir = "experiment_results"
+        output_dir = os.path.join(base_output_dir, f"single_domain_{timestamp}")
         os.makedirs(output_dir, exist_ok=True)
         
         # 保存为numpy文件（用于可视化）
@@ -450,7 +449,7 @@ class ImplicitMPM:
 
 if __name__ == "__main__":
 
-    cfg=Config("config/config_2d_test1.json")
+    cfg=Config("config/test_test3.json")
     float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":

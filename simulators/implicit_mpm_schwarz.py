@@ -283,8 +283,11 @@ class MPM_Schwarz:
         print(f"Domain2: Filtered out {np.sum(~valid_mask2)} particles at origin position") 
         print(f"Domain2: Saving data for {len(filtered_positions2)} particles")
         
-        # 创建输出目录
-        output_dir = "stress_strain_output_schwarz"
+        # 创建统一的输出目录结构
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_output_dir = "experiment_results"
+        output_dir = os.path.join(base_output_dir, f"schwarz_{timestamp}")
         os.makedirs(output_dir, exist_ok=True)
         
         # 分别保存两个域的数据
@@ -361,7 +364,7 @@ class MPM_Schwarz:
 # ------------------ 主程序 ------------------
 if __name__ == "__main__":
     # 读取配置文件
-    cfg = Config(path="config/schwarz_2d_test1.json")
+    cfg = Config(path="config/schwarz_2d_test3.json")
     float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64        
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":
@@ -383,7 +386,7 @@ if __name__ == "__main__":
         mpm.render()
         
         frame_count += 1
-        
+
         # 自动停止条件
         if len(mpm.recorder.frame_data) >= mpm.recorder.max_frames:
             # 在最后一帧记录应力和应变数据

@@ -12,11 +12,43 @@ import glob
 
 def load_stress_data(output_dir, frame_number=None):
     """加载应力应变数据（单域版本）"""
-    # 首先搜索时间戳子目录
+    import re
+    from datetime import datetime
+
+    # 检查是否是统一目录结构
+    base_output_dir = "experiment_results"
+    if output_dir in ['stress_strain_output', 'single']:
+        # 查找统一输出目录下的最新单域结果
+        if not os.path.exists(base_output_dir):
+            raise FileNotFoundError(f"统一输出目录不存在: {base_output_dir}")
+
+        single_pattern = os.path.join(base_output_dir, "single_domain_*")
+        single_dirs = glob.glob(single_pattern)
+
+        if not single_dirs:
+            raise FileNotFoundError("未找到单域MPM结果目录")
+
+        # 从目录名中提取时间戳并排序，选择最新的
+        def extract_timestamp(dirname):
+            basename = os.path.basename(dirname)
+            match = re.search(r'single_domain_(\d{8}_\d{6})', basename)
+            if match:
+                timestamp_str = match.group(1)
+                return datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+            return datetime.min
+
+        # 按时间戳排序，选择最新的
+        latest_dir = max(single_dirs, key=extract_timestamp)
+        actual_output_dir = latest_dir
+        print(f"找到 {len(single_dirs)} 个单域结果目录，使用最新的: {latest_dir}")
+    else:
+        actual_output_dir = output_dir
+
+    # 首先搜索时间戳子目录（向下兼容旧格式）
     timestamped_dirs = []
-    if os.path.exists(output_dir):
-        for item in os.listdir(output_dir):
-            item_path = os.path.join(output_dir, item)
+    if os.path.exists(actual_output_dir):
+        for item in os.listdir(actual_output_dir):
+            item_path = os.path.join(actual_output_dir, item)
             if os.path.isdir(item_path) and item.startswith('frame_'):
                 timestamped_dirs.append(item_path)
     
@@ -35,56 +67,25 @@ def load_stress_data(output_dir, frame_number=None):
             # 按时间戳排序，取最新的
             latest_dir = max(timestamped_dirs, key=lambda x: extract_timestamp(os.path.basename(x)))
             
-            # 从最新目录中找到帧文件
-            stress_files = glob.glob(f"{latest_dir}/stress_frame_*.npy")
-            if not stress_files:
-                raise FileNotFoundError(f"在最新目录 {latest_dir} 中未找到应力数据文件")
-            
-            # 从文件名中提取帧号
-            frame_numbers = [int(f.split('_')[-1].split('.')[0]) for f in stress_files]
-            frame_number = max(frame_numbers)
-            
-            # 直接从最新目录加载
-            stress_file = f"{latest_dir}/stress_frame_{frame_number}.npy"
-            strain_file = f"{latest_dir}/strain_frame_{frame_number}.npy"
-            positions_file = f"{latest_dir}/positions_frame_{frame_number}.npy"
-            
-            if not all(os.path.exists(f) for f in [stress_file, strain_file, positions_file]):
-                raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件")
-                
-            found_files = (stress_file, strain_file, positions_file)
-        else:
-            # 如果没有时间戳目录，回退到旧的搜索方式
-            stress_files = glob.glob(f"{output_dir}/stress_frame_*.npy")
-            if not stress_files:
-                raise FileNotFoundError(f"在 {output_dir} 中未找到应力数据文件")
-            
-            frame_numbers = [int(f.split('_')[-1].split('.')[0]) for f in stress_files]
-            frame_number = max(frame_numbers)
-            
-            stress_file = f"{output_dir}/stress_frame_{frame_number}.npy"
-            strain_file = f"{output_dir}/strain_frame_{frame_number}.npy"
-            positions_file = f"{output_dir}/positions_frame_{frame_number}.npy"
-            
-            if not all(os.path.exists(f) for f in [stress_file, strain_file, positions_file]):
-                raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件")
-                
-            found_files = (stress_file, strain_file, positions_file)
-    else:
-        # 如果指定了帧号，在所有目录中搜索
-        search_dirs = timestamped_dirs if timestamped_dirs else [output_dir]
-        found_files = None
-        for search_dir in search_dirs:
-            stress_file = f"{search_dir}/stress_frame_{frame_number}.npy"
-            strain_file = f"{search_dir}/strain_frame_{frame_number}.npy"
-            positions_file = f"{search_dir}/positions_frame_{frame_number}.npy"
-            
-            if all(os.path.exists(f) for f in [stress_file, strain_file, positions_file]):
-                found_files = (stress_file, strain_file, positions_file)
-                break
-        
-        if found_files is None:
-            raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件")
+        # 查找最新的帧号
+        stress_files = glob.glob(f"{actual_output_dir}/stress_frame_*.npy")
+        if not stress_files:
+            raise FileNotFoundError(f"在目录 {actual_output_dir} 中未找到应力数据文件")
+
+        # 从文件名中提取帧号
+        frame_numbers = [int(f.split('_')[-1].split('.')[0]) for f in stress_files]
+        frame_number = max(frame_numbers)
+
+    # 构建文件路径
+    stress_file = f"{actual_output_dir}/stress_frame_{frame_number}.npy"
+    strain_file = f"{actual_output_dir}/strain_frame_{frame_number}.npy"
+    positions_file = f"{actual_output_dir}/positions_frame_{frame_number}.npy"
+
+    if not all(os.path.exists(f) for f in [stress_file, strain_file, positions_file]):
+        missing_files = [f for f in [stress_file, strain_file, positions_file] if not os.path.exists(f)]
+        raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件: {missing_files}")
+
+    found_files = (stress_file, strain_file, positions_file)
     
     stress_data = np.load(found_files[0])
     strain_data = np.load(found_files[1])
@@ -94,102 +95,73 @@ def load_stress_data(output_dir, frame_number=None):
 
 def load_schwarz_stress_data(output_dir, frame_number=None):
     """加载Schwarz双域应力应变数据"""
-    # 首先搜索时间戳子目录
+    import re
+    from datetime import datetime
+
+    # 检查是否是统一目录结构
+    base_output_dir = "experiment_results"
+    if output_dir in ['stress_strain_output_schwarz', 'schwarz']:
+        # 查找统一输出目录下的最新Schwarz结果
+        if not os.path.exists(base_output_dir):
+            raise FileNotFoundError(f"统一输出目录不存在: {base_output_dir}")
+
+        schwarz_pattern = os.path.join(base_output_dir, "schwarz_*")
+        schwarz_dirs = glob.glob(schwarz_pattern)
+
+        if not schwarz_dirs:
+            raise FileNotFoundError("未找到Schwarz域分解结果目录")
+
+        # 从目录名中提取时间戳并排序，选择最新的
+        def extract_timestamp(dirname):
+            basename = os.path.basename(dirname)
+            match = re.search(r'schwarz_(\d{8}_\d{6})', basename)
+            if match:
+                timestamp_str = match.group(1)
+                return datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+            return datetime.min
+
+        # 按时间戳排序，选择最新的
+        latest_dir = max(schwarz_dirs, key=extract_timestamp)
+        actual_output_dir = latest_dir
+        print(f"找到 {len(schwarz_dirs)} 个Schwarz结果目录，使用最新的: {latest_dir}")
+    else:
+        actual_output_dir = output_dir
+
+    # 首先搜索时间戳子目录（向下兼容旧格式）
     timestamped_dirs = []
-    if os.path.exists(output_dir):
-        for item in os.listdir(output_dir):
-            item_path = os.path.join(output_dir, item)
+    if os.path.exists(actual_output_dir):
+        for item in os.listdir(actual_output_dir):
+            item_path = os.path.join(actual_output_dir, item)
             if os.path.isdir(item_path) and item.startswith('frame_'):
                 timestamped_dirs.append(item_path)
     
     if frame_number is None:
-        if timestamped_dirs:
-            # 如果有时间戳目录，找到最新的时间戳目录
-            def extract_timestamp(dirname):
-                # 从 frame_100_20250902_142624 格式中提取时间戳
-                parts = dirname.split('_')
-                if len(parts) >= 4:
-                    date_part = parts[-2]  # 20250902
-                    time_part = parts[-1]  # 142624
-                    return date_part + time_part  # 20250902142624
-                return '00000000000000'  # 默认值
-            
-            # 按时间戳排序，取最新的
-            latest_dir = max(timestamped_dirs, key=lambda x: extract_timestamp(os.path.basename(x)))
-            
-            # 从最新目录中找到domain1帧文件
-            domain1_files = glob.glob(f"{latest_dir}/domain1_stress_frame_*.npy")
-            if not domain1_files:
-                raise FileNotFoundError(f"在最新目录 {latest_dir} 中未找到Domain1应力数据文件")
-            
-            # 从文件名中提取帧号
-            frame_numbers = [int(f.split('_')[-1].split('.')[0]) for f in domain1_files]
-            frame_number = max(frame_numbers)
-            
-            # 直接从最新目录加载
-            d1_stress_file = f"{latest_dir}/domain1_stress_frame_{frame_number}.npy"
-            d1_strain_file = f"{latest_dir}/domain1_strain_frame_{frame_number}.npy"
-            d1_positions_file = f"{latest_dir}/domain1_positions_frame_{frame_number}.npy"
-            
-            d2_stress_file = f"{latest_dir}/domain2_stress_frame_{frame_number}.npy"
-            d2_strain_file = f"{latest_dir}/domain2_strain_frame_{frame_number}.npy"
-            d2_positions_file = f"{latest_dir}/domain2_positions_frame_{frame_number}.npy"
-            
-            all_files = [d1_stress_file, d1_strain_file, d1_positions_file,
-                         d2_stress_file, d2_strain_file, d2_positions_file]
-            
-            if not all(os.path.exists(f) for f in all_files):
-                raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件")
-                
-            found_files = all_files
-        else:
-            # 如果没有时间戳目录，回退到旧的搜索方式
-            domain1_files = glob.glob(f"{output_dir}/domain1_stress_frame_*.npy")
-            if not domain1_files:
-                raise FileNotFoundError(f"在 {output_dir} 中未找到Domain1应力数据文件")
-            
-            frame_numbers = [int(f.split('_')[-1].split('.')[0]) for f in domain1_files]
-            frame_number = max(frame_numbers)
-            
-            d1_stress_file = f"{output_dir}/domain1_stress_frame_{frame_number}.npy"
-            d1_strain_file = f"{output_dir}/domain1_strain_frame_{frame_number}.npy"
-            d1_positions_file = f"{output_dir}/domain1_positions_frame_{frame_number}.npy"
-            
-            d2_stress_file = f"{output_dir}/domain2_stress_frame_{frame_number}.npy"
-            d2_strain_file = f"{output_dir}/domain2_strain_frame_{frame_number}.npy"
-            d2_positions_file = f"{output_dir}/domain2_positions_frame_{frame_number}.npy"
-            
-            all_files = [d1_stress_file, d1_strain_file, d1_positions_file,
-                         d2_stress_file, d2_strain_file, d2_positions_file]
-            
-            if not all(os.path.exists(f) for f in all_files):
-                raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件")
-                
-            found_files = all_files
-    else:
-        # 如果指定了帧号，在所有目录中搜索
-        search_dirs = timestamped_dirs if timestamped_dirs else [output_dir]
-        found_files = None
-        for search_dir in search_dirs:
-            # Domain1文件
-            d1_stress_file = f"{search_dir}/domain1_stress_frame_{frame_number}.npy"
-            d1_strain_file = f"{search_dir}/domain1_strain_frame_{frame_number}.npy"
-            d1_positions_file = f"{search_dir}/domain1_positions_frame_{frame_number}.npy"
-            
-            # Domain2文件
-            d2_stress_file = f"{search_dir}/domain2_stress_frame_{frame_number}.npy"
-            d2_strain_file = f"{search_dir}/domain2_strain_frame_{frame_number}.npy"
-            d2_positions_file = f"{search_dir}/domain2_positions_frame_{frame_number}.npy"
-            
-            all_files = [d1_stress_file, d1_strain_file, d1_positions_file, 
-                         d2_stress_file, d2_strain_file, d2_positions_file]
-            
-            if all(os.path.exists(f) for f in all_files):
-                found_files = all_files
-                break
-        
-        if found_files is None:
-            raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件")
+        # 查找最新的帧号
+        domain1_files = glob.glob(f"{actual_output_dir}/domain1_stress_frame_*.npy")
+        if not domain1_files:
+            raise FileNotFoundError(f"在目录 {actual_output_dir} 中未找到Domain1应力数据文件")
+
+        # 从文件名中提取帧号
+        frame_numbers = [int(f.split('_')[-1].split('.')[0]) for f in domain1_files]
+        frame_number = max(frame_numbers)
+
+    # 构建文件路径
+    d1_stress_file = f"{actual_output_dir}/domain1_stress_frame_{frame_number}.npy"
+    d1_strain_file = f"{actual_output_dir}/domain1_strain_frame_{frame_number}.npy"
+    d1_positions_file = f"{actual_output_dir}/domain1_positions_frame_{frame_number}.npy"
+
+    d2_stress_file = f"{actual_output_dir}/domain2_stress_frame_{frame_number}.npy"
+    d2_strain_file = f"{actual_output_dir}/domain2_strain_frame_{frame_number}.npy"
+    d2_positions_file = f"{actual_output_dir}/domain2_positions_frame_{frame_number}.npy"
+
+    all_files = [d1_stress_file, d1_strain_file, d1_positions_file,
+                 d2_stress_file, d2_strain_file, d2_positions_file]
+
+    if not all(os.path.exists(f) for f in all_files):
+        missing_files = [f for f in all_files if not os.path.exists(f)]
+        raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件: {missing_files}")
+
+    found_files = all_files
     
     # 加载Domain1数据
     d1_stress = np.load(found_files[0])
@@ -673,8 +645,8 @@ def print_stress_statistics(von_mises, pressure, stress_data):
 
 def main():
     parser = argparse.ArgumentParser(description='Visualize stress and strain data')
-    parser.add_argument('--dir', '-d', default='stress_strain_output', 
-                       help='Data directory (default: stress_strain_output)')
+    parser.add_argument('--dir', '-d', default='stress_strain_output',
+                       help='Data directory (default: stress_strain_output, use "single" for latest single domain results)')
     parser.add_argument('--frame', '-f', type=int, default=None,
                        help='Specify frame number (default: latest frame)')
     parser.add_argument('--save', '-s', default=None,
@@ -682,7 +654,7 @@ def main():
     parser.add_argument('--stats', action='store_true',
                        help='Show detailed statistics')
     parser.add_argument('--schwarz', action='store_true',
-                       help='Use Schwarz dual domain data (from stress_strain_output_schwarz directory)')
+                       help='Use Schwarz dual domain data (automatically finds latest results from experiment_results/)')
     parser.add_argument('--combined', action='store_true',
                        help='Dual domain combined visualization (only for Schwarz mode)')
     parser.add_argument('--log', action='store_true',
@@ -699,7 +671,7 @@ def main():
         if args.schwarz:
             # Schwarz dual domain mode
             if args.dir == 'stress_strain_output':
-                args.dir = 'stress_strain_output_schwarz'  # Default directory
+                args.dir = 'schwarz'  # 使用新的统一目录结构
             
             print(f"Loading Schwarz dual domain data from {args.dir}...")
             data_dict = load_schwarz_stress_data(args.dir, args.frame)

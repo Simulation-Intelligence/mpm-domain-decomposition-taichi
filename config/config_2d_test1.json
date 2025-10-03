@@ -27,7 +27,7 @@
             },
             {
                 "id": 1,
-                "name": "includsion",
+                "name": "inclusion",
                 "E": 1e6,
                 "nu": 0.3,
                 "rho": 1e3,
