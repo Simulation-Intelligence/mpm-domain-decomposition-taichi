@@ -27,7 +27,42 @@ class Particles:
 
         # 存储配置参数，延后计算粒子数量
         self.particles_per_grid = config.get("particles_per_grid", 8)
-        self.grid_size = config.get("grid_size", 16)
+
+        # 支持新的网格配置，区分2D和3D
+        if self.dim == 2:
+            if "grid_nx" in config.data and "grid_ny" in config.data:
+                self.grid_nx = config.get("grid_nx", 16)
+                self.grid_ny = config.get("grid_ny", 16)
+                self.grid_nz = 1  # 兼容性
+                self.grid_size = max(self.grid_nx, self.grid_ny)  # 兼容性
+            else:
+                self.grid_size = config.get("grid_size", 16)
+                self.grid_nx = self.grid_size
+                self.grid_ny = self.grid_size
+                self.grid_nz = 1  # 兼容性
+
+            # 支持自定义域尺寸
+            self.domain_width = config.get("domain_width", 1.0)
+            self.domain_height = config.get("domain_height", 1.0)
+            self.domain_depth = 1.0
+
+        else:  # 3D情况
+            if "grid_nx" in config.data and "grid_ny" in config.data and "grid_nz" in config.data:
+                self.grid_nx = config.get("grid_nx", 16)
+                self.grid_ny = config.get("grid_ny", 16)
+                self.grid_nz = config.get("grid_nz", 16)
+                self.grid_size = max(self.grid_nx, self.grid_ny, self.grid_nz)  # 兼容性
+            else:
+                self.grid_size = config.get("grid_size", 16)
+                self.grid_nx = self.grid_size
+                self.grid_ny = self.grid_size
+                self.grid_nz = self.grid_size
+
+            # 支持自定义域尺寸
+            self.domain_width = config.get("domain_width", 1.0)
+            self.domain_height = config.get("domain_height", 1.0)
+            self.domain_depth = config.get("domain_depth", 1.0)
+
         self.common_particles = common_particles
         
         # 计算每个形状的面积（Python数组）
@@ -51,10 +86,16 @@ class Particles:
             self.sampling_method = "poisson" if use_poisson else "uniform"
         # 存储基础参数
         self.p_rho = config.get("p_rho", 1)
-        self.p_vol = (1.0/self.grid_size)**self.dim / self.particles_per_grid
+
+        # 计算网格单元体积（使用新的矩形网格系统）
+        self.grid_cell_volume = (self.domain_width / self.grid_nx) * (self.domain_height / self.grid_ny)
+        if self.dim == 3:
+            self.grid_cell_volume *= (self.domain_depth / self.grid_nz)
+        self.p_vol = self.grid_cell_volume / self.particles_per_grid
         self.p_mass = self.p_vol * self.p_rho
+
         if self.sampling_method == "gauss":
-            self.p_vol = (1.0/self.grid_size/2)**self.dim
+            self.p_vol = self.grid_cell_volume / 4 / self.particles_per_grid  # gauss采样使用更小的体积
         self.boundary_size = config.get("boundary_size", None)
         self.init_vel_y = config.get("initial_velocity_y", -1)
         
@@ -190,12 +231,24 @@ class Particles:
     def _init_components(self, config):
         """初始化各种组件"""
         # 粒子生成器
-        self.particle_generator = ParticleGenerator(
-            dim=self.dim, 
-            sampling_method=self.sampling_method,
-            particles_per_grid=self.particles_per_grid,
-            grid_size=self.grid_size
-        )
+        # 构建参数字典
+        generator_params = {
+            'dim': self.dim,
+            'sampling_method': self.sampling_method,
+            'particles_per_grid': self.particles_per_grid,
+            'grid_size': self.grid_size,
+            'grid_nx': self.grid_nx,
+            'grid_ny': self.grid_ny,
+            'domain_width': self.domain_width,
+            'domain_height': self.domain_height
+        }
+
+        # 3D情况下添加额外参数
+        if self.dim == 3:
+            generator_params['grid_nz'] = self.grid_nz
+            generator_params['domain_depth'] = self.domain_depth
+
+        self.particle_generator = ParticleGenerator(**generator_params)
         
         # 粒子初始化器
         self.particle_initializer = ParticleInitializer(
@@ -218,7 +271,10 @@ class Particles:
         
         # 邻居构建器
         self.neighbor_builder = ParticleNeighborBuilder(
-            grid_size=self.grid_size,
+            inv_dx_x=self.grid_nx / self.domain_width,
+            inv_dx_y=self.grid_ny / self.domain_height,
+            inv_dx_z=self.grid_nz / self.domain_depth if self.dim == 3 else 1.0,
+            float_type=self.float_type,
             dim=self.dim
         )
         
@@ -376,6 +432,7 @@ class Particles:
         self.neighbor_builder.build_neighbor_list(
             self.x, self.wip, self.dwip, self.n_particles
         )
+
 
     def advect(self, dt: ti.f32):
         """粒子运动积分"""

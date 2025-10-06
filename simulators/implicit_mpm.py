@@ -70,8 +70,16 @@ class ImplicitMPM:
         )
 
         self.gui= ti.GUI("Implicit MPM", res=800)
-    
-        
+
+    @ti.func
+    def wrap_grid_idx(self, I):
+        """处理边界的网格索引包装"""
+        result = ti.Vector.zero(ti.i32, self.grid.dim)
+        result[0] = I[0] % self.grid.nx
+        result[1] = I[1] % self.grid.ny
+        if ti.static(self.grid.dim == 3):
+            result[2] = I[2] % self.grid.nz
+        return result
 
     def solve(self):
         if self.implicit:
@@ -112,12 +120,11 @@ class ImplicitMPM:
     @ti.kernel
     def p2g(self):
         for p in range(self.particles.n_particles):
-            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
-            fx = self.particles.x[p] * self.grid.inv_dx - base.cast(float)
-            
+            base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
+
             for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
-                grid_idx = (base + offset) % self.grid.size
-                dpos = (offset - fx) * self.grid.dx
+                grid_idx = self.wrap_grid_idx(base + offset)
+                dpos = self.grid.get_dpos_from_offset_and_fx(offset, fx)
                 p_mass = self.particles.get_particle_mass(p)
                 weight = self.particles.wip[p,offset]
                 self.grid.m[grid_idx] += weight * p_mass
@@ -138,8 +145,7 @@ class ImplicitMPM:
     @ti.kernel
     def g2p(self, dt: ti.f32):
         for p in self.particles.x:
-            Xp = self.particles.x[p] / self.grid.dx
-            base = (Xp - 0.5).cast(int)
+            base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
 
             new_v = ti.Vector.zero(self.float_type, self.dim)
             new_C = ti.Matrix.zero(self.float_type, self.dim, self.dim)
@@ -148,7 +154,7 @@ class ImplicitMPM:
                 grid_idx = base + offset
                 g_v = self.grid.v[grid_idx]
                 new_v += g_v*self.particles.wip[p, offset]
-                new_C += 4*  g_v.outer_product(self.particles.dwip[p, offset])
+                new_C += 4*  g_v.outer_product(self.particles.dwip[p, offset]) 
                 
             self.particles.v[p] = new_v
             if self.implicit:
@@ -160,8 +166,7 @@ class ImplicitMPM:
     @ti.kernel
     def update_F(self, dt: ti.f32):
         for p in self.particles.x:
-            Xp = self.particles.x[p] / self.grid.dx
-            base = (Xp - 0.5).cast(int)
+            base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
 
             new_C = ti.Matrix.zero(self.float_type, self.dim, self.dim)
 
@@ -178,16 +183,26 @@ class ImplicitMPM:
     #returns the grid lines for visualization
     def get_grid_lines_begin(self):
         lines_begin = []
-        for i in range(self.grid.size):
-            lines_begin.append(((i+0.5)*self.grid.dx*self.scale + self.offset[0], self.offset[1]))
-            lines_begin.append((self.offset[0], (i+0.5)*self.grid.dx*self.scale + self.offset[1]))
+        # 水平线
+        for i in range(self.grid.nx):
+            x_pos = (i+0.5)*self.grid.dx_x + self.offset[0]
+            lines_begin.append((x_pos, self.offset[1]))
+        # 垂直线
+        for j in range(self.grid.ny):
+            y_pos = (j+0.5)*self.grid.dx_y + self.offset[1]
+            lines_begin.append((self.offset[0], y_pos))
         return lines_begin
 
     def get_grid_lines_end(self):
         lines_end = []
-        for i in range(self.grid.size):
-            lines_end.append(((i+0.5)*self.grid.dx*self.scale + self.offset[0], self.scale + self.offset[1]))
-            lines_end.append((self.scale + self.offset[0], (i+0.5)*self.grid.dx*self.scale + self.offset[1]))
+        # 水平线
+        for i in range(self.grid.nx):
+            x_pos = (i+0.5)*self.grid.dx_x + self.offset[0]
+            lines_end.append((x_pos, self.grid.domain_height + self.offset[1]))
+        # 垂直线
+        for j in range(self.grid.ny):
+            y_pos = (j+0.5)*self.grid.dx_y + self.offset[1]
+            lines_end.append((self.grid.domain_width + self.offset[0], y_pos))
         return lines_end
     
     def render(self):
@@ -449,7 +464,7 @@ class ImplicitMPM:
 
 if __name__ == "__main__":
 
-    cfg=Config("config/test_test3.json")
+    cfg=Config("config/config_2d.json")
     float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64
     arch=cfg.get("arch", "cpu")
     if arch == "cuda":

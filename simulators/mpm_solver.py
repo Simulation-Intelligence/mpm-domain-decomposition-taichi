@@ -52,8 +52,9 @@ class MPMSolver:
         # 体积力初始化将在调用initialize_volume_forces()时进行
 
         
-        self.v_grad=ti.field(self.float_type, grid.size**self.dim * self.dim,needs_grad=True)
-        self.grad_save=ti.field(self.float_type, grid.size**self.dim * self.dim)
+        total_grid_points = grid.get_total_grid_points()
+        self.v_grad=ti.field(self.float_type, total_grid_points * self.dim,needs_grad=True)
+        self.grad_save=ti.field(self.float_type, total_grid_points * self.dim)
         self.total_energy = ti.field(self.float_type, shape=(), needs_grad=True)
         self.grad_fn=None
         if config.get("use_auto_diff", True):
@@ -72,13 +73,13 @@ class MPMSolver:
         if solver_type == "BFGS":
             # 使用材料1的p_mass进行梯度归一化
             avg_p_mass = (self.particles.p_mass_1 + self.particles.p_mass_2) / 2.0
-            self.optimizer = BFGS(energy_fn=self.compute_energy,grad_fn=self.grad_fn, dim=grid.size**self.dim * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
+            self.optimizer = BFGS(energy_fn=self.compute_energy,grad_fn=self.grad_fn, dim=total_grid_points * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
         elif solver_type == "LBFGS":
-            self.optimizer = LBFGS(self.grad_fn, grid.size**self.dim * self.dim, eta=eta,float_type=self.float_type)
+            self.optimizer = LBFGS(self.grad_fn, total_grid_points * self.dim, eta=eta,float_type=self.float_type)
         elif solver_type == "Newton":
             # 使用材料1的p_mass进行梯度归一化
             avg_p_mass = (self.particles.p_mass_1 + self.particles.p_mass_2) / 2.0
-            self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=self.set_hess_DBC,dim=grid.size**self.dim * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
+            self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=self.set_hess_DBC,dim=total_grid_points * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
 
     def solve_implicit(self):
         self.grid.set_boundary_v()
@@ -90,10 +91,17 @@ class MPMSolver:
 
     @ti.func
     def get_idx(self, I):
-        idx = 0
-        for d in ti.static(range(self.dim)):
-            idx += I[d] * self.grid.size ** (self.dim-1-d) *self.dim
-        return idx
+        return self.grid.get_idx(I)
+
+    @ti.func
+    def wrap_grid_idx(self, I):
+        """处理边界的网格索引包装"""
+        result = ti.Vector.zero(ti.i32, self.dim)
+        result[0] = I[0] % self.grid.nx
+        result[1] = I[1] % self.grid.ny
+        if ti.static(self.dim == 3):
+            result[2] = I[2] % self.grid.nz
+        return result
     
     
     @ti.func
@@ -126,9 +134,9 @@ class MPMSolver:
     @ti.func
     def cal_vel_grad(self,v_flat,p):
         vel_grad = ti.Matrix.zero(self.float_type, self.dim, self.dim)
-        base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
+        base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
         for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
-            grid_idx = (base + offset) % self.grid.size
+            grid_idx = self.wrap_grid_idx(base + offset)
             vidx = self.get_idx(grid_idx)
             vel = self.get_vel(v_flat,vidx)
             vel_grad += 4 * self.dt * vel.outer_product(self.particles.dwip[p, offset])
@@ -216,10 +224,10 @@ class MPMSolver:
             weight = self.particles.get_particle_weight(p)
             dE_dvel_grad =(g1+g2+g3)@ F.transpose()*self.particles.p_vol * weight
 
-            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
+            base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
             # 将梯度分配到网格点
             for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
-                grid_idx = (base + offset) % self.grid.size
+                grid_idx = self.wrap_grid_idx(base + offset)
                 vidx = self.get_idx(grid_idx)
 
                 grad= 4*self.dt*dE_dvel_grad @ self.particles.dwip[p, offset]
@@ -252,10 +260,10 @@ class MPMSolver:
             weight = self.particles.get_particle_weight(p)
             dE_dvel_grad = grad_F @ F.transpose() * self.particles.p_vol * weight
 
-            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
+            base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
             # 将梯度分配到网格点
             for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
-                grid_idx = (base + offset) % self.grid.size
+                grid_idx = self.wrap_grid_idx(base + offset)
                 vidx = self.get_idx(grid_idx)
 
                 grad = 4*self.dt*dE_dvel_grad @ self.particles.dwip[p, offset]
@@ -306,7 +314,7 @@ class MPMSolver:
             F_inv = new_F.inverse()
             F_inv_T = F_inv.transpose()
             
-            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int) 
+            base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p]) 
 
             mu, lam = self.particles.get_material_params(p)
 
@@ -322,7 +330,7 @@ class MPMSolver:
 
                 # hessian=self.make_PSD(hessian)
 
-                grid_idx = (base + offset) % self.grid.size
+                grid_idx = self.wrap_grid_idx(base + offset)
                 vidx = self.get_idx(grid_idx)
 
                 for (i,j) in ti.static(ti.ndrange(self.dim, self.dim)):
@@ -407,7 +415,7 @@ class MPMSolver:
             M[3, 0] = d2Psi_dsigma2_01
             M[3, 3] = d2Psi_dsigma2_11
             
-            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
+            base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
             
             coeff = self.particles.p_vol * weight
 
@@ -431,7 +439,7 @@ class MPMSolver:
                                           + M[3, 3] * U[i, 1] * VT[1, j] * U[r, 1] * VT[1, s]
                             
             for offset in ti.grouped(ti.ndrange(*self.neighbor)):
-                grid_idx = (base + offset) % self.grid.size
+                grid_idx = self.wrap_grid_idx(base + offset)
                 vidx = self.get_idx(grid_idx)
                 
                 dwip = self.particles.dwip[p, offset]
@@ -463,7 +471,7 @@ class MPMSolver:
             # 计算变形梯度导数
             F = self.particles.F[p]
 
-            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
+            base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
 
             mu, lam = self.particles.get_material_params(p)
             weight = self.particles.get_particle_weight(p)
@@ -482,7 +490,7 @@ class MPMSolver:
 
                 hessian *= self.particles.p_vol * weight
 
-                grid_idx = (base + offset) % self.grid.size
+                grid_idx = self.wrap_grid_idx(base + offset)
                 vidx = self.get_idx(grid_idx)
 
                 for (i,j) in ti.static(ti.ndrange(self.dim, self.dim)):
@@ -601,7 +609,7 @@ class MPMSolver:
             self.manual_particle_energy_hess_neohookean(v_flat, hess)
 
     def set_hess_DBC(self, hess):
-        num_rows = self.grid.size**self.dim * self.dim
+        num_rows = self.grid.get_total_grid_points() * self.dim
         hess1=ti.linalg.SparseMatrixBuilder(num_rows, num_rows, max_num_triplets=(num_rows)**2, dtype=self.float_type)
         hess2=ti.linalg.SparseMatrixBuilder(num_rows, num_rows, max_num_triplets=num_rows, dtype=self.float_type)
         self.grid.get_boundary_hess(hess1,hess2)
@@ -617,18 +625,14 @@ class MPMSolver:
     @ti.kernel
     def set_initial_guess(self):
         for I in ti.grouped(self.grid.v):
-            idx=0
-            for d in ti.static(range(self.dim)):
-                idx += I[d] * self.grid.size ** (self.dim-1-d) *self.dim 
+            idx = self.grid.get_idx(I)
             for d in ti.static(range(self.dim)):
                 self.optimizer.x[idx+d] = self.grid.v[I][d]
 
     @ti.kernel
     def update_velocity(self):
         for I in ti.grouped(self.grid.v):
-            idx=0
-            for d in ti.static(range(self.dim)):
-                idx += I[d] * self.grid.size ** (self.dim-1-d) *self.dim 
+            idx = self.grid.get_idx(I)
             for d in ti.static(range(self.dim)):
                 self.grid.v[I][d] = self.optimizer.x[idx+d]
     
@@ -793,8 +797,7 @@ class MPMSolver:
 
         # 第一步：计算应力力并分配到网格
         for p in range(self.particles.n_particles):
-            Xp = self.particles.x[p] / self.grid.dx
-            base = (Xp - 0.5).cast(int)
+            base , fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
 
             stress = self.compute_stress(p)
 
@@ -832,10 +835,10 @@ class MPMSolver:
         
         # P2G: 将粒子的F值传输到网格
         for p in range(self.particles.n_particles):
-            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
+            base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
             
             for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
-                grid_idx = (base + offset) % self.grid.size
+                grid_idx = self.wrap_grid_idx(base + offset)
                 weight = self.particles.wip[p, offset]
                 p_mass = self.particles.get_particle_mass(p)
                 
@@ -853,11 +856,11 @@ class MPMSolver:
     def g2p_F_averaging(self, F_grid: ti.template()):
         """G2P步骤：将网格的平均F值传输回粒子"""
         for p in range(self.particles.n_particles):
-            base = (self.particles.x[p] * self.grid.inv_dx - 0.5).cast(int)
+            base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
             new_F = ti.Matrix.zero(self.float_type, self.dim, self.dim)
             
             for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
-                grid_idx = (base + offset) % self.grid.size
+                grid_idx = self.wrap_grid_idx(base + offset)
                 weight = self.particles.wip[p, offset]
                 new_F += weight * F_grid[grid_idx]
             
@@ -866,8 +869,12 @@ class MPMSolver:
     def average_F_p2g_g2p(self):
         """通过p2g和g2p操作对F[p]进行平均"""
         # 创建临时网格字段存储F值
-        F_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.size,)*self.dim)
-        m_grid = ti.field(self.float_type, shape=(self.grid.size,)*self.dim)
+        if self.dim == 2:
+            F_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.nx, self.grid.ny))
+            m_grid = ti.field(self.float_type, shape=(self.grid.nx, self.grid.ny))
+        else:
+            F_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.size,)*self.dim)
+            m_grid = ti.field(self.float_type, shape=(self.grid.size,)*self.dim)
         
         # 执行P2G和G2P
         self.p2g_F_averaging(F_grid, m_grid)

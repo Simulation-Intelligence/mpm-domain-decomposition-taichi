@@ -69,19 +69,57 @@ class ShapeConfig:
 class ParticleGenerator:
     """粒子生成器"""
 
-    def __init__(self, dim=2, sampling_method="poisson", particles_per_grid=8, grid_size=16):
+    def __init__(self, dim=2, sampling_method="poisson", particles_per_grid=8, grid_size=16,
+                 grid_nx=None, grid_ny=None, grid_nz=None, domain_width=1.0, domain_height=1.0, domain_depth=1.0):
         """
         初始化粒子生成器
         Args:
             dim: 维度 (2 or 3)
             sampling_method: 采样方式，可选 "uniform", "poisson", "regular", "gauss", "mesh"
             particles_per_grid: 每个网格的粒子数
-            grid_size: 网格大小
+            grid_size: 网格大小（兼容旧版）
+            grid_nx: 网格x方向大小
+            grid_ny: 网格y方向大小
+            domain_width: 域宽度
+            domain_height: 域高度
         """
         self.dim = dim
         self.sampling_method = sampling_method
         self.particles_per_grid = particles_per_grid
-        self.grid_size = grid_size
+
+        # 支持新的网格配置，区分2D和3D
+        if dim == 2:
+            if grid_nx is not None and grid_ny is not None:
+                self.grid_nx = grid_nx
+                self.grid_ny = grid_ny
+                self.grid_size = max(grid_nx, grid_ny)  # 兼容性
+            else:
+                self.grid_size = grid_size
+                self.grid_nx = grid_size
+                self.grid_ny = grid_size
+
+            # 域尺寸
+            self.domain_width = domain_width
+            self.domain_height = domain_height
+            self.domain_depth = 1.0
+
+        else:  # 3D情况
+            if grid_nx is not None and grid_ny is not None and grid_nz is not None:
+                self.grid_nx = grid_nx
+                self.grid_ny = grid_ny
+                self.grid_nz = grid_nz
+                self.grid_size = max(grid_nx, grid_ny, grid_nz)  # 兼容性
+            else:
+                self.grid_size = grid_size
+                self.grid_nx = grid_size
+                self.grid_ny = grid_size
+                self.grid_nz = grid_size
+
+            # 域尺寸
+            self.domain_width = domain_width
+            self.domain_height = domain_height
+            self.domain_depth = domain_depth
+
         self.last_poisson_radius = None  # 存储最后使用的Poisson采样半径
     
     def generate_particles_for_shapes(self, shapes, particles_per_area):
@@ -640,17 +678,17 @@ class ParticleGenerator:
 
                 if result.returncode != 0:
                     print(f"Triangle执行失败，返回码: {result.returncode}")
-                    return self._fallback_sampling(poly_data, n_particles)
+                    return self._fallback_sampling(poly_data, target_particle_spacing)
 
                 # 读取生成的.node文件
                 node_file = os.path.join(temp_dir, "input.1.node")
                 if os.path.exists(node_file):
                     vertices = self._parse_node_file(node_file)
                 else:
-                    return self._fallback_sampling(poly_data, n_particles)
+                    return self._fallback_sampling(poly_data, target_particle_spacing)
 
         except Exception as e:
-            return self._fallback_sampling(poly_data, n_particles)
+            return self._fallback_sampling(poly_data, target_particle_spacing)
 
         return vertices
 
@@ -708,7 +746,7 @@ class ParticleGenerator:
 
         return vertices
 
-    def _fallback_sampling(self, poly_data, n_particles):
+    def _fallback_sampling(self, poly_data, target_particle_spacing):
         """Triangle失败时的后备采样方法"""
 
         # 从poly_data中提取边界框
@@ -720,6 +758,17 @@ class ParticleGenerator:
             parts = lines[i].split()
             x_coords.append(float(parts[1]))
             y_coords.append(float(parts[2]))
+
+        # 检查是否有有效的坐标数据
+        if not x_coords or not y_coords:
+            print("警告: poly数据中没有有效的顶点坐标")
+            return []
+
+        # 基于目标粒子间距计算采样数量
+        bbox_width = max(x_coords) - min(x_coords)
+        bbox_height = max(y_coords) - min(y_coords)
+        bbox_area = bbox_width * bbox_height
+        n_particles = int(bbox_area / (target_particle_spacing ** 2))
 
         # 在边界框内随机采样
         x_min, x_max = min(x_coords), max(x_coords)
@@ -744,15 +793,16 @@ class ParticleGenerator:
 
         # 基于particles_per_grid计算粒子间距
         # particles_per_grid表示每个网格单元的粒子数
-        # 网格单元大小为 1/grid_size
-        grid_cell_size = 1.0 / self.grid_size
-        particles_per_unit_area = self.particles_per_grid / (grid_cell_size ** 2)
+        # 计算网格单元面积
+        grid_cell_area = (self.domain_width / self.grid_nx) * (self.domain_height / self.grid_ny)
+        particles_per_unit_area = self.particles_per_grid / grid_cell_area
         target_particle_spacing = 1.0 / (particles_per_unit_area ** 0.5)
 
         # 基于粒子间距确定统一的边界段长度
         target_segment_length = target_particle_spacing * 0.5  # 边界段长度为粒子间距的一半
 
-        print(f"网格大小: {self.grid_size}, 每网格粒子数: {self.particles_per_grid}")
+        print(f"网格配置: {self.grid_nx}×{self.grid_ny}, 域尺寸: {self.domain_width}×{self.domain_height}")
+        print(f"每网格粒子数: {self.particles_per_grid}")
         print(f"目标粒子间距: {target_particle_spacing:.6f}")
         print(f"统一边界段长度: {target_segment_length:.6f}")
 
@@ -799,6 +849,10 @@ class ParticleGenerator:
                     shape, later_subtract_shapes, vertex_id_counter, boundary_marker=1, target_segment_length=target_segment_length)
                 all_segments.extend(segments)
                 print(f"  添加了 {len(segments)} 个边界段")
+
+            elif shape["operation"] == "change":
+                # change操作：改变材料属性，但不影响几何边界
+                print(f"  change操作：不影响边界生成")
 
             elif shape["operation"] == "subtract":
                 # 检查hole点是否在之前的add区域内
