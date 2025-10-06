@@ -168,11 +168,11 @@ if __name__ == "__main__":
     config = {
         'debug': False,
         'dim': 2,
-        'n_grid': 16,
+        'n_grid': 64,
         'dt': 1e-4,
         'max_steps': 50,
-        'youngs_modulus':4,
-        'density': 1
+        'youngs_modulus':1e5,
+        'density': 1e3,
     }
     
     mpm = MPM3D(config)
