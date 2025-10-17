@@ -138,7 +138,10 @@ class Particles:
         # 设置边界
         if self.boundary_size is not None:
             boundary_range = config.get("boundary_range", None)
-            if boundary_range is not None:
+            if self.sampling_method == "mesh":
+                # 如果是mesh采样，使用mesh边界检测
+                self.set_boundary(method="mesh")
+            elif boundary_range is not None:
                 self.set_boundary(method="manual")
             else:
                 self.set_boundary(method="automatic")
@@ -320,7 +323,8 @@ class Particles:
             self.x, self.v, self.F, self.C,
             self.particle_material_id,
             self.particle_weight,
-            self.material_params
+            self.material_params,
+            self.is_boundary_particle
         )
         
         # 第六步：处理公共粒子
@@ -417,9 +421,13 @@ class Particles:
     def set_boundary(self, method="automatic"):
         """设置边界粒子
         Args:
-            method: "automatic" 自动检测，"manual" 手动指定
+            method: "automatic" 自动检测，"manual" 手动指定，"mesh" 使用mesh采样的边界
         """
-        if method == "automatic":
+        if method == "mesh" and self.sampling_method == "mesh":
+            # 如果使用mesh采样，边界信息已经在粒子生成时设置，无需额外检测
+            print("使用mesh采样的边界信息，跳过边界检测")
+            return
+        elif method == "automatic":
             self.set_boundary_automatic()
         elif method == "manual" and hasattr(self, 'boundary_range') and self.boundary_range is not None:
             self.set_boundary_manual()
