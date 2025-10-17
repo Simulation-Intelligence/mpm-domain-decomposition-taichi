@@ -806,25 +806,38 @@ class ParticleGenerator:
         print(f"目标粒子间距: {target_particle_spacing:.6f}")
         print(f"统一边界段长度: {target_segment_length:.6f}")
 
-        # 4. 构建综合的.poly文件，使用统一的段长度
-        poly_content = self._build_combined_poly_file(shapes, target_segment_length)
+        # 4. 构建综合的.poly文件，使用统一的段长度，并返回边界点
+        poly_content, boundary_points = self._build_combined_poly_file(shapes, target_segment_length)
 
         # 5. 调用Triangle生成网格
         vertices = self._call_triangle_and_extract_vertices(poly_content, target_particle_spacing)
 
-        # 6. 为粒子分配材料ID
+        # 6. 为粒子分配材料ID和边界标记
         particles_with_material = []
         for pos in vertices:
             # 确定粒子所属的材料
             material_id = self._determine_particle_material(pos, shapes)
+            # 检查是否为边界粒子（直接使用边界点）
+            is_boundary = self._is_boundary_particle_from_input(pos, boundary_points, target_particle_spacing)
             particle_data = {
                 "position": pos,
-                "material_id": material_id
+                "material_id": material_id,
+                "is_boundary": is_boundary
             }
             particles_with_material.append(particle_data)
 
-        print(f"Mesh采样生成了 {len(particles_with_material)} 个粒子")
+        boundary_count = sum(1 for p in particles_with_material if p.get("is_boundary", False))
+        print(f"Mesh采样生成了 {len(particles_with_material)} 个粒子，其中 {boundary_count} 个边界粒子")
         return particles_with_material
+
+    def _is_boundary_particle_from_input(self, particle_pos, boundary_points, tolerance):
+        """检查粒子是否为边界粒子（基于输入边界点）"""
+        # 检查粒子位置是否与任何边界点接近
+        for boundary_point in boundary_points:
+            distance = ((particle_pos[0] - boundary_point[0])**2 + (particle_pos[1] - boundary_point[1])**2)**0.5
+            if distance < tolerance:
+                return True
+        return False
 
     def _build_combined_poly_file(self, shapes, target_segment_length):
         """构建包含所有几何操作的综合.poly文件
@@ -883,10 +896,10 @@ class ParticleGenerator:
                 else:
                     print(f"  跳过subtract形状（与add区域无交集）")
 
-        # 构建.poly文件内容
-        poly_content = self._assemble_poly_content(all_segments, all_holes)
+        # 构建.poly文件内容，并获取边界点
+        poly_content, boundary_points = self._assemble_poly_content(all_segments, all_holes)
 
-        return poly_content
+        return poly_content, boundary_points
 
     def _add_rectangle_to_poly(self, params, start_vertex_id, boundary_marker=1, target_segment_length=None):
         """将矩形添加到poly文件中，根据target_segment_length细分边界"""
@@ -1039,7 +1052,8 @@ class ParticleGenerator:
         for i, (x, y) in enumerate(all_holes, 1):
             poly_content += f"{i} {x:.6f} {y:.6f}\n"
 
-        return poly_content
+        # 返回poly文件内容和所有边界点位置
+        return poly_content, vertex_positions
 
     def _fix_boundary_gaps(self, segments, vertices):
         """检测并修复边界段之间的缺口"""
@@ -1441,41 +1455,47 @@ class ParticleInitializer:
         self.float_type = float_type
         self.init_vel_y = init_vel_y
     
-    def initialize_particle_fields(self, particle_data, x_field, v_field, F_field, C_field, material_id_field=None, weight_field=None, material_params=None):
+    def initialize_particle_fields(self, particle_data, x_field, v_field, F_field, C_field, material_id_field=None, weight_field=None, material_params=None, boundary_field=None):
         """初始化粒子的各种属性字段"""
         import taichi as ti
         n_particles = len(particle_data)
         
-        # 处理两种格式：旧格式(只有位置)和新格式(包含材料ID和权重)
+        # 处理两种格式：旧格式(只有位置)和新格式(包含材料ID、权重和边界信息)
         positions = []
         material_ids = []
         weights = []
-        
+        boundary_flags = []
+
         for data in particle_data:
             if isinstance(data, dict) and "position" in data:
-                # 新格式：包含位置、材料ID和可选的权重
+                # 新格式：包含位置、材料ID、权重和边界信息
                 positions.append(data["position"])
                 material_ids.append(data.get("material_id", 0))
                 weights.append(data.get("weight", 1.0))  # 默认权重为1.0
+                boundary_flags.append(1 if data.get("is_boundary", False) else 0)
             else:
                 # 旧格式：只有位置信息
                 positions.append(data)
                 material_ids.append(0)
                 weights.append(1.0)
+                boundary_flags.append(0)
         
         # 创建临时numpy数组用于传递粒子属性
         numpy_dtype = np.float32 if self.float_type == ti.f32 else np.float64
         positions_np = np.array(positions, dtype=numpy_dtype)
         material_ids_np = np.array(material_ids, dtype=np.int32)
         weights_np = np.array(weights, dtype=numpy_dtype)
+        boundary_flags_np = np.array(boundary_flags, dtype=np.int32)
 
         temp_positions = ti.Vector.field(self.dim, self.float_type, shape=n_particles)
         temp_material_ids = ti.field(ti.i32, shape=n_particles)
         temp_weights = ti.field(self.float_type, shape=n_particles)
+        temp_boundary_flags = ti.field(ti.i32, shape=n_particles)
 
         temp_positions.from_numpy(positions_np)
         temp_material_ids.from_numpy(material_ids_np)
         temp_weights.from_numpy(weights_np)
+        temp_boundary_flags.from_numpy(boundary_flags_np)
 
         # 准备初始F矩阵数据
         use_custom_F = material_params is not None
@@ -1534,13 +1554,22 @@ class ParticleInitializer:
         def init_weights():
             for i in range(n_particles):
                 weight_field[i] = temp_weights[i]
-        
+
+        @ti.kernel
+        def init_boundary_flags():
+            for i in range(n_particles):
+                boundary_field[i] = temp_boundary_flags[i]
+
         init_kernel()
-        
+
         # 设置材料ID（如果提供了material_id_field）
         if material_id_field is not None:
             init_material_ids()
-        
+
         # 设置权重（如果提供了weight_field）
         if weight_field is not None:
             init_weights()
+
+        # 设置边界标记（如果提供了boundary_field）
+        if boundary_field is not None:
+            init_boundary_flags()
