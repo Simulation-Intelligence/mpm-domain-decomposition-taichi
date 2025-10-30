@@ -13,6 +13,7 @@ config = Config(data={
         "E": 4.0,
         "nu": 0.4,
         "solve_max_iter": 1,
+        "gravity": [0.0, 8.0],
         "implicit_solver": "BFGS"
     })
 float_type = ti.f32 if config.get("float_type", "f32") == "f32" else ti.f64
@@ -98,12 +99,12 @@ def test_gradient_derivative():
 def test_hessian_derivative():
     # 手动计算hessian
     manual_hessian = ti.linalg.SparseMatrixBuilder(n_vars, n_vars, max_num_triplets=n_vars*n_vars, dtype=float_type)
-    solver.manual_particle_energy_hess(solver.v_grad, manual_hessian)
+    solver.compute_hess(v_flat=solver.v_grad, hess=manual_hessian)
     H = manual_hessian.build()
 
 
     # finite difference hessian
-    h = 1e-3
+    h = 1e-4
     finite_diff_hessian = ti.field(float_type, shape=(n_vars, n_vars))
     finite_diff_hessian.fill(0.0)
     new_grad1 = ti.field(float_type, shape=n_vars)
@@ -112,9 +113,9 @@ def test_hessian_derivative():
         solver.v_grad[i] += h
         new_grad1.fill(0.0)
         new_grad2.fill(0.0)
-        solver.manual_particle_energy_grad(solver.v_grad, new_grad1)
+        solver.compute_energy_grad_manual(solver.v_grad, new_grad1)
         solver.v_grad[i] -= 2 * h
-        solver.manual_particle_energy_grad(solver.v_grad, new_grad2)
+        solver.compute_energy_grad_manual(solver.v_grad, new_grad2)
         for j in range(n_vars):
             finite_diff_hessian[i, j] = (new_grad1[j]- new_grad2[j]) / h/2
         solver.v_grad[i] += h

@@ -79,7 +79,7 @@ class MPMSolver:
         elif solver_type == "Newton":
             # 使用材料1的p_mass进行梯度归一化
             avg_p_mass = (self.particles.p_mass_1 + self.particles.p_mass_2) / 2.0
-            self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=self.set_hess_DBC,dim=total_grid_points * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
+            self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=None,dim=total_grid_points * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
 
     def solve_implicit(self):
         self.grid.set_boundary_v()
@@ -111,6 +111,11 @@ class MPMSolver:
             vel[d] = v_flat[vidx+d]
         return vel
     
+    @ti.func
+    def get_damping_force(self, I):
+        v_prev = self.grid.v_prev[I]
+        return -self.damping * v_prev
+
     @ti.func
     def make_PSD(self, matrix):
         """
@@ -197,11 +202,11 @@ class MPMSolver:
             # 计算势能
             pos = I * self.grid.dx + vel * self.dt
             total_external_force = self.gravity + self.grid.volume_force[I]
+            #阻尼力
+            if not ti.static(self.static_solve):
+                total_external_force += self.get_damping_force(I) 
             self.total_energy[None] -= total_external_force.dot(pos) * self.grid.m[I]
 
-            # 计算阻尼
-            if not ti.static(self.static_solve):
-                self.total_energy[None] += 0.5 * self.damping * self.grid.m[I] * vel.norm_sqr()
 
     @ti.kernel
     def manual_particle_energy_grad_neohookean(self, v_flat: ti.template(), grad_flat: ti.template()):
@@ -287,13 +292,11 @@ class MPMSolver:
                 grad += self.grid.m[I] * (vel - self.grid.v_prev[I])
             
             # 计算外部力（重力 + 体积力）
-            pos = I * self.grid.dx + vel * self.dt
             total_external_force = self.gravity + self.grid.volume_force[I]
-            grad -= total_external_force * self.dt * self.grid.m[I]
-
-            # 阻尼
+            # 阻尼力
             if not ti.static(self.static_solve):
-                grad += self.damping * vel * self.grid.m[I] 
+                total_external_force += self.get_damping_force(I)
+            grad -= total_external_force * self.dt * self.grid.m[I]
 
 
             # 累加梯度
@@ -466,7 +469,7 @@ class MPMSolver:
                             hess[vidx + vi, vidx + vj] += hess_val
 
     @ti.kernel
-    def manual_particle_energy_hess_linear(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
+    def manual_particle_energy_hess_linear(self,hess: ti.sparse_matrix_builder()):
         for p in range(self.particles.n_particles):
             # 计算变形梯度导数
             F = self.particles.F[p]
@@ -489,13 +492,15 @@ class MPMSolver:
                         hessian[i, j] += (lam + mu) * FTw[i] * FTw[j]
 
                 hessian *= self.particles.p_vol * weight
-
                 grid_idx = self.wrap_grid_idx(base + offset)
                 vidx = self.get_idx(grid_idx)
 
                 for (i,j) in ti.static(ti.ndrange(self.dim, self.dim)):
                     if not self.grid.is_boundary_grid[grid_idx][i] and not self.grid.is_boundary_grid[grid_idx][j]:
-                        hess[vidx+i, vidx+j] += hessian[i,j]
+                        matrix_i = vidx + i
+                        matrix_j = vidx + j
+                        hess_value = hessian[i,j]
+                        hess[matrix_i, matrix_j] += hess_value
 
     @ti.kernel
     def manual_grid_energy_hess(self, hess: ti.sparse_matrix_builder()):
@@ -510,18 +515,13 @@ class MPMSolver:
                 continue
 
             # 惯性项 Hessian: m * I
-            for d in ti.static(range(self.dim)):
-                if not self.grid.is_boundary_grid[I][d]:
-                    hess[vidx + d, vidx + d] += m_node
-                else:
-                    # 边界节点固定：加一个单位刚度
-                    hess[vidx + d, vidx + d] += 1.0
-
-            # 阻尼项 Hessian: alpha * m * I
             if not ti.static(self.static_solve):
                 for d in ti.static(range(self.dim)):
                     if not self.grid.is_boundary_grid[I][d]:
-                        hess[vidx + d, vidx + d] += self.damping * m_node
+                        hess[vidx + d, vidx + d] += m_node
+                    else:
+                        # 边界节点固定：加一个单位刚度
+                       hess[vidx + d, vidx + d] += 1.0
 
 
     def compute_energy(self, v_flat: ti.template()):
@@ -604,19 +604,10 @@ class MPMSolver:
         
     def manual_particle_energy_hess(self, v_flat: ti.template(), hess: ti.sparse_matrix_builder()):
         if self.elasticity_model == "linear":
-            self.manual_particle_energy_hess_linear(v_flat, hess)
+            self.manual_particle_energy_hess_linear(hess)
         else:  # default to neohookean
             self.manual_particle_energy_hess_neohookean(v_flat, hess)
 
-    def set_hess_DBC(self, hess):
-        num_rows = self.grid.get_total_grid_points() * self.dim
-        hess1=ti.linalg.SparseMatrixBuilder(num_rows, num_rows, max_num_triplets=(num_rows)**2, dtype=self.float_type)
-        hess2=ti.linalg.SparseMatrixBuilder(num_rows, num_rows, max_num_triplets=num_rows, dtype=self.float_type)
-        self.grid.get_boundary_hess(hess1,hess2)
-        H1=hess1.build()
-        H2=hess2.build()
-        # hess= hess * H1 + H2
-        hess= hess + H2
 
 
     def save_previous_velocity(self):
@@ -814,7 +805,7 @@ class MPMSolver:
                 self.grid.f[I] += total_external_force * self.grid.m[I]
                 
                 # 添加阻尼力（基于当前速度）
-                damping_force = -self.damping * self.grid.v[I] / self.grid.v[I].norm() * self.grid.f[I].norm() if self.grid.v[I].norm() > 1e-10 else ti.Vector.zero(self.float_type, self.dim)
+                damping_force = -self.damping * self.grid.v[I] / self.grid.v[I].norm() * self.grid.f[I].norm() if self.grid.v[I].norm() > 1e-8 else ti.Vector.zero(self.float_type, self.dim)
                 self.grid.f[I] += damping_force
     
     @ti.kernel  

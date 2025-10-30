@@ -20,7 +20,7 @@ class ParticleRecorder:
         self.lines_end = lines_end if lines_end is not None else np.array([], dtype=np.float32)
         self.lines_color = lines_color if lines_color is not None else np.array([], dtype=np.uint32)
 
-        self.gui=ti.GUI("Record", res=800)
+        self.gui=ti.ui.Window("Record", res=(800, 800), vsync=False)
 
 
     def capture(self, positions: np.ndarray, color_indices: np.ndarray):
@@ -63,20 +63,47 @@ class ParticleRecorder:
             # 获取当前帧数据
             pos, indices = self.frame_data[current_idx]
             
-            # 批量绘制粒子
-            self.gui.circles(
-                pos,
-                palette=self.palette,
-                palette_indices=indices,
-                radius=3
-            )
+            # 使用ti.ui.Window的canvas API
+            canvas = self.gui.get_canvas()
+            canvas.set_background_color((0.067, 0.184, 0.255))
+
+            # 创建临时Taichi字段用于渲染
+            n_particles = len(pos)
+            if n_particles > 0:
+                # 创建临时字段来存储位置数据
+                temp_pos = ti.Vector.field(2, dtype=ti.f32, shape=n_particles)
+                temp_pos.from_numpy(pos)
+
+                # 根据索引绘制不同颜色的粒子
+                for i, color in enumerate(self.palette):
+                    mask = indices == i
+                    if np.any(mask):
+                        # 将uint32颜色转换为归一化的RGB
+                        r = ((color >> 16) & 0xFF) / 255.0
+                        g = ((color >> 8) & 0xFF) / 255.0
+                        b = (color & 0xFF) / 255.0
+
+                        # 创建过滤后的位置字段
+                        filtered_pos = pos[mask]
+                        if len(filtered_pos) > 0:
+                            temp_filtered = ti.Vector.field(2, dtype=ti.f32, shape=len(filtered_pos))
+                            temp_filtered.from_numpy(filtered_pos.astype(np.float32))
+                            canvas.circles(temp_filtered, radius=0.005, color=(r, g, b))
+
             if self.lines_begin.size > 0 and self.lines_end.size > 0:
-                self.gui.lines(
-                    self.lines_begin,
-                    self.lines_end,
-                    color=self.lines_color,
-                    radius=0.8
-                )
+                # 绘制线条 - 创建临时字段
+                for i in range(len(self.lines_begin)):
+                    color = self.lines_color[i] if i < len(self.lines_color) else 0xFFFFFF
+                    r = ((color >> 16) & 0xFF) / 255.0
+                    g = ((color >> 8) & 0xFF) / 255.0
+                    b = (color & 0xFF) / 255.0
+
+                    # 将begin和end点组合成vertices格式
+                    line_vertices = np.array([self.lines_begin[i], self.lines_end[i]], dtype=np.float32)
+                    temp_line = ti.Vector.field(2, dtype=ti.f32, shape=2)
+                    temp_line.from_numpy(line_vertices)
+                    canvas.lines(temp_line, 0.001, color=(r, g, b))
+
             self.gui.show()
 
             # 更新帧索引

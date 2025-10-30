@@ -51,6 +51,9 @@ class Grid:
             self.domain_height = config.get("domain_height", 1.0)
             self.domain_depth = config.get("domain_depth", 1.0)
 
+        # 获取网格偏移
+        self.offset = config.get("offset", [0.0, 0.0] if self.dim == 2 else [0.0, 0.0, 0.0])
+
         # 计算网格间距
         self.dx_x = self.domain_width / self.nx
         self.dx_y = self.domain_height / self.ny
@@ -247,31 +250,7 @@ class Grid:
             for d in ti.static(range(self.dim)):
                 if self.is_boundary_grid[I][d]:
                     grad[idx+d] = 0.0 
-
-    @ti.kernel
-    def get_boundary_hess(self,hess1:ti.sparse_matrix_builder(),hess2:ti.sparse_matrix_builder()):
-        for I in ti.grouped(self.is_boundary_grid):
-            idx1 = self.get_idx(I)
-            for d1 in ti.static(range(self.dim)):
-                # if self.is_boundary_grid[I][d1]:
-                hess2[idx1 + d1, idx1 + d1] += 1.0
-                # if not self.is_boundary_grid[I][d1] :
-                #     if ti.static(self.dim ==2):
-                #         for i, j in ti.static(ti.ndrange(self.dim, self.dim)):
-                #             for d2 in ti.static(range(self.dim)):
-                #                 idx2= i * self.size * 2 + j * 2 + d2
-                #                 if not self.is_boundary_grid[i, j][d2]:
-                #                     hess1[idx1+d1 , idx2] +=1.0
-                #     elif ti.static(self.dim ==3):
-                #         for i, j, k in ti.static(ti.ndrange(self.dim, self.dim, self.dim)):
-                #             for d2 in ti.static(range(self.dim)):
-                #                 idx2 = i * self.size**2 * 3 + j * self.size * 3 + k * 3 + d2
-                #                 if not self.is_boundary_grid[i, j, k][d2]:
-                #                     hess1[idx1+d1 , idx2] +=1.0
-                                
-                # else:
-                #     hess2[idx1+d1, idx1+d1] += 1.0
-
+                    
     @ti.kernel
     def set_boundary_v(self):
         for I in ti.grouped(self.is_boundary_grid):
@@ -291,4 +270,32 @@ class Grid:
         for I in ti.grouped(self.v):
             self.m[I] = 0.0
             self.v[I] = [0.0]*self.dim
+
+    def get_lines_begin(self):
+        """获取网格线的起始点，用于可视化"""
+        lines_begin = []
+        if self.dim == 2:
+            # 垂直线
+            for i in range(self.nx + 1):
+                x = i * self.dx_x + self.offset[0]
+                lines_begin.append([x, self.offset[1]])
+            # 水平线
+            for j in range(self.ny + 1):
+                y = j * self.dx_y + self.offset[1]
+                lines_begin.append([self.offset[0], y])
+        return lines_begin
+
+    def get_lines_end(self):
+        """获取网格线的结束点，用于可视化"""
+        lines_end = []
+        if self.dim == 2:
+            # 垂直线
+            for i in range(self.nx + 1):
+                x = i * self.dx_x + self.offset[0]
+                lines_end.append([x, self.offset[1] + self.domain_height])
+            # 水平线
+            for j in range(self.ny + 1):
+                y = j * self.dx_y + self.offset[1]
+                lines_end.append([self.offset[0] + self.domain_width, y])
+        return lines_end
 

@@ -1,7 +1,7 @@
 {
     "max_schwarz_iter": 10,
     "schwarz_eta": 1e-3,
-    "record_frames": 1000,
+    "record_frames": 5000,
     "visualize_grid": false,
     "steps": 1,
     "arch": "cpu",
@@ -13,9 +13,9 @@
         "float_type": "f64",
         "dim": 2,
         "grid_nx": 80,
-        "grid_ny": 24,
+        "grid_ny": 40,
         "domain_width": 1.0,
-        "domain_height": 0.3,
+        "domain_height": 0.5,
         "particles_per_grid": 16,
         "sampling_method": "mesh",
         "elasticity_model": "linear",
@@ -25,40 +25,24 @@
         "solve_init_iter": 100,
         "offset": [
             0.0,
-            0.35
+            0.0
         ],
         "gravity": [
             0.0,
-            -0.0
+            -9.8
         ],
-        "damping":0,
-        "volume_forces": [
-            {
-                "type": "rectangle",
-                "params": {
-                    "range": [
-                        [0, 0.2],
-                        [0, 1]
-                    ]
-                },
-                "force": [-10, 0.0]
-            },
-            {
-                "type": "rectangle",
-                "params": {
-                    "range": [
-                        [0.8, 1.0],
-                        [0, 1]
-                    ]
-                },
-                "force": [10, 0.0]
-            }
+        "DBC_range": [
+            [
+                [0, 0.1],
+                [0, 1]
+            ]
         ],
+        "damping":0.5,
         "material_params": [
             {
                 "id": 0,
                 "name": "default",
-                "E": 1e5,
+                "E": 2e5,
                 "nu": 0.3,
                 "rho": 1e3
             }
@@ -74,29 +58,12 @@
                 "params": {
                     "range": [
                         [
-                            0.1,
-                            0.4
+                            0.05,
+                            0.8
                         ],
                         [
-                            0.05,
-                            0.25
-                        ]
-                    ]
-                },
-                "operation": "add",
-                "material_id": 0
-            },
-            {
-                "type": "rectangle",
-                "params": {
-                    "range": [
-                        [
-                            0.6,
-                            0.9
-                        ],
-                        [
-                            0.05,
-                            0.25
+                            0.40,
+                            0.45
                         ]
                     ]
                 },
@@ -108,14 +75,14 @@
         "implicit_solver": "Newton",
         "eta": 1e-3
     },
-    "Domain2": {
+    "Domain2":  {
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
         "grid_nx": 80,
-        "grid_ny": 48,
-        "domain_width": 0.5,
-        "domain_height": 0.3,
+        "grid_ny": 40,
+        "domain_width": 1.0,
+        "domain_height": 0.5,
         "particles_per_grid": 16,
         "sampling_method": "mesh",
         "elasticity_model": "linear",
@@ -124,14 +91,20 @@
         "solve_max_iter": 1000,
         "solve_init_iter": 100,
         "offset": [
-            0.25,
-            0.35
+            0.0,
+            0.04
         ],
         "gravity": [
             0.0,
-            -0.0
+            -9.8
         ],
-        "damping":0,
+        "DBC_range": [
+            [
+                [0, 0.1],
+                [0, 1]
+            ]
+        ],
+        "damping":0.5,
         "material_params": [
             {
                 "id": 0,
@@ -152,45 +125,17 @@
                 "params": {
                     "range": [
                         [
-                            0.10,
-                            0.40
+                            0.05,
+                            0.8
                         ],
                         [
-                            0.05,
-                            0.25
+                            0.40,
+                            0.45
                         ]
                     ]
                 },
                 "operation": "add",
                 "material_id": 0
-            },
-            {
-                "type": "ellipse",
-                "params": {
-                    "center": [
-                        0.25,
-                        0.05
-                    ],
-                    "semi_axes": [
-                        0.08,
-                        0.08
-                    ]
-                },
-                "operation": "subtract"
-            },
-            {
-                "type": "ellipse",
-                "params": {
-                    "center": [
-                        0.25,
-                        0.25
-                    ],
-                    "semi_axes": [
-                        0.08,
-                        0.08
-                    ]
-                },
-                "operation": "subtract"
             }
 
         ],

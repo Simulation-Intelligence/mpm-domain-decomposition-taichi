@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-应力应变数据可视化工具
+应力数据可视化工具
 """
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,13 +11,13 @@ import os
 import glob
 
 def load_stress_data(output_dir, frame_number=None):
-    """加载应力应变数据（单域版本）"""
+    """加载应力数据（单域版本）"""
     import re
     from datetime import datetime
 
-    # 检查是否是统一目录结构
+    # 检查是否是统一目录结构或手动指定目录
     base_output_dir = "experiment_results"
-    if output_dir in ['stress_strain_output', 'single']:
+    if output_dir in ['stress_output', 'single']:
         # 查找统一输出目录下的最新单域结果
         if not os.path.exists(base_output_dir):
             raise FileNotFoundError(f"统一输出目录不存在: {base_output_dir}")
@@ -42,7 +42,11 @@ def load_stress_data(output_dir, frame_number=None):
         actual_output_dir = latest_dir
         print(f"找到 {len(single_dirs)} 个单域结果目录，使用最新的: {latest_dir}")
     else:
+        # 用户指定了具体目录路径，直接使用
         actual_output_dir = output_dir
+        if not os.path.exists(actual_output_dir):
+            raise FileNotFoundError(f"指定的目录不存在: {actual_output_dir}")
+        print(f"使用指定目录: {actual_output_dir}")
 
     # 首先搜索时间戳子目录（向下兼容旧格式）
     timestamped_dirs = []
@@ -78,29 +82,25 @@ def load_stress_data(output_dir, frame_number=None):
 
     # 构建文件路径
     stress_file = f"{actual_output_dir}/stress_frame_{frame_number}.npy"
-    strain_file = f"{actual_output_dir}/strain_frame_{frame_number}.npy"
     positions_file = f"{actual_output_dir}/positions_frame_{frame_number}.npy"
 
-    if not all(os.path.exists(f) for f in [stress_file, strain_file, positions_file]):
-        missing_files = [f for f in [stress_file, strain_file, positions_file] if not os.path.exists(f)]
+    if not all(os.path.exists(f) for f in [stress_file, positions_file]):
+        missing_files = [f for f in [stress_file, positions_file] if not os.path.exists(f)]
         raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件: {missing_files}")
 
-    found_files = (stress_file, strain_file, positions_file)
-    
-    stress_data = np.load(found_files[0])
-    strain_data = np.load(found_files[1])
-    positions = np.load(found_files[2])
-    
-    return stress_data, strain_data, positions, frame_number
+    stress_data = np.load(stress_file)
+    positions = np.load(positions_file)
+
+    return stress_data, positions, frame_number
 
 def load_schwarz_stress_data(output_dir, frame_number=None):
-    """加载Schwarz双域应力应变数据"""
+    """加载Schwarz双域应力数据"""
     import re
     from datetime import datetime
 
-    # 检查是否是统一目录结构
+    # 检查是否是统一目录结构或手动指定目录
     base_output_dir = "experiment_results"
-    if output_dir in ['stress_strain_output_schwarz', 'schwarz']:
+    if output_dir in ['stress_output_schwarz', 'schwarz']:
         # 查找统一输出目录下的最新Schwarz结果
         if not os.path.exists(base_output_dir):
             raise FileNotFoundError(f"统一输出目录不存在: {base_output_dir}")
@@ -125,7 +125,11 @@ def load_schwarz_stress_data(output_dir, frame_number=None):
         actual_output_dir = latest_dir
         print(f"找到 {len(schwarz_dirs)} 个Schwarz结果目录，使用最新的: {latest_dir}")
     else:
+        # 用户指定了具体目录路径，直接使用
         actual_output_dir = output_dir
+        if not os.path.exists(actual_output_dir):
+            raise FileNotFoundError(f"指定的目录不存在: {actual_output_dir}")
+        print(f"使用指定目录: {actual_output_dir}")
 
     # 首先搜索时间戳子目录（向下兼容旧格式）
     timestamped_dirs = []
@@ -147,35 +151,28 @@ def load_schwarz_stress_data(output_dir, frame_number=None):
 
     # 构建文件路径
     d1_stress_file = f"{actual_output_dir}/domain1_stress_frame_{frame_number}.npy"
-    d1_strain_file = f"{actual_output_dir}/domain1_strain_frame_{frame_number}.npy"
     d1_positions_file = f"{actual_output_dir}/domain1_positions_frame_{frame_number}.npy"
 
     d2_stress_file = f"{actual_output_dir}/domain2_stress_frame_{frame_number}.npy"
-    d2_strain_file = f"{actual_output_dir}/domain2_strain_frame_{frame_number}.npy"
     d2_positions_file = f"{actual_output_dir}/domain2_positions_frame_{frame_number}.npy"
 
-    all_files = [d1_stress_file, d1_strain_file, d1_positions_file,
-                 d2_stress_file, d2_strain_file, d2_positions_file]
+    all_files = [d1_stress_file, d1_positions_file, d2_stress_file, d2_positions_file]
 
     if not all(os.path.exists(f) for f in all_files):
         missing_files = [f for f in all_files if not os.path.exists(f)]
         raise FileNotFoundError(f"缺少帧 {frame_number} 的数据文件: {missing_files}")
 
-    found_files = all_files
-    
     # 加载Domain1数据
-    d1_stress = np.load(found_files[0])
-    d1_strain = np.load(found_files[1])
-    d1_positions = np.load(found_files[2])
-    
+    d1_stress = np.load(d1_stress_file)
+    d1_positions = np.load(d1_positions_file)
+
     # 加载Domain2数据
-    d2_stress = np.load(found_files[3])
-    d2_strain = np.load(found_files[4])
-    d2_positions = np.load(found_files[5])
-    
+    d2_stress = np.load(d2_stress_file)
+    d2_positions = np.load(d2_positions_file)
+
     return {
-        'domain1': {'stress': d1_stress, 'strain': d1_strain, 'positions': d1_positions},
-        'domain2': {'stress': d2_stress, 'strain': d2_strain, 'positions': d2_positions},
+        'domain1': {'stress': d1_stress, 'positions': d1_positions},
+        'domain2': {'stress': d2_stress, 'positions': d2_positions},
         'frame_number': frame_number
     }
 
@@ -197,20 +194,7 @@ def compute_von_mises_stress(stress_data):
     
     return np.array(von_mises)
 
-def compute_hydrostatic_pressure(stress_data):
-    """计算静水压力"""
-    dim = stress_data.shape[1]
-    pressure = []
-    
-    for i in range(stress_data.shape[0]):
-        s = stress_data[i]
-        if dim == 2:
-            p = -(s[0,0] + s[1,1]) / 2
-        else:
-            p = -(s[0,0] + s[1,1] + s[2,2]) / 3
-        pressure.append(p)
-    
-    return np.array(pressure)
+# Hydrostatic pressure functions removed - focusing only on von Mises stress
 
 def calculate_adaptive_radius(positions, coverage_factor=0.8):
     """
@@ -261,196 +245,134 @@ def calculate_adaptive_radius(positions, coverage_factor=0.8):
     
     return radius_points ** 2  # Return s parameter (area)
 
-def visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path=None, use_log=False, stress_cmap='coolwarm', max_stress=None):
-    """2D应力可视化
-    
+def visualize_stress_2d(positions, von_mises, frame_number, save_path=None, use_log=False, stress_cmap='coolwarm', max_stress=None, particle_size=None):
+    """2D应力可视化（仅显示von Mises应力）
+
     Args:
         max_stress: Manual maximum value for von Mises stress color range. If None, uses data maximum.
+        particle_size: Manual particle size (s parameter). If None, uses adaptive calculation.
     """
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
 
-    particle_size = 20
+    # Calculate adaptive particle size if not specified
+    if particle_size is None:
+        particle_size = calculate_adaptive_radius(positions)
+    print(f"Using particle size (s parameter): {particle_size:.2f}")
+
     if use_log:
-        from matplotlib.colors import LogNorm, SymLogNorm
-        
+        from matplotlib.colors import LogNorm
+
         # von Mises stress (using logarithmic scale)
         von_mises_positive = np.maximum(von_mises, 1e-10)  # 避免零值
         vm_vmin = np.min(von_mises_positive)
         vm_vmax = max_stress if max_stress is not None else np.max(von_mises_positive)
-        scatter1 = ax1.scatter(positions[:, 0], positions[:, 1], c=von_mises_positive, 
-                             cmap=stress_cmap, s=particle_size, alpha=0.8, 
-                             norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax))
-        ax1.set_title(f'von Mises Stress Distribution (Log Scale, Frame {frame_number})')
-        cbar1_label = 'von Mises Stress (Log)'
-        
-        # Hydrostatic pressure (using symmetric logarithmic scale)
-        pressure_abs_max = np.max(np.abs(pressure))
-        if pressure_abs_max > 0:
-            linthresh = pressure_abs_max / 1000
-        else:
-            linthresh = 1e-10
-        scatter2 = ax2.scatter(positions[:, 0], positions[:, 1], c=pressure, 
-                             cmap='RdBu', s=particle_size, alpha=0.8,
-                             norm=SymLogNorm(linthresh=linthresh))
-        ax2.set_title(f'Hydrostatic Pressure Distribution (SymLog Scale, Frame {frame_number})')
-        cbar2_label = 'Hydrostatic Pressure (SymLog)'
+        scatter = ax.scatter(positions[:, 0], positions[:, 1], c=von_mises_positive,
+                           cmap=stress_cmap, s=particle_size, alpha=0.8,
+                           norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax))
+        ax.set_title(f'von Mises Stress Distribution (Log Scale, Frame {frame_number})')
+        cbar_label = 'von Mises Stress (Log)'
     else:
         # von Mises stress (linear scale)
         vm_vmax = max_stress if max_stress is not None else np.max(von_mises)
-        scatter1 = ax1.scatter(positions[:, 0], positions[:, 1], c=von_mises, 
-                             cmap=stress_cmap, s=particle_size, alpha=0.8,
-                             vmax=vm_vmax)
-        ax1.set_title(f'von Mises Stress Distribution (Frame {frame_number})')
-        cbar1_label = 'von Mises Stress'
-        
-        # Hydrostatic pressure (linear scale)
-        scatter2 = ax2.scatter(positions[:, 0], positions[:, 1], c=pressure, 
-                             cmap='RdBu', s=particle_size, alpha=0.8)
-        ax2.set_title(f'Hydrostatic Pressure Distribution (Frame {frame_number})')
-        cbar2_label = 'Hydrostatic Pressure'
-    
-    ax1.set_xlabel('X')
-    ax1.set_ylabel('Y')
-    ax1.set_aspect('equal')
-    plt.colorbar(scatter1, ax=ax1, label=cbar1_label)
-    
-    ax2.set_xlabel('X')
-    ax2.set_ylabel('Y')
-    ax2.set_aspect('equal')
-    plt.colorbar(scatter2, ax=ax2, label=cbar2_label)
-    
+        scatter = ax.scatter(positions[:, 0], positions[:, 1], c=von_mises,
+                           cmap=stress_cmap, s=particle_size, alpha=0.8,
+                           vmax=vm_vmax)
+        ax.set_title(f'von Mises Stress Distribution (Frame {frame_number})')
+        cbar_label = 'von Mises Stress'
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_aspect('equal')
+    plt.colorbar(scatter, ax=ax, label=cbar_label)
+
     plt.tight_layout()
-    
+
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Image saved to: {save_path}")
-    
+
     plt.show()
 
 
-def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress_cmap='coolwarm', max_stress=None):
+def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress_cmap='coolwarm', max_stress=None, particle_size=None):
     """2D Schwarz双域应力可视化"""
-    
+
     frame_number = data_dict['frame_number']
     d1_data = data_dict['domain1']
     d2_data = data_dict['domain2']
-    
-    # Calculate von Mises stress and hydrostatic pressure for both domains
+
+    # Calculate von Mises stress for both domains
     d1_von_mises = compute_von_mises_stress(d1_data['stress'])
-    d1_pressure = compute_hydrostatic_pressure(d1_data['stress'])
     d2_von_mises = compute_von_mises_stress(d2_data['stress'])
-    d2_pressure = compute_hydrostatic_pressure(d2_data['stress'])
-    
+
     # Merge data to unify scale range
     all_von_mises = np.concatenate([d1_von_mises, d2_von_mises])
-    all_pressure = np.concatenate([d1_pressure, d2_pressure])
-    
+
     # Calculate adaptive radius for each domain
-    d1_particle_size = 20
-    d2_particle_size = 20
+    if particle_size is None:
+        d1_particle_size = calculate_adaptive_radius(d1_data['positions'])
+        d2_particle_size = calculate_adaptive_radius(d2_data['positions'])
+    else:
+        d1_particle_size = particle_size
+        d2_particle_size = particle_size
 
     print(f"Domain1 particle size (s parameter): {d1_particle_size:.2f}")
     print(f"Domain2 particle size (s parameter): {d2_particle_size:.2f}")
 
-    # Create 2x2 subplot layout
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
-    
+    # Create 1x2 subplot layout (只显示von Mises应力)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
     if use_log:
-        from matplotlib.colors import LogNorm, SymLogNorm
-        
+        from matplotlib.colors import LogNorm
+
         # Calculate logarithmic scale range
         vm_positive = np.maximum(all_von_mises, 1e-10)
         vm_vmin = np.min(vm_positive)
         vm_vmax = max_stress if max_stress is not None else np.max(vm_positive)
         
-        pressure_abs_max = np.max(np.abs(all_pressure))
-        if pressure_abs_max > 0:
-            p_linthresh = pressure_abs_max / 1000
-        else:
-            p_linthresh = 1e-10
-        
         # Domain1 von Mises stress (log scale)
         d1_vm_positive = np.maximum(d1_von_mises, 1e-10)
-        scatter1 = ax1.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], 
-                              c=d1_vm_positive, cmap=stress_cmap, s=d1_particle_size, alpha=0.8, 
+        scatter1 = ax1.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1],
+                              c=d1_vm_positive, cmap=stress_cmap, s=d1_particle_size, alpha=0.8,
                               norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none')
         ax1.set_title(f'Domain1 von Mises Stress (Log Scale, Frame {frame_number})')
         cbar1_label = 'von Mises Stress (Log)'
-        
+
         # Domain2 von Mises stress (log scale)
         d2_vm_positive = np.maximum(d2_von_mises, 1e-10)
-        scatter2 = ax2.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], 
-                              c=d2_vm_positive, cmap=stress_cmap, s=d2_particle_size, alpha=0.8, 
+        scatter2 = ax2.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1],
+                              c=d2_vm_positive, cmap=stress_cmap, s=d2_particle_size, alpha=0.8,
                               norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none')
         ax2.set_title(f'Domain2 von Mises Stress (Log Scale, Frame {frame_number})')
         cbar2_label = 'von Mises Stress (Log)'
-        
-        # Domain1 hydrostatic pressure (symmetric log scale)
-        scatter3 = ax3.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], 
-                              c=d1_pressure, cmap='RdBu', s=d1_particle_size, alpha=0.8, 
-                              norm=SymLogNorm(linthresh=p_linthresh), edgecolors='none')
-        ax3.set_title(f'Domain1 Hydrostatic Pressure (SymLog Scale, Frame {frame_number})')
-        cbar3_label = 'Hydrostatic Pressure (SymLog)'
-        
-        # Domain2 hydrostatic pressure (symmetric log scale)
-        scatter4 = ax4.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], 
-                              c=d2_pressure, cmap='RdBu', s=d2_particle_size, alpha=0.8, 
-                              norm=SymLogNorm(linthresh=p_linthresh), edgecolors='none')
-        ax4.set_title(f'Domain2 Hydrostatic Pressure (SymLog Scale, Frame {frame_number})')
-        cbar4_label = 'Hydrostatic Pressure (SymLog)'
     else:
         # Linear scale
         vm_vmin = np.min(all_von_mises)
         vm_vmax = max_stress if max_stress is not None else np.max(all_von_mises)
-        p_vmin, p_vmax = np.min(all_pressure), np.max(all_pressure)
-        
+
         # Domain1 von Mises stress (linear scale)
-        scatter1 = ax1.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], 
-                              c=d1_von_mises, cmap=stress_cmap, s=d1_particle_size, alpha=0.8, 
+        scatter1 = ax1.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1],
+                              c=d1_von_mises, cmap=stress_cmap, s=d1_particle_size, alpha=0.8,
                               vmin=vm_vmin, vmax=vm_vmax, edgecolors='none')
         ax1.set_title(f'Domain1 von Mises Stress (Frame {frame_number})')
         cbar1_label = 'von Mises Stress'
-        
+
         # Domain2 von Mises stress (linear scale)
-        scatter2 = ax2.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], 
-                              c=d2_von_mises, cmap=stress_cmap, s=d2_particle_size, alpha=0.8, 
+        scatter2 = ax2.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1],
+                              c=d2_von_mises, cmap=stress_cmap, s=d2_particle_size, alpha=0.8,
                               vmin=vm_vmin, vmax=vm_vmax, edgecolors='none')
         ax2.set_title(f'Domain2 von Mises Stress (Frame {frame_number})')
         cbar2_label = 'von Mises Stress'
-        
-        # Domain1 hydrostatic pressure (linear scale)
-        scatter3 = ax3.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], 
-                              c=d1_pressure, cmap='RdBu', s=d1_particle_size, alpha=0.8, 
-                              vmin=p_vmin, vmax=p_vmax, edgecolors='none')
-        ax3.set_title(f'Domain1 Hydrostatic Pressure (Frame {frame_number})')
-        cbar3_label = 'Hydrostatic Pressure'
-        
-        # Domain2 hydrostatic pressure (linear scale)
-        scatter4 = ax4.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], 
-                              c=d2_pressure, cmap='RdBu', s=d2_particle_size, alpha=0.8, 
-                              vmin=p_vmin, vmax=p_vmax, edgecolors='none')
-        ax4.set_title(f'Domain2 Hydrostatic Pressure (Frame {frame_number})')
-        cbar4_label = 'Hydrostatic Pressure'
     
     ax1.set_xlabel('X')
     ax1.set_ylabel('Y')
     ax1.set_aspect('equal')
     plt.colorbar(scatter1, ax=ax1, label=cbar1_label)
-    
+
     ax2.set_xlabel('X')
     ax2.set_ylabel('Y')
     ax2.set_aspect('equal')
     plt.colorbar(scatter2, ax=ax2, label=cbar2_label)
-    
-    ax3.set_xlabel('X')
-    ax3.set_ylabel('Y')
-    ax3.set_aspect('equal')
-    plt.colorbar(scatter3, ax=ax3, label=cbar3_label)
-    
-    ax4.set_xlabel('X')
-    ax4.set_ylabel('Y')
-    ax4.set_aspect('equal')
-    plt.colorbar(scatter4, ax=ax4, label=cbar4_label)
     
     plt.tight_layout()
     
@@ -460,114 +382,78 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress
     
     plt.show()
 
-def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=False, stress_cmap='coolwarm', max_stress=None):
-    """2D Schwarz双域合并应力可视化"""
-    
+def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=False, stress_cmap='coolwarm', max_stress=None, particle_size=None):
+    """2D Schwarz双域合并应力可视化（仅显示von Mises应力）"""
+
     frame_number = data_dict['frame_number']
     d1_data = data_dict['domain1']
     d2_data = data_dict['domain2']
-    
-    # Calculate von Mises stress and hydrostatic pressure for both domains
+
+    # Calculate von Mises stress for both domains
     d1_von_mises = compute_von_mises_stress(d1_data['stress'])
-    d1_pressure = compute_hydrostatic_pressure(d1_data['stress'])
     d2_von_mises = compute_von_mises_stress(d2_data['stress'])
-    d2_pressure = compute_hydrostatic_pressure(d2_data['stress'])
-    
+
     # Merge data to unify scale range
     all_von_mises = np.concatenate([d1_von_mises, d2_von_mises])
-    all_pressure = np.concatenate([d1_pressure, d2_pressure])
-    
+
     # Calculate adaptive radius for each domain
-    d1_particle_size = calculate_adaptive_radius(d1_data['positions'])
-    d2_particle_size = calculate_adaptive_radius(d2_data['positions'])
+    if particle_size is None:
+        d1_particle_size = calculate_adaptive_radius(d1_data['positions'])
+        d2_particle_size = calculate_adaptive_radius(d2_data['positions'])
+    else:
+        d1_particle_size = particle_size
+        d2_particle_size = particle_size
 
     print(f"Domain1 particle size (s parameter): {d1_particle_size:.2f}")
     print(f"Domain2 particle size (s parameter): {d2_particle_size:.2f}")
 
-    # Create 1x2 subplot layout
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-    
+    # Create single subplot layout (only von Mises stress)
+    fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+
     if use_log:
-        from matplotlib.colors import LogNorm, SymLogNorm
-        
+        from matplotlib.colors import LogNorm
+
         # Calculate logarithmic scale range
         vm_positive = np.maximum(all_von_mises, 1e-10)
         vm_vmin = np.min(vm_positive)
         vm_vmax = max_stress if max_stress is not None else np.max(vm_positive)
-        
-        pressure_abs_max = np.max(np.abs(all_pressure))
-        if pressure_abs_max > 0:
-            p_linthresh = pressure_abs_max / 1000
-        else:
-            p_linthresh = 1e-10
-        
+
         # Combined von Mises stress visualization (log scale)
         d1_vm_positive = np.maximum(d1_von_mises, 1e-10)
         d2_vm_positive = np.maximum(d2_von_mises, 1e-10)
-        
-        scatter1_d1 = ax1.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], 
-                                 c=d1_vm_positive, cmap=stress_cmap, s=d1_particle_size, alpha=0.8, 
-                                 norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), 
-                                 edgecolors='black', linewidth=0.3, label='Domain1')
-        scatter1_d2 = ax1.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], 
-                                 c=d2_vm_positive, cmap=stress_cmap, s=d2_particle_size, alpha=0.8, 
-                                 norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), 
-                                 edgecolors='red', linewidth=0.3, marker='^', label='Domain2')
-        ax1.set_title(f'Dual Domain von Mises Stress Distribution (Log Scale, Frame {frame_number})')
-        cbar1_label = 'von Mises Stress (Log)'
-        
-        # Combined hydrostatic pressure visualization (symmetric log scale)
-        scatter2_d1 = ax2.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], 
-                                 c=d1_pressure, cmap='RdBu', s=d1_particle_size, alpha=0.8, 
-                                 norm=SymLogNorm(linthresh=p_linthresh), 
-                                 edgecolors='black', linewidth=0.3, label='Domain1')
-        scatter2_d2 = ax2.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], 
-                                 c=d2_pressure, cmap='RdBu', s=d2_particle_size, alpha=0.8, 
-                                 norm=SymLogNorm(linthresh=p_linthresh), 
-                                 edgecolors='red', linewidth=0.3, marker='^', label='Domain2')
-        ax2.set_title(f'Dual Domain Hydrostatic Pressure Distribution (SymLog Scale, Frame {frame_number})')
-        cbar2_label = 'Hydrostatic Pressure (SymLog)'
+
+        scatter_d1 = ax.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1],
+                               c=d1_vm_positive, cmap=stress_cmap, s=d1_particle_size, alpha=0.8,
+                               norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax),
+                               edgecolors='none', label='Domain1')
+        scatter_d2 = ax.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1],
+                               c=d2_vm_positive, cmap=stress_cmap, s=d2_particle_size, alpha=0.8,
+                               norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax),
+                               edgecolors='none', label='Domain2')
+        ax.set_title(f'Dual Domain von Mises Stress Distribution (Log Scale, Frame {frame_number})')
+        cbar_label = 'von Mises Stress (Log)'
     else:
         # Linear scale范围
         vm_vmin = np.min(all_von_mises)
         vm_vmax = max_stress if max_stress is not None else np.max(all_von_mises)
-        p_vmin, p_vmax = np.min(all_pressure), np.max(all_pressure)
-        
+
         # Combined von Mises stress visualization (linear scale)
-        scatter1_d1 = ax1.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], 
-                                 c=d1_von_mises, cmap=stress_cmap, s=d1_particle_size, alpha=0.8, 
-                                 vmin=vm_vmin, vmax=vm_vmax, 
-                                 edgecolors='black', linewidth=0.3, label='Domain1')
-        scatter1_d2 = ax1.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], 
-                                 c=d2_von_mises, cmap=stress_cmap, s=d2_particle_size, alpha=0.8, 
-                                 vmin=vm_vmin, vmax=vm_vmax, 
-                                 edgecolors='red', linewidth=0.3, marker='^', label='Domain2')
-        ax1.set_title(f'Dual Domain von Mises Stress Distribution (Frame {frame_number})')
-        cbar1_label = 'von Mises Stress'
-        
-        # Combined hydrostatic pressure visualization (linear scale)
-        scatter2_d1 = ax2.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], 
-                                 c=d1_pressure, cmap='RdBu', s=d1_particle_size, alpha=0.8, 
-                                 vmin=p_vmin, vmax=p_vmax, 
-                                 edgecolors='black', linewidth=0.3, label='Domain1')
-        scatter2_d2 = ax2.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], 
-                                 c=d2_pressure, cmap='RdBu', s=d2_particle_size, alpha=0.8, 
-                                 vmin=p_vmin, vmax=p_vmax, 
-                                 edgecolors='red', linewidth=0.3, marker='^', label='Domain2')
-        ax2.set_title(f'Dual Domain Hydrostatic Pressure Distribution (Frame {frame_number})')
-        cbar2_label = 'Hydrostatic Pressure'
-    
-    ax1.set_xlabel('X')
-    ax1.set_ylabel('Y')
-    ax1.set_aspect('equal')
-    ax1.legend()
-    plt.colorbar(scatter1_d1, ax=ax1, label=cbar1_label)
-    
-    ax2.set_xlabel('X')
-    ax2.set_ylabel('Y')
-    ax2.set_aspect('equal')
-    ax2.legend()
-    plt.colorbar(scatter2_d1, ax=ax2, label=cbar2_label)
+        scatter_d1 = ax.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1],
+                               c=d1_von_mises, cmap=stress_cmap, s=d1_particle_size, alpha=0.8,
+                               vmin=vm_vmin, vmax=vm_vmax,
+                               edgecolors='none', label='Domain1')
+        scatter_d2 = ax.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1],
+                               c=d2_von_mises, cmap=stress_cmap, s=d2_particle_size, alpha=0.8,
+                               vmin=vm_vmin, vmax=vm_vmax,
+                               edgecolors='none', label='Domain2')
+        ax.set_title(f'Dual Domain von Mises Stress Distribution (Frame {frame_number})')
+        cbar_label = 'von Mises Stress'
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_aspect('equal')
+    ax.legend()
+    plt.colorbar(scatter_d1, ax=ax, label=cbar_label)
     
     plt.tight_layout()
     
@@ -579,37 +465,30 @@ def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=Fals
 
 
 def print_schwarz_stress_statistics(data_dict):
-    """打印Schwarz双域应力统计信息"""
+    """打印Schwarz双域应力统计信息（仅包含von Mises应力）"""
     frame_number = data_dict['frame_number']
     d1_data = data_dict['domain1']
     d2_data = data_dict['domain2']
-    
+
     print(f"Schwarz Dual Domain Stress Statistics (Frame {frame_number}):")
     print("=" * 60)
-    
+
     for domain_name, domain_data in [("Domain1", d1_data), ("Domain2", d2_data)]:
         print(f"\n{domain_name}:")
         print("-" * 30)
-        
+
         # Calculate stress scalars
         von_mises = compute_von_mises_stress(domain_data['stress'])
-        pressure = compute_hydrostatic_pressure(domain_data['stress'])
-        
+
         print(f"Number of particles: {len(domain_data['positions'])}")
         print(f"Dimensions: {domain_data['positions'].shape[1]}D")
-        
+
         print(f"von Mises Stress:")
         print(f"  Min: {np.min(von_mises):.3e}")
         print(f"  Max: {np.max(von_mises):.3e}")
         print(f"  Mean: {np.mean(von_mises):.3e}")
         print(f"  Std: {np.std(von_mises):.3e}")
-        
-        print(f"Hydrostatic Pressure:")
-        print(f"  Min: {np.min(pressure):.3e}")
-        print(f"  Max: {np.max(pressure):.3e}")
-        print(f"  Mean: {np.mean(pressure):.3e}")
-        print(f"  Std: {np.std(pressure):.3e}")
-        
+
         # Stress component statistics
         stress_data = domain_data['stress']
         dim = stress_data.shape[1]
@@ -619,8 +498,8 @@ def print_schwarz_stress_statistics(data_dict):
                 component = stress_data[:, i, j]
                 print(f"  σ_{i+1}{j+1}: {np.mean(component):.3e} ± {np.std(component):.3e}")
 
-def print_stress_statistics(von_mises, pressure, stress_data):
-    """Print stress statistics information"""
+def print_stress_statistics(von_mises, stress_data):
+    """Print stress statistics information（仅包含von Mises应力）"""
     print("Stress Statistics:")
     print("-" * 40)
     print(f"von Mises Stress:")
@@ -628,13 +507,7 @@ def print_stress_statistics(von_mises, pressure, stress_data):
     print(f"  Max: {np.max(von_mises):.3e}")
     print(f"  Mean: {np.mean(von_mises):.3e}")
     print(f"  Std: {np.std(von_mises):.3e}")
-    
-    print(f"\nHydrostatic Pressure:")
-    print(f"  Min: {np.min(pressure):.3e}")
-    print(f"  Max: {np.max(pressure):.3e}")
-    print(f"  Mean: {np.mean(pressure):.3e}")
-    print(f"  Std: {np.std(pressure):.3e}")
-    
+
     # Stress component statistics
     dim = stress_data.shape[1]
     print(f"\nStress Components ({dim}D):")
@@ -644,9 +517,9 @@ def print_stress_statistics(von_mises, pressure, stress_data):
             print(f"  σ_{i+1}{j+1}: {np.mean(component):.3e} ± {np.std(component):.3e}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Visualize stress and strain data')
-    parser.add_argument('--dir', '-d', default='stress_strain_output',
-                       help='Data directory (default: stress_strain_output, use "single" for latest single domain results)')
+    parser = argparse.ArgumentParser(description='Visualize stress data')
+    parser.add_argument('--dir', '-d', default='stress_output',
+                       help='Data directory: "stress_output"/"single" for latest single domain, "schwarz" for latest Schwarz, or specific path like "experiment_results/single_domain_20251029_025635"')
     parser.add_argument('--frame', '-f', type=int, default=None,
                        help='Specify frame number (default: latest frame)')
     parser.add_argument('--save', '-s', default=None,
@@ -663,14 +536,16 @@ def main():
                        help='Colormap for stress visualization (default: coolwarm, options: viridis, plasma, inferno, magma, coolwarm, RdYlBu, seismic)')
     parser.add_argument('--max-stress', type=float, default=None,
                        help='Manually specify maximum value for stress color range (applies to von Mises stress only)')
-    
-    
+    parser.add_argument('--particle-size', type=float, default=None,
+                       help='Manually specify particle size for visualization (s parameter for scatter plot). If not specified, uses adaptive calculation based on particle spacing.')
+
+
     args = parser.parse_args()
     
     try:
         if args.schwarz:
             # Schwarz dual domain mode
-            if args.dir == 'stress_strain_output':
+            if args.dir == 'stress_output':
                 args.dir = 'schwarz'  # 使用新的统一目录结构
             
             print(f"Loading Schwarz dual domain data from {args.dir}...")
@@ -699,39 +574,38 @@ def main():
                 
             if args.combined:
                 # Combined visualization mode
-                visualize_schwarz_stress_combined_2d(data_dict, save_path, args.log, args.cmap, args.max_stress)
+                visualize_schwarz_stress_combined_2d(data_dict, save_path, args.log, args.cmap, args.max_stress, args.particle_size)
             else:
                 # Separate visualization mode
-                visualize_schwarz_stress_2d(data_dict, save_path, args.log, args.cmap, args.max_stress)
+                visualize_schwarz_stress_2d(data_dict, save_path, args.log, args.cmap, args.max_stress, args.particle_size)
                     
         else:
             # Single domain mode (original functionality)
             print(f"Loading data from {args.dir}...")
-            stress_data, strain_data, positions, frame_number = load_stress_data(args.dir, args.frame)
+            stress_data, positions, frame_number = load_stress_data(args.dir, args.frame)
             print(f"Successfully loaded data for frame {frame_number}")
             print(f"Particle count: {positions.shape[0]}")
             print(f"维度: {positions.shape[1]}D")
             
             # Calculate stress scalars
             von_mises = compute_von_mises_stress(stress_data)
-            pressure = compute_hydrostatic_pressure(stress_data)
-            
+
             # Print statistics
             if args.stats:
-                print_stress_statistics(von_mises, pressure, stress_data)
-            
+                print_stress_statistics(von_mises, stress_data)
+
             # Visualization
             dim = positions.shape[1]
             save_path = args.save
             if save_path and not save_path.endswith(('.png', '.jpg', '.pdf')):
                 save_path += '.png'
-            
+
             print("Generating visualization...")
             if dim != 2:
                 print(f"Error: Only 2D data visualization is supported, current data dimension is {dim}D")
                 return 1
-                
-            visualize_stress_2d(positions, von_mises, pressure, frame_number, save_path, args.log, args.cmap, args.max_stress)
+
+            visualize_stress_2d(positions, von_mises, frame_number, save_path, args.log, args.cmap, args.max_stress, args.particle_size)
             
     except Exception as e:
         print(f"Error: {e}")

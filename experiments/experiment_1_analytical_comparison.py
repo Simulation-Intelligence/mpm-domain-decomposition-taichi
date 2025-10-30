@@ -227,9 +227,9 @@ def run_simulation_and_compare(config_path, output_dir):
             if i >= mpm.recorder.max_frames:
                 break
 
-        # 在最后一帧记录应力和应变数据
-        print("记录最终帧的应力和应变数据...")
-        mpm.save_stress_strain_data(i)
+        # 在最后一帧记录应力数据
+        print("记录最终帧的应力数据...")
+        mpm.save_stress_data(i)
 
         if mpm.recorder is None:
             exit()

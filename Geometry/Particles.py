@@ -138,9 +138,10 @@ class Particles:
         # 设置边界
         if self.boundary_size is not None:
             boundary_range = config.get("boundary_range", None)
-            if self.sampling_method == "mesh":
-                # 如果是mesh采样，使用mesh边界检测
-                self.set_boundary(method="mesh")
+            use_mesh_boundary = config.get("use_mesh_boundary", True)  # 默认使用mesh边界
+
+            if self.sampling_method == "mesh" and use_mesh_boundary:
+                pass  # mesh采样的边界信息已经在粒子生成时设置，无需额外检测
             elif boundary_range is not None:
                 self.set_boundary(method="manual")
             else:
@@ -243,7 +244,8 @@ class Particles:
             'grid_nx': self.grid_nx,
             'grid_ny': self.grid_ny,
             'domain_width': self.domain_width,
-            'domain_height': self.domain_height
+            'domain_height': self.domain_height,
+            'use_mesh_boundary': config.get("use_mesh_boundary", True)
         }
 
         # 3D情况下添加额外参数

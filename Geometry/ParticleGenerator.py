@@ -70,7 +70,7 @@ class ParticleGenerator:
     """粒子生成器"""
 
     def __init__(self, dim=2, sampling_method="poisson", particles_per_grid=8, grid_size=16,
-                 grid_nx=None, grid_ny=None, grid_nz=None, domain_width=1.0, domain_height=1.0, domain_depth=1.0):
+                 grid_nx=None, grid_ny=None, grid_nz=None, domain_width=1.0, domain_height=1.0, domain_depth=1.0, use_mesh_boundary=True):
         """
         初始化粒子生成器
         Args:
@@ -82,9 +82,11 @@ class ParticleGenerator:
             grid_ny: 网格y方向大小
             domain_width: 域宽度
             domain_height: 域高度
+            use_mesh_boundary: 是否在mesh采样时使用边界信息
         """
         self.dim = dim
         self.sampling_method = sampling_method
+        self.use_mesh_boundary = use_mesh_boundary
         self.particles_per_grid = particles_per_grid
 
         # 支持新的网格配置，区分2D和3D
@@ -206,9 +208,6 @@ class ParticleGenerator:
             particles, weights = self._generate_gauss_quadrature_particles(rect_range, n_particles)
             # 将权重信息附加到粒子数据中，以便后续使用
             self.gauss_weights = weights
-        elif self.sampling_method == "mesh":
-            # 基于Triangle的网格采样
-            particles = self._generate_mesh_particles_rectangle(rect_range, n_particles)
         else:
             # 均匀随机采样 (uniform)
             for _ in range(n_particles):
@@ -349,9 +348,6 @@ class ParticleGenerator:
         elif self.sampling_method == "regular":
             # 椭圆的规则采样
             particles = self._generate_regular_ellipse_particles(center, semi_axes, n_particles)
-        elif self.sampling_method == "mesh":
-            # 基于Triangle的网格采样
-            particles = self._generate_mesh_particles_ellipse(center, semi_axes, n_particles)
         else:
             # 传统随机采样方法 (uniform)
             particles = self._traditional_ellipse_sampling(center, semi_axes, n_particles)
@@ -550,31 +546,6 @@ class ParticleGenerator:
 
         return False
 
-    def _generate_mesh_particles_rectangle(self, rect_range, n_particles):
-        """使用Triangle为矩形区域生成网格粒子"""
-        if self.dim != 2:
-            raise ValueError("Mesh sampling目前只支持2D")
-
-        # 创建矩形的.poly文件
-        poly_data = self._create_rectangle_poly(rect_range)
-
-        # 调用Triangle生成网格
-        vertices = self._call_triangle_and_extract_vertices(poly_data, n_particles)
-
-        return vertices
-
-    def _generate_mesh_particles_ellipse(self, center, semi_axes, n_particles):
-        """使用Triangle为椭圆区域生成网格粒子"""
-        if self.dim != 2:
-            raise ValueError("Mesh sampling目前只支持2D")
-
-        # 创建椭圆的.poly文件（通过多边形近似）
-        poly_data = self._create_ellipse_poly(center, semi_axes, n_particles)
-
-        # 调用Triangle生成网格
-        vertices = self._call_triangle_and_extract_vertices(poly_data, n_particles)
-
-        return vertices
 
     def _create_rectangle_poly(self, rect_range):
         """创建矩形的.poly格式数据"""
@@ -647,8 +618,8 @@ class ParticleGenerator:
 
         return poly_content
 
-    def _call_triangle_and_extract_vertices(self, poly_data, target_particle_spacing):
-        """调用Triangle工具并提取顶点"""
+    def _call_triangle_and_extract_vertices(self, poly_data, target_particle_spacing, save_mesh=True):
+        """调用Triangle工具并提取顶点，可选择保存mesh数据"""
         import tempfile
         import os
         import subprocess
@@ -684,6 +655,10 @@ class ParticleGenerator:
                 node_file = os.path.join(temp_dir, "input.1.node")
                 if os.path.exists(node_file):
                     vertices = self._parse_node_file(node_file)
+
+                    # 如果需要保存mesh数据，则保存所有相关文件
+                    if save_mesh:
+                        self._save_mesh_data(temp_dir, target_particle_spacing)
                 else:
                     return self._fallback_sampling(poly_data, target_particle_spacing)
 
@@ -745,6 +720,149 @@ class ParticleGenerator:
                 vertices.append([x, y])
 
         return vertices
+
+    def _save_mesh_data(self, temp_dir, target_particle_spacing):
+        """保存Triangle生成的mesh数据到本地目录"""
+        import os
+        import shutil
+        from datetime import datetime
+
+        # 创建保存目录
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        mesh_dir = f"mesh_data/mesh_{timestamp}"
+        os.makedirs(mesh_dir, exist_ok=True)
+
+        print(f"Saving mesh data to directory: {mesh_dir}")
+
+        # 需要保存的文件列表
+        files_to_save = [
+            "input.poly",      # 输入边界文件
+            "input.1.node",    # 顶点文件
+            "input.1.ele",     # 三角形单元文件
+            "input.1.edge",    # 边文件
+        ]
+
+        saved_files = []
+        for file_name in files_to_save:
+            source_path = os.path.join(temp_dir, file_name)
+            if os.path.exists(source_path):
+                dest_path = os.path.join(mesh_dir, file_name)
+                shutil.copy2(source_path, dest_path)
+                saved_files.append(file_name)
+                print(f"  Saved: {file_name}")
+
+        # 保存mesh信息文件
+        info_file = os.path.join(mesh_dir, "mesh_info.txt")
+        with open(info_file, 'w', encoding='utf-8') as f:
+            f.write(f"Mesh Generation Time: {timestamp}\n")
+            f.write(f"Target Particle Spacing: {target_particle_spacing:.6f}\n")
+            f.write(f"Grid Configuration: {self.grid_nx}×{self.grid_ny}\n")
+            f.write(f"Domain Size: {self.domain_width}×{self.domain_height}\n")
+            f.write(f"Sampling Method: {self.sampling_method}\n")
+            f.write(f"Particles Per Grid: {self.particles_per_grid}\n")
+            f.write(f"Saved Files: {', '.join(saved_files)}\n")
+
+        # 解析并保存可读的mesh数据摘要
+        self._save_mesh_summary(mesh_dir, temp_dir)
+
+        print(f"Mesh data saved successfully, {len(saved_files)} files saved")
+        return mesh_dir
+
+    def _save_mesh_summary(self, mesh_dir, temp_dir):
+        """保存mesh数据的可读摘要"""
+        import os
+
+        summary_file = os.path.join(mesh_dir, "mesh_summary.txt")
+
+        try:
+            with open(summary_file, 'w', encoding='utf-8') as f:
+                f.write("=== Mesh Data Summary ===\n\n")
+
+                # 读取顶点信息
+                node_file = os.path.join(temp_dir, "input.1.node")
+                if os.path.exists(node_file):
+                    vertices = self._parse_node_file(node_file)
+                    f.write(f"Number of Vertices: {len(vertices)}\n")
+                    if vertices:
+                        f.write(f"Vertex Range: X[{min(v[0] for v in vertices):.4f}, {max(v[0] for v in vertices):.4f}], ")
+                        f.write(f"Y[{min(v[1] for v in vertices):.4f}, {max(v[1] for v in vertices):.4f}]\n")
+
+                # 读取三角形信息
+                ele_file = os.path.join(temp_dir, "input.1.ele")
+                if os.path.exists(ele_file):
+                    triangles = self._parse_ele_file(ele_file)
+                    f.write(f"Number of Triangles: {len(triangles)}\n")
+
+                # 读取边界信息
+                edge_file = os.path.join(temp_dir, "input.1.edge")
+                if os.path.exists(edge_file):
+                    edges = self._parse_edge_file(edge_file)
+                    boundary_edges = [e for e in edges if len(e) > 2 and e[2] != 0]
+                    f.write(f"Number of Edges: {len(edges)}\n")
+                    f.write(f"Number of Boundary Edges: {len(boundary_edges)}\n")
+
+        except Exception as e:
+            print(f"Error saving mesh summary: {e}")
+
+    def _parse_ele_file(self, ele_file):
+        """解析Triangle输出的.ele文件"""
+        triangles = []
+
+        try:
+            with open(ele_file, 'r') as f:
+                lines = f.readlines()
+
+            data_lines = [line.strip() for line in lines if line.strip() and not line.strip().startswith('#')]
+
+            if not data_lines:
+                return triangles
+
+            # 第一行：三角形数量 每个三角形的顶点数 属性数
+            header = data_lines[0].split()
+            n_triangles = int(header[0])
+
+            # 读取三角形数据
+            for i in range(1, min(len(data_lines), n_triangles + 1)):
+                parts = data_lines[i].split()
+                if len(parts) >= 4:  # 三角形索引 顶点1 顶点2 顶点3
+                    triangle = [int(parts[1]) - 1, int(parts[2]) - 1, int(parts[3]) - 1]  # 转换为0索引
+                    triangles.append(triangle)
+
+        except Exception as e:
+            print(f"Error parsing .ele file: {e}")
+
+        return triangles
+
+    def _parse_edge_file(self, edge_file):
+        """解析Triangle输出的.edge文件"""
+        edges = []
+
+        try:
+            with open(edge_file, 'r') as f:
+                lines = f.readlines()
+
+            data_lines = [line.strip() for line in lines if line.strip() and not line.strip().startswith('#')]
+
+            if not data_lines:
+                return edges
+
+            # 第一行：边数量 边界标记数
+            header = data_lines[0].split()
+            n_edges = int(header[0])
+
+            # 读取边数据
+            for i in range(1, min(len(data_lines), n_edges + 1)):
+                parts = data_lines[i].split()
+                if len(parts) >= 3:  # 边索引 顶点1 顶点2 [边界标记]
+                    edge = [int(parts[1]) - 1, int(parts[2]) - 1]  # 转换为0索引
+                    if len(parts) > 3:
+                        edge.append(int(parts[3]))  # 边界标记
+                    edges.append(edge)
+
+        except Exception as e:
+            print(f"Error parsing .edge file: {e}")
+
+        return edges
 
     def _fallback_sampling(self, poly_data, target_particle_spacing):
         """Triangle失败时的后备采样方法"""
@@ -817,8 +935,11 @@ class ParticleGenerator:
         for pos in vertices:
             # 确定粒子所属的材料
             material_id = self._determine_particle_material(pos, shapes)
-            # 检查是否为边界粒子（直接使用边界点）
-            is_boundary = self._is_boundary_particle_from_input(pos, boundary_points, target_particle_spacing)
+            # 检查是否为边界粒子（根据use_mesh_boundary配置决定）
+            is_boundary = False
+            if self.use_mesh_boundary:
+                is_boundary = self._is_boundary_particle_from_input(pos, boundary_points, target_particle_spacing *1e-2)
+
             particle_data = {
                 "position": pos,
                 "material_id": material_id,
@@ -1052,8 +1173,81 @@ class ParticleGenerator:
         for i, (x, y) in enumerate(all_holes, 1):
             poly_content += f"{i} {x:.6f} {y:.6f}\n"
 
-        # 返回poly文件内容和所有边界点位置
-        return poly_content, vertex_positions
+        # 过滤出真正的外部边界点（排除多个add形状之间的内部连接点）
+        # external_boundary_points = self._filter_external_boundary_points(vertex_positions)
+        external_boundary_points = vertex_positions  # 暂时不进行过滤
+
+        # 返回poly文件内容和过滤后的外部边界点位置
+        return poly_content, external_boundary_points
+
+    def _filter_external_boundary_points(self, vertex_positions):
+        """
+        过滤出真正的外部边界点，移除那些有太多近邻的边界点
+        这些通常是多个add形状之间的内部连接点
+        """
+        import numpy as np
+
+        print("过滤内部边界点...")
+
+        if len(vertex_positions) < 3:
+            return vertex_positions
+
+        # 计算平均边界点间距作为邻居检测的参考
+        all_distances = []
+        for i, pos1 in enumerate(vertex_positions):
+            for j, pos2 in enumerate(vertex_positions):
+                if i != j:
+                    dist = ((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)**0.5
+                    all_distances.append(dist)
+
+        if not all_distances:
+            return vertex_positions
+
+        # 使用中位距离的一定倍数作为邻居检测阈值
+        all_distances.sort()
+        median_distance = all_distances[len(all_distances) // 2]
+        neighbor_threshold = median_distance * 0.001  # 1.5倍中位距离内算作邻居
+
+        print(f"中位距离: {median_distance:.6f}, 邻居检测阈值: {neighbor_threshold:.6f}")
+
+        # 对每个边界点，统计其邻居数量
+        external_boundary_points = []
+
+        for i, pos in enumerate(vertex_positions):
+            neighbor_count = 0
+
+            # 统计邻居数量
+            for j, other_pos in enumerate(vertex_positions):
+                if i != j:
+                    distance = ((pos[0] - other_pos[0])**2 + (pos[1] - other_pos[1])**2)**0.5
+                    if distance < neighbor_threshold:
+                        neighbor_count += 1
+
+            # 外部边界点通常邻居较少（2个左右），内部连接点邻居较多
+            # 这里使用3作为阈值：邻居数<=3的认为是外部边界点
+            if neighbor_count == 0:
+                external_boundary_points.append(pos)
+
+        print(f"过滤前边界点数量: {len(vertex_positions)}")
+        print(f"过滤后边界点数量: {len(external_boundary_points)}")
+
+        # 如果过滤后点太少，降低要求重新过滤
+        if len(external_boundary_points) < len(vertex_positions) * 0.5:
+            print("过滤后点数较少，使用更宽松的标准...")
+            external_boundary_points = []
+            for i, pos in enumerate(vertex_positions):
+                neighbor_count = 0
+                for j, other_pos in enumerate(vertex_positions):
+                    if i != j:
+                        distance = ((pos[0] - other_pos[0])**2 + (pos[1] - other_pos[1])**2)**0.5
+                        if distance < neighbor_threshold:
+                            neighbor_count += 1
+                # 更宽松的标准：邻居数<=5
+                if neighbor_count <= 5:
+                    external_boundary_points.append(pos)
+            print(f"宽松标准过滤后边界点数量: {len(external_boundary_points)}")
+
+        return external_boundary_points
 
     def _fix_boundary_gaps(self, segments, vertices):
         """检测并修复边界段之间的缺口"""

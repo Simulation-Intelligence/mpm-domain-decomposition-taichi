@@ -3,9 +3,9 @@
     "float_type": "f64",
     "dim": 2,
     "grid_nx": 160,
-    "grid_ny": 80,
+    "grid_ny": 77,
     "domain_width": 1.0,
-    "domain_height": 0.484375,
+    "domain_height": 0.48125,
     "offset": [
         0.0,
         0.0
@@ -13,7 +13,7 @@
     "particles_per_grid": 4,
     "sampling_method": "mesh",
     "elasticity_model": "linear",
-    "dt": 0.001,
+    "dt": 0.0005,
     "max_iter": 1,
     "solve_max_iter": 1000,
     "solve_init_iter": 100,
@@ -35,7 +35,7 @@
     "compare_diff": false,
     "bound": 1,
     "initial_velocity_y": 0,
-    "damping": 0,
+    "damping": 0.5,
     "volume_forces": [
         {
             "type": "rectangle",
@@ -93,7 +93,7 @@
     "implicit_solver": "Newton",
     "boundary_size": 0.0001,
     "eta": 0.0001,
-    "max_frames": 100,
+    "max_frames": 10000,
     "use_record": false,
-    "no_gui": false
+    "no_gui": true
 }

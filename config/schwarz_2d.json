@@ -1,6 +1,6 @@
 {
-    "max_schwarz_iter": 2,
-    "record_frames": 1000,
+    "max_schwarz_iter": 5,
+    "record_frames": 2000,
     "visualize_grid": false,
     "steps": 1,
     "arch": "cpu",
@@ -11,34 +11,34 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 15,
-        "grid_ny": 15,
+        "grid_nx": 64,
+        "grid_ny": 64,
         "domain_width": 1.0,
         "domain_height": 1.0,
         "offset": [
-            0.07,
+            0.0,
             0.0
         ],
         "particles_per_grid": 7,
         "sampling_method": "regular",
-        "elasticity_model": "linear",
-        "dt": 5e-4,
+        "elasticity_model": "neohookean",
+        "dt": 1e-4,
         "max_iter": 1,
         "solve_max_iter": 1000,
         "solve_init_iter": 100,
-        "E": 1e6,
+        "E": 1e5,
         "nu": 0.3,
-        "implicit": true,
+        "implicit": false,
         "use_auto_diff": false,
         "compare_diff": false,
-        "bound": 2,
+        "bound": 3,
         "p_rho": 1e3,
         "initial_velocity_y": -2.0,
         "initial_position_range": [
             [
                 [
                     0.2,
-                    0.8
+                    0.6
                 ],
                 [
                     0.2,
@@ -46,7 +46,7 @@
                 ]
             ]
         ],
-        "boundary_size": 0.01,
+        "boundary_size": 0.001,
         "implicit_solver": "Newton",
         "eta": 1e-4
     },
@@ -55,16 +55,16 @@
         "float_type": "f64",
         "dim": 2,
         "grid_nx": 16,
-        "grid_ny": 16,
-        "domain_width": 1.0,
+        "grid_ny": 32,
+        "domain_width": 0.5,
         "domain_height": 1.0,
         "offset": [
-            0.0,
+            0.3,
             0.0
         ],
         "particles_per_grid": 16,
         "sampling_method": "regular",
-        "elasticity_model": "linear",
+        "elasticity_model": "neohookean",
         "dt": 1e-4,
         "max_iter": 1,
         "solve_max_iter": 1000,
@@ -80,16 +80,16 @@
         "initial_position_range": [
             [
                 [
-                    0.4,
-                    0.6
+                    0.2,
+                    0.45
                 ],
                 [
                     0.3,
-                    0.6
+                    0.7
                 ]
             ]
         ],
-        "boundary_size": 0.01,
+        "boundary_size": 0.001,
         "implicit_solver": "Newton",
         "eta": 1e-4
     }

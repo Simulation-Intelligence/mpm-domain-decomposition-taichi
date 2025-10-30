@@ -20,15 +20,20 @@ from Util.Project import project
 # ------------------ 主模拟器 ------------------
 @ti.data_oriented
 class ImplicitMPM:
-    def __init__(self, config:Config,common_particles:Particles=None):
-        self.cfg = config
+    def __init__(self, config:Config, common_particles:Particles=None, config_overrides:dict=None, no_gui=False):
+        # 应用配置覆盖
+        self.cfg = self._apply_config_overrides(config, config_overrides)
+        self.original_cfg = config  # 保存原始配置
 
-        self.float_type = ti.f32 if config.get("float_type", "f32") == "f32" else ti.f64
+        # GUI设置
+        self.no_gui = no_gui or self.cfg.get("no_gui", False)
 
-        self.dim = config.get("dim", 2)
+        self.float_type = ti.f32 if self.cfg.get("float_type", "f32") == "f32" else ti.f64
+
+        self.dim = self.cfg.get("dim", 2)
     
         self.grid = Grid(
-            config
+            self.cfg
         )
         self.particles = Particles(self.cfg,common_particles=common_particles)
         self.implicit = self.cfg.get("implicit", True)
@@ -41,6 +46,8 @@ class ImplicitMPM:
             raise ValueError("静力学求解要求使用隐式方法 (implicit=True)")
         if self.static_solve:
             print("启用静力学求解模式")
+
+        self.no_advect = self.cfg.get("no_advect", False)
 
         self.scale = self.cfg.get("scale", 1.0)
         self.offset = self.cfg.get("offset", (0, 0))
@@ -59,17 +66,89 @@ class ImplicitMPM:
 
         # 其他公共参数初始化
         self.max_schwarz_iter = config.get("max_schwarz_iter", 1)  # Schwarz迭代次数
+        self.max_frames = config.get("max_frames", 60)  # 最大帧数
+        self.use_record = config.get("use_record", False)  # 是否使用录制
         self.recorder = None
-        if config.get("record_frames", 0) > 0:
+        if self.use_record:
             self.recorder = ParticleRecorder(
             palette=np.array([
                 0x66CCFF,  # 域1普通粒子
                 0xFFFFFF
             ], dtype=np.uint32),
-            max_frames=config.get("record_frames", 60)
+            max_frames=self.max_frames
         )
 
-        self.gui= ti.GUI("Implicit MPM", res=800)
+        # 初始化GUI（如果不是no_gui模式）
+        if not self.no_gui:
+            self.gui= ti.ui.Window("Implicit MPM", res=(800, 800), vsync=False)
+        else:
+            self.gui = None
+
+    def _apply_config_overrides(self, config: Config, overrides: dict = None):
+        """
+        应用配置覆盖参数
+
+        参数:
+            config: 原始配置对象
+            overrides: 要覆盖的配置字典，支持嵌套路径，如 {'dt': 1e-5, 'material_params.0.E': 2e5}
+
+        返回:
+            应用覆盖后的新配置对象
+        """
+        if overrides is None:
+            return config
+
+        # 创建配置的深拷贝
+        import copy
+        new_config_data = copy.deepcopy(config.data)
+
+        # 应用覆盖
+        for key, value in overrides.items():
+            self._set_nested_value(new_config_data, key, value)
+            print(f"配置覆盖: {key} = {value}")
+
+        # 创建新的Config对象
+        new_config = Config()
+        new_config.data = new_config_data
+        return new_config
+
+    def _set_nested_value(self, data_dict: dict, key_path: str, value):
+        """
+        在嵌套字典中设置值，支持点分路径
+
+        参数:
+            data_dict: 目标字典
+            key_path: 键路径，如 'material_params.0.E' 或 'dt'
+            value: 要设置的值
+        """
+        keys = key_path.split('.')
+        current = data_dict
+
+        # 遍历到最后一级的父级
+        for key in keys[:-1]:
+            # 如果键是数字，表示列表索引
+            if key.isdigit():
+                key = int(key)
+                if not isinstance(current, list):
+                    raise ValueError(f"尝试用数字索引访问非列表对象: {key}")
+                if key >= len(current):
+                    raise ValueError(f"列表索引超出范围: {key}")
+                current = current[key]
+            else:
+                if key not in current:
+                    current[key] = {}
+                current = current[key]
+
+        # 设置最终值
+        final_key = keys[-1]
+        if final_key.isdigit():
+            final_key = int(final_key)
+            if not isinstance(current, list):
+                raise ValueError(f"尝试用数字索引访问非列表对象: {final_key}")
+            if final_key >= len(current):
+                raise ValueError(f"列表索引超出范围: {final_key}")
+
+        current[final_key] = value
 
     @ti.func
     def wrap_grid_idx(self, I):
@@ -114,7 +193,7 @@ class ImplicitMPM:
             self.g2p(self.dt)
             
             # 静力学求解时不进行advect
-            if not self.static_solve:
+            if not self.no_advect:
                 self.particles.advect(self.dt)
 
     @ti.kernel
@@ -206,12 +285,22 @@ class ImplicitMPM:
         return lines_end
     
     def render(self):
+        # 在无GUI模式下跳过渲染
+        if self.no_gui or self.gui is None:
+            return
+
         x_numpy = self.particles.x.to_numpy()
 
         if self.dim == 3:
             x_numpy= project(x_numpy)
 
-        self.gui.circles(x_numpy, radius=1.5, color=0x66CCFF)
+        # 使用ti.ui.Window的canvas API
+        canvas = self.gui.get_canvas()
+        canvas.set_background_color((0.067, 0.184, 0.255))
+
+        # 直接使用原始字段
+        canvas.circles(self.particles.x, radius=0.002, color=(0.4, 0.8, 1.0))
+
         self.gui.show()
 
         if self.recorder is None:
@@ -357,20 +446,20 @@ class ImplicitMPM:
         
         return False
 
-    def save_stress_strain_data(self, frame_number):
-        """保存最终帧的应力和应变数据"""
+    def save_stress_data(self, frame_number):
+        """保存最终帧的应力数据"""
         import json
         import os
         from datetime import datetime
-        
-        # 计算当前状态的应力和应变
-        print("正在计算应力和应变...")
+
+        # 计算当前状态的应力
+        print("正在计算应力...")
         self.solver.compute_stress_strain_with_averaging()
 
-        # 获取原始粒子的应力和应变数据
+        # 获取原始粒子的应力数据
         stress_data = self.particles.stress.to_numpy()
-        strain_data = self.particles.strain.to_numpy()
         positions = self.particles.x.to_numpy()
+        boundary_flags = self.particles.is_boundary_particle.to_numpy()
 
         # 过滤掉位置为(0,0)的粒子
         if self.dim == 2:
@@ -379,24 +468,24 @@ class ImplicitMPM:
         else:
             # 3D情况：过滤(0,0,0)位置
             valid_mask = ~((positions[:, 0] == 0.0) & (positions[:, 1] == 0.0) & (positions[:, 2] == 0.0))
-        
+
         # 检查是否有应力输出区域配置
         stress_output_regions = self.cfg.get("stress_output_regions", None)
         # 为了向后兼容，也检查单数形式
         if stress_output_regions is None:
             stress_output_regions = self.cfg.get("stress_output_region", None)
-        
+
         if stress_output_regions is not None:
             print("应用应力输出区域过滤...")
             # 应用区域过滤
             region_mask = np.array([self._is_point_in_regions(pos, stress_output_regions) for pos in positions])
             valid_mask = valid_mask & region_mask
             print(f"区域过滤后剩余 {np.sum(region_mask)} / {len(positions)} 个粒子")
-        
+
         # 应用过滤掩码
         filtered_stress_data = stress_data[valid_mask]
-        filtered_strain_data = strain_data[valid_mask]
         filtered_positions = positions[valid_mask]
+        filtered_boundary_flags = boundary_flags[valid_mask]
         
         print(f"Filtered out {np.sum(~valid_mask)} particles at origin position")
         print(f"Saving data for {len(filtered_positions)} particles")
@@ -409,8 +498,17 @@ class ImplicitMPM:
         
         # 保存为numpy文件（用于可视化）
         np.save(f"{output_dir}/stress_frame_{frame_number}.npy", filtered_stress_data)
-        np.save(f"{output_dir}/strain_frame_{frame_number}.npy", filtered_strain_data)
         np.save(f"{output_dir}/positions_frame_{frame_number}.npy", filtered_positions)
+        np.save(f"{output_dir}/boundary_flags_frame_{frame_number}.npy", filtered_boundary_flags)
+
+        # 保存actual mass信息
+        try:
+            actual_masses = self.solver.get_volume_force_masses()
+            if actual_masses:
+                np.save(f"{output_dir}/actual_masses_frame_{frame_number}.npy", np.array(actual_masses))
+                print(f"Saved actual masses: {actual_masses}")
+        except Exception as e:
+            print(f"Warning: Could not save actual masses: {e}")
         
         # 计算应力标量值（von Mises应力）- 使用过滤后的数据
         von_mises_stress = []
@@ -441,10 +539,10 @@ class ImplicitMPM:
             }
         }
         
-        with open(f"{output_dir}/stress_strain_stats_frame_{frame_number}.json", 'w') as f:
+        with open(f"{output_dir}/stress_stats_frame_{frame_number}.json", 'w') as f:
             json.dump(stats, f, indent=2)
-        
-        print(f"应力应变数据已保存到 {output_dir}/")
+
+        print(f"应力数据已保存到 {output_dir}/")
         print(f"von Mises应力范围: {stats['von_mises_stress']['min']:.3e} - {stats['von_mises_stress']['max']:.3e}")
         print(f"平均von Mises应力: {stats['von_mises_stress']['mean']:.3e}")
         
@@ -457,16 +555,25 @@ class ImplicitMPM:
         print("静力学求解完成")
         
         # 保存结果
-        self.save_stress_strain_data(1)
+        self.save_stress_data(1)
         
         # 渲染最终结果
         self.render()
 
 if __name__ == "__main__":
+    import argparse
 
-    cfg=Config("config/config_2d.json")
-    float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64
-    arch=cfg.get("arch", "cpu")
+    parser = argparse.ArgumentParser(description='运行单域隐式MPM模拟')
+    parser.add_argument('--config', default="config/config_2d_test3.json",
+                       help='配置文件路径 (默认: config/test_test3.json)')
+    parser.add_argument('--no-gui', action='store_true',
+                       help='禁用GUI界面运行')
+
+    args = parser.parse_args()
+
+    cfg = Config(args.config)
+    float_type = ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64
+    arch = cfg.get("arch", "cpu")
     if arch == "cuda":
         arch = ti.cuda
     elif arch == "vulkan":
@@ -474,35 +581,24 @@ if __name__ == "__main__":
     else:
         arch = ti.cpu
 
-    ti.init(arch=arch, default_fp=float_type, device_memory_GB=20)
-    mpm = ImplicitMPM(cfg)
+    ti.init(arch=arch, default_fp=float_type, device_memory_GB=20, log_level=ti.ERROR)
+    mpm = ImplicitMPM(cfg, no_gui=args.no_gui)
 
-    # 检查是否是静力学求解模式
-    if mpm.static_solve:
-        mpm.run_static_solve()
-        # 保持GUI开启以显示结果
-        while mpm.gui.running:
-            mpm.gui.show()
-    else:
-        # 原有的动态求解模式
-        i = 0
-        while mpm.gui.running:
-            mpm.step()
-            
-            mpm.render()
 
-            i += 1
+    # 原有的动态求解模式
+    i = 0
 
-            # 自动停止条件
-            if i >= mpm.recorder.max_frames:
-                break
+    max_frames = mpm.max_frames
+    while (i < max_frames) and ((mpm.gui is not None and mpm.gui.running) or mpm.no_gui):
+        mpm.step()
+        mpm.render()
+        i += 1
 
-        # 在最后一帧记录应力和应变数据
-        print("记录最终帧的应力和应变数据...")
-        mpm.save_stress_strain_data(i)
-
-        if mpm.recorder is None:
-            exit()
-        print("Playback finished.")
-        # 播放录制动画
-        mpm.recorder.play(loop=True, fps=60)
+    # 在最后一帧记录应力数据
+    print("记录最终帧的应力数据...")
+    mpm.save_stress_data(i)
+    if mpm.recorder is None:
+        exit()
+    print("Playback finished.")
+    # 播放录制动画
+    mpm.recorder.play(loop=True, fps=60)

@@ -50,7 +50,7 @@ class Newton:
             for i in range(self.dim):
                 self.temp_x[i] = self.x[i] + a * d[i]
 
-        while alpha > 1e-6:
+        while alpha > 1e-4:
             update_temp(alpha,self.d)
             f_new = self.energy_fn(self.temp_x)
             if f_new <= self.f0+ self.alpha  * alpha * g0:
@@ -90,12 +90,10 @@ class Newton:
                 break
 
             # 构建Hessian矩阵
-            H_builder = ti.linalg.SparseMatrixBuilder(self.dim, self.dim,max_num_triplets=(int)(self.dim**2 *0.15),dtype=self.float_type)
+            H_builder = ti.linalg.SparseMatrixBuilder(self.dim, self.dim,max_num_triplets=(int)(self.dim**2),dtype=self.float_type)
             self.hess_fn(self.x, H_builder)
             H = H_builder.build()
 
-            # if self.DBC_fn is not None:
-            #     self.DBC_fn(H)
 
 
             # 构建右端项
