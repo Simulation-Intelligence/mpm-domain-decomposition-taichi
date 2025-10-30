@@ -1,0 +1,5 @@
+=== Mesh Data Summary ===
+
+Number of Vertices: 6679
+Vertex Range: X[0.0500, 0.8000], Y[0.4000, 0.4500]
+Number of Triangles: 12335

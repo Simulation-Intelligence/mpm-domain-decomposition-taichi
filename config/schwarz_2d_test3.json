@@ -1,7 +1,10 @@
 {
-    "max_schwarz_iter": 5,
-    "record_frames": 5000,
-    "visualize_grid": false,
+    "max_schwarz_iter": 10,
+    "schwarz_eta": 0.001,
+    "max_frames": 1,
+    "use_record": false,
+    "visualize_grid": true,
+    "no_gui": false,
     "steps": 1,
     "arch": "cpu",
     "float_type": "f64",
@@ -11,17 +14,19 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_size": 64,
+        "grid_nx": 128,
+        "grid_ny": 62,
+        "domain_width": 1.0,
+        "domain_height": 0.484375,
         "offset": [
             0.0,
             0.0
         ],
-        "scale": 1.0,
-        "particles_per_grid": 16,
+        "particles_per_grid": 4,
         "sampling_method": "mesh",
         "elasticity_model": "linear",
-        "dt": 0.0001,
-        "max_iter": 10,
+        "dt": 0.0005,
+        "max_iter": 1,
         "solve_max_iter": 1000,
         "solve_init_iter": 100,
         "gravity": [
@@ -32,17 +37,17 @@
             {
                 "id": 0,
                 "name": "default",
-                "E": 20000.0,
+                "E": 200000.0,
                 "nu": 0.3,
                 "rho": 1000
             }
         ],
-        "implicit": false,
+        "implicit": true,
         "use_auto_diff": false,
         "compare_diff": false,
-        "bound": 2,
+        "bound": 1,
         "initial_velocity_y": 0,
-        "damping": 0.5,
+        "damping": 0,
         "volume_forces": [
             {
                 "type": "rectangle",
@@ -60,7 +65,7 @@
                 },
                 "force": [
                     0.0,
-                    -100.0
+                    -10.0
                 ]
             }
         ],
@@ -114,24 +119,26 @@
             }
         ],
         "implicit_solver": "Newton",
-        "boundary_size": 0.001,
+        "boundary_size": 0.0001,
         "eta": 0.0001
     },
     "Domain2": {
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_size": 64,
+        "grid_nx": 64,
+        "grid_ny": 19,
+        "domain_width": 0.5227477731899008,
+        "domain_height": 0.15519074516575182,
         "offset": [
-            0.25635083268962916,
+            0.23862611340504958,
             0
         ],
-        "scale": 0.4872983346207417,
-        "particles_per_grid": 16,
+        "particles_per_grid": 4,
         "sampling_method": "mesh",
         "elasticity_model": "linear",
-        "dt": 0.0001,
-        "max_iter": 10,
+        "dt": 0.001,
+        "max_iter": 1,
         "solve_max_iter": 1000,
         "solve_init_iter": 100,
         "gravity": [
@@ -147,23 +154,24 @@
                 "rho": 1000
             }
         ],
-        "implicit": false,
+        "implicit": true,
         "use_auto_diff": false,
         "compare_diff": false,
-        "bound": 2,
+        "bound": 3,
+        "use_mesh_boundary": true,
         "initial_velocity_y": 0,
-        "damping": 0.5,
+        "damping": 0.01,
         "shapes": [
             {
                 "type": "ellipse",
                 "params": {
                     "center": [
-                        0.5,
-                        0.923458932709527
+                        0.2613738865949504,
+                        0.45
                     ],
                     "semi_axes": [
-                        0.8208523846306905,
-                        0.8208523846306905
+                        0.4,
+                        0.4
                     ]
                 },
                 "operation": "add",
@@ -178,32 +186,16 @@
                             10
                         ],
                         [
-                            0.2052130961576726,
+                            0.12,
                             10
                         ]
                     ]
                 },
                 "operation": "subtract"
-            },
-            {
-                "type": "rectangle",
-                "params": {
-                    "range": [
-                        [
-                            0.10260654807883629,
-                            0.8973934519211637
-                        ],
-                        [
-                            0.2052130961576726,
-                            0.26677702500497447
-                        ]
-                    ]
-                },
-                "operation": "add"
             }
         ],
         "implicit_solver": "Newton",
-        "boundary_size": 0.001,
+        "boundary_size": 0.0001,
         "eta": 0.0001
     }
 }

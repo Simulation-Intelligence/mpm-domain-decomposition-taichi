@@ -1,6 +1,6 @@
 {
   "material": {
-    "E": 20000.0,
+    "E": 200000.0,
     "nu": 0.3,
     "rho": 1000,
     "center": [
@@ -8,7 +8,7 @@
       0.45
     ],
     "radius": 0.4,
-    "applied_pressure": 727.081298828125,
+    "applied_pressure": 205.078125,
     "load_height": 0.005,
     "x_range": [
       0,
@@ -16,9 +16,11 @@
     ],
     "y_range": [
       0,
-      1
+      0.1
     ],
-    "grid_size": 128,
-    "particles_per_grid": 8
+    "grid_size": 64,
+    "grid_nx": 64,
+    "grid_ny": 33,
+    "particles_per_grid": 4
   }
 }

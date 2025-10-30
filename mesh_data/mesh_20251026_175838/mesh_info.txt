@@ -1,0 +1,7 @@
+Mesh Generation Time: 20251026_175838
+Target Particle Spacing: 0.001274
+Grid Configuration: 128×43
+Domain Size: 0.6521061822182926×0.2190669205889577
+Sampling Method: mesh
+Particles Per Grid: 16
+Saved Files: input.poly, input.1.node, input.1.ele

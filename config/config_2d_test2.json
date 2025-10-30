@@ -1,54 +1,55 @@
-{
+ {
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_size": 32,
-        "scale": 1.0,
-        "particles_per_grid": 64,
-        "sampling_method": "regular",
+        "grid_nx": 80,
+        "grid_ny": 24,
+        "domain_width": 1.0,
+        "domain_height": 0.3,
+        "particles_per_grid": 16,
+        "sampling_method": "mesh",
+        "elasticity_model": "neohookean",
         "dt": 1e-4,
         "max_iter": 10,
         "solve_max_iter": 1000,
         "solve_init_iter": 100,
+        "offset": [
+            0.0,
+            0.35
+        ],
         "gravity": [
             0.0,
             -0.0
         ],
+        "damping":0.5,
         "volume_forces": [
             {
                 "type": "rectangle",
                 "params": {
                     "range": [
-                        [0.09, 0.12],
+                        [0, 0.2],
                         [0, 1]
                     ]
                 },
-                "force": [-10.0, 0.0]
+                "force": [-10, 0.0]
             },
             {
                 "type": "rectangle",
                 "params": {
                     "range": [
-                        [0.88, 0.91],
+                        [0.8, 1.0],
                         [0, 1]
                     ]
                 },
-                "force": [10.0, 0.0]
+                "force": [10, 0.0]
             }
         ],
         "material_params": [
             {
                 "id": 0,
                 "name": "default",
-                "E": 1e6,
+                "E": 1e5,
                 "nu": 0.3,
-                "rho": 1e3
-            },
-            {
-                "id": 1,
-                "name": "soft_material",
-                "E": 1e3,
-                "nu": 0.4,
                 "rho": 1e3
             }
         ],
@@ -56,8 +57,7 @@
         "use_auto_diff": false,
         "compare_diff": false,
         "bound": 2,
-        "initial_velocity_y": -0,
-        "damping":10,
+        "initial_velocity_y": 0,
         "shapes": [
             {
                 "type": "rectangle",
@@ -68,8 +68,8 @@
                             0.9
                         ],
                         [
-                            0.45,
-                            0.55
+                            0.05,
+                            0.25
                         ]
                     ]
                 },
@@ -81,11 +81,11 @@
                 "params": {
                     "center": [
                         0.5,
-                        0.55
+                        0.05
                     ],
                     "semi_axes": [
-                        0.03,
-                        0.03
+                        0.08,
+                        0.08
                     ]
                 },
                 "operation": "subtract"
@@ -95,35 +95,18 @@
                 "params": {
                     "center": [
                         0.5,
-                        0.45
+                        0.25
                     ],
                     "semi_axes": [
-                        0.03,
-                        0.03
+                        0.08,
+                        0.08
                     ]
                 },
                 "operation": "subtract"
-            },
-            {
-                "type": "rectangle",
-                "params": {
-                 "range": [
-                        [
-                            0.45,
-                            0.55
-                        ],
-                        [
-                            0.45,
-                            0.55
-                        ]
-                    ]
-                },
-                "operation": "change",
-                "material_id": 0
             }
 
         ],
         "implicit_solver": "Newton",
         "eta": 1e-4,
-        "record_frames": 1000
+        "record_frames": 2000
     }

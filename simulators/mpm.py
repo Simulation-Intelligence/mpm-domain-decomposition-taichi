@@ -146,7 +146,7 @@ class MPM3D:
         return projected
 
     def render(self):
-        gui = ti.GUI("MPM3D", (800, 800))
+        gui = ti.ui.Window("MPM3D", (800, 800), vsync=False)
         
         while gui.running and not gui.get_event(gui.ESCAPE):
             for _ in range(self.max_steps):
@@ -160,7 +160,13 @@ class MPM3D:
             else:
                 projected = self.x.to_numpy()
             
-            gui.circles(projected, radius=1.5, color=0x66CCFF)
+            # 使用ti.ui.Window的canvas API
+            canvas = gui.get_canvas()
+            canvas.set_background_color((0.067, 0.184, 0.255))
+
+            # 直接使用原始字段
+            canvas.circles(self.x, radius=0.002, color=(0.4, 0.8, 1.0))
+
             gui.show()
 
 # 使用示例
