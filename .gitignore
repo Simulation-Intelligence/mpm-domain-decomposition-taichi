@@ -2,3 +2,13 @@ __pycache__/
 *.log
 .claude/
 stress_strain_output/
+
+# Experiment results and output files
+experiment_results/
+out.txt
+
+# macOS system files
+.DS_Store
+
+# Test results
+test*/results/
