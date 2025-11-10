@@ -35,7 +35,8 @@
     "compare_diff": false,
     "bound": 1,
     "initial_velocity_y": 0,
-    "damping": 0.5,
+    "damping": 0.0,
+    "particle_damping": 0.99,
     "volume_forces": [
         {
             "type": "rectangle",

@@ -1,8 +1,12 @@
 {
-    "max_schwarz_iter": 10,
-    "schwarz_eta": 1e-3,
-    "record_frames": 5000,
-    "visualize_grid": false,
+    "max_schwarz_iter": 20,
+    "schwarz_eta": 1e-7,
+    "max_frames": 50000,
+    "velocity_convergence_threshold": 1e-6,
+    "velocity_convergence_check_interval": 10,
+    "use_record": false,
+    "visualize_grid": true,
+        "no_gui": false,
     "steps": 1,
     "arch": "cpu",
     "float_type": "f64",
@@ -12,16 +16,17 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 80,
-        "grid_ny": 40,
+        "grid_nx": 50,
+        "grid_ny": 50,
         "domain_width": 1.0,
-        "domain_height": 0.5,
-        "particles_per_grid": 16,
-        "sampling_method": "mesh",
-        "elasticity_model": "linear",
-        "dt": 1e-3,
-        "max_iter": 10,
-        "solve_max_iter": 1000,
+        "domain_height": 1.0,
+        "particles_per_grid": 4,
+        "sampling_method": "regular",
+        "elasticity_model": "neohookean",
+        "use_mapping": true,
+        "dt": 0.0001,
+        "max_iter": 1,
+        "solve_max_iter": 20000,
         "solve_init_iter": 100,
         "offset": [
             0.0,
@@ -29,92 +34,21 @@
         ],
         "gravity": [
             0.0,
-            -9.8
-        ],
-        "DBC_range": [
-            [
-                [0, 0.1],
-                [0, 1]
-            ]
+            -0.3875248015873022
         ],
         "damping":0.5,
-        "material_params": [
-            {
-                "id": 0,
-                "name": "default",
-                "E": 2e5,
-                "nu": 0.3,
-                "rho": 1e3
-            }
-        ],
-        "implicit": true,
-        "use_auto_diff": false,
-        "compare_diff": false,
-        "bound": 2,
-        "initial_velocity_y": 0,
-        "shapes": [
-            {
-                "type": "rectangle",
-                "params": {
-                    "range": [
-                        [
-                            0.05,
-                            0.8
-                        ],
-                        [
-                            0.40,
-                            0.45
-                        ]
-                    ]
-                },
-                "operation": "add",
-                "material_id": 0
-            }
-
-        ],
-        "implicit_solver": "Newton",
-        "eta": 1e-3
-    },
-    "Domain2":  {
-        "arch": "cpu",
-        "float_type": "f64",
-        "dim": 2,
-        "grid_nx": 80,
-        "grid_ny": 40,
-        "domain_width": 1.0,
-        "domain_height": 0.5,
-        "particles_per_grid": 16,
-        "sampling_method": "mesh",
-        "elasticity_model": "linear",
-        "dt": 1e-3,
-        "max_iter": 10,
-        "solve_max_iter": 1000,
-        "solve_init_iter": 100,
-        "offset": [
-            0.0,
-            0.04
-        ],
-        "gravity": [
-            0.0,
-            -9.8
-        ],
-        "DBC_range": [
-            [
-                [0, 0.1],
-                [0, 1]
-            ]
-        ],
-        "damping":0.5,
+        "particle_damping": 0.99,
         "material_params": [
             {
                 "id": 0,
                 "name": "default",
                 "E": 1e5,
-                "nu": 0.3,
+                "nu": 0.4,
                 "rho": 1e3
             }
         ],
         "implicit": true,
+        "static_solve": false,
         "use_auto_diff": false,
         "compare_diff": false,
         "bound": 2,
@@ -125,12 +59,12 @@
                 "params": {
                     "range": [
                         [
-                            0.05,
-                            0.8
+                            0.4,
+                            0.9
                         ],
                         [
-                            0.40,
-                            0.45
+                            0.75,
+                            0.85
                         ]
                     ]
                 },
@@ -140,6 +74,89 @@
 
         ],
         "implicit_solver": "Newton",
-        "eta": 1e-3
-    }
+        "eta": 1e-5,
+    "max_frames": 200000,
+    "use_record": false,
+    "no_gui": false,
+    "boundary_size": 0.0001
+},
+    "Domain2":   {
+        "arch": "cpu",
+        "float_type": "f64",
+        "dim": 2,
+        "grid_nx": 20,
+        "grid_ny": 30,
+        "domain_width": 0.6,
+        "domain_height": 0.4,
+        "particles_per_grid": 4,
+        "sampling_method": "regular",
+        "elasticity_model": "neohookean",
+        "use_mapping": true,
+        "dt": 0.0001,
+        "max_iter": 1,
+        "solve_max_iter": 20000,
+        "solve_init_iter": 100,
+        "offset": [
+            0.0,
+            0.6
+        ],
+        "gravity": [
+            0.0,
+            -0.3875248015873022
+        ],
+        "DBC_range": [
+            [
+                [0, 0.1],
+                [0, 1]
+            ]
+        ],
+        "DBC_boundary_v": [
+            [0.0, 0.0]
+        ],
+        "damping":0.5,
+        "particle_damping": 0.99,
+        "material_params": [
+            {
+                "id": 0,
+                "name": "default",
+                "E": 1e5,
+                "nu": 0.4,
+                "rho": 1e3
+            }
+        ],
+        "implicit": true,
+        "static_solve": false,
+        "use_auto_diff": false,
+        "compare_diff": false,
+        "bound": 2,
+        "initial_velocity_y": 0,
+        "shapes": [
+
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            0.05,
+                            0.55
+                        ],
+                        [
+                            0.1,
+                            0.3
+                        ]
+                    ]
+                },
+                "operation": "add",
+                "material_id": 0
+            }
+
+
+        ],
+        "implicit_solver": "Newton",
+        "eta": 1e-5,
+    "max_frames": 200000,
+    "use_record": false,
+    "no_gui": false,
+    "boundary_size": 0.0001
+}
 }

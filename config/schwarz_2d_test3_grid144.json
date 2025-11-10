@@ -1,7 +1,7 @@
 {
-    "max_schwarz_iter": 10,
+    "max_schwarz_iter": 20,
     "schwarz_eta": 0.001,
-    "max_frames": 100000,
+    "max_frames": 1,
     "use_record": false,
     "visualize_grid": true,
     "no_gui": true,
@@ -22,10 +22,10 @@
             0.0,
             0.0
         ],
-        "particles_per_grid": 8,
+        "particles_per_grid": 4,
         "sampling_method": "mesh",
         "elasticity_model": "linear",
-        "dt": 1e-05,
+        "dt": 0.0005,
         "max_iter": 1,
         "solve_max_iter": 1000,
         "solve_init_iter": 100,
@@ -37,12 +37,12 @@
             {
                 "id": 0,
                 "name": "default",
-                "E": 200000.0,
+                "E": 20000.0,
                 "nu": 0.3,
                 "rho": 1000
             }
         ],
-        "implicit": false,
+        "implicit": true,
         "use_auto_diff": false,
         "compare_diff": false,
         "bound": 1,
@@ -120,7 +120,7 @@
         ],
         "implicit_solver": "Newton",
         "boundary_size": 0.0001,
-        "eta": 0.001
+        "eta": 0.0001
     },
     "Domain2": {
         "arch": "cpu",
@@ -134,10 +134,10 @@
             0.25824877756382963,
             0
         ],
-        "particles_per_grid": 8,
+        "particles_per_grid": 4,
         "sampling_method": "mesh",
         "elasticity_model": "linear",
-        "dt": 1e-05,
+        "dt": 0.001,
         "max_iter": 1,
         "solve_max_iter": 1000,
         "solve_init_iter": 100,
@@ -149,18 +149,18 @@
             {
                 "id": 0,
                 "name": "default",
-                "E": 200000.0,
+                "E": 20000.0,
                 "nu": 0.3,
                 "rho": 1000
             }
         ],
-        "implicit": false,
+        "implicit": true,
         "use_auto_diff": false,
         "compare_diff": false,
         "bound": 3,
         "use_mesh_boundary": true,
         "initial_velocity_y": 0,
-        "damping": 0.5,
+        "damping": 0.01,
         "shapes": [
             {
                 "type": "ellipse",
@@ -196,6 +196,6 @@
         ],
         "implicit_solver": "Newton",
         "boundary_size": 0.0001,
-        "eta": 0.001
+        "eta": 0.0001
     }
 }

@@ -91,6 +91,15 @@ class MPM_Schwarz:
         # Schwarz收敛参数
         self.schwarz_eta = self.main_config.get("schwarz_eta", 1e-6)  # 收敛容差
 
+        # 速度收敛检测参数
+        self.velocity_convergence_threshold = self.main_config.get("velocity_convergence_threshold", 0)
+        self.velocity_convergence_check_interval = self.main_config.get("velocity_convergence_check_interval", 10)
+        self.velocity_convergence_consecutive_required = self.main_config.get("velocity_convergence_consecutive_required", 10)
+        self.enable_velocity_convergence = self.velocity_convergence_threshold > 0
+        self.velocity_convergence_consecutive_count = 0  # 连续收敛次数计数器
+        if self.enable_velocity_convergence:
+            print(f"启用双域速度收敛检测: 阈值={self.velocity_convergence_threshold:.2e}, 检测间隔={self.velocity_convergence_check_interval}帧, 需要连续{self.velocity_convergence_consecutive_required}次")
+
         # 存储上一次Schwarz迭代的grid_v，用于收敛判别
         self.Domain1_prev_grid_v = ti.Vector.field(self.Domain1.dim, dtype=ti.f32, shape=self.Domain1.grid.v.shape)
         self.Domain2_prev_grid_v = ti.Vector.field(self.Domain2.dim, dtype=ti.f32, shape=self.Domain2.grid.v.shape)
@@ -294,8 +303,45 @@ class MPM_Schwarz:
                 ti.atomic_add(cnt, 1)
 
         return residual / cnt
-    
-    
+
+    def check_velocity_convergence(self, frame):
+        """检查双域速度是否收敛（需要连续多次小于阈值）"""
+        if not self.enable_velocity_convergence:
+            return False
+
+        # 只在指定间隔检查
+        if frame % self.velocity_convergence_check_interval != 0:
+            return False
+
+        # 分别计算两个域的最大网格速度
+        max_v_mag_domain1 = self.Domain1.grid.compute_max_velocity_magnitude()
+        max_v_mag_domain2 = self.Domain2.grid.compute_max_velocity_magnitude()
+
+        # 取两个域的最大值
+        max_v_mag = max(max_v_mag_domain1, max_v_mag_domain2)
+
+        # 检查是否小于阈值
+        below_threshold = max_v_mag < self.velocity_convergence_threshold
+
+        if below_threshold:
+            self.velocity_convergence_consecutive_count += 1
+            print(f"Frame {frame}: 双域速度小于阈值! 最大网格速度: {max_v_mag:.2e} < 阈值: {self.velocity_convergence_threshold:.2e} (连续第{self.velocity_convergence_consecutive_count}次)")
+            print(f"  Domain1最大速度: {max_v_mag_domain1:.2e}, Domain2最大速度: {max_v_mag_domain2:.2e}")
+
+            # 检查是否达到连续要求次数
+            if self.velocity_convergence_consecutive_count >= self.velocity_convergence_consecutive_required:
+                print(f"Frame {frame}: 达到双域速度收敛条件! 连续{self.velocity_convergence_consecutive_count}次小于阈值")
+                return True
+        else:
+            # 重置连续计数器
+            if self.velocity_convergence_consecutive_count > 0:
+                print(f"Frame {frame}: 双域速度超过阈值，重置连续计数器。最大网格速度: {max_v_mag:.2e} >= 阈值: {self.velocity_convergence_threshold:.2e}")
+            else:
+                print(f"Frame {frame}: 双域最大网格速度: {max_v_mag:.2e} (Domain1: {max_v_mag_domain1:.2e}, Domain2: {max_v_mag_domain2:.2e})")
+            self.velocity_convergence_consecutive_count = 0
+
+        return False
+
     def step(self):
         for _ in range(self.steps):
             """
@@ -330,6 +376,8 @@ class MPM_Schwarz:
                 for j in range(timesteps):
                     self.boundary_exchanger.interpolate_boundary_velocity((j+1) / timesteps)
                     self.SmallTimeDomain.solve()
+                    if j == timesteps - 1:
+                        break
                     self.SmallTimeDomain.g2p(self.SmallTimeDomain.dt)
                     if self.do_small_advect:
                         self.SmallTimeDomain.particles.advect(self.SmallTimeDomain.dt)
@@ -702,6 +750,11 @@ if __name__ == "__main__":
             mpm.step()
             frame_count += 1
 
+            # 检查速度收敛
+            if mpm.check_velocity_convergence(frame_count):
+                print(f"在第 {frame_count} 帧达到速度收敛，提前终止模拟")
+                break
+
             if frame_count % 100 == 0:
                 print(f"Progress: {frame_count}/{target_frames} frames")
         print("Simulation completed.")
@@ -711,6 +764,11 @@ if __name__ == "__main__":
             mpm.step()
             mpm.render()
             frame_count += 1
+
+            # 检查速度收敛
+            if mpm.check_velocity_convergence(frame_count):
+                print(f"在第 {frame_count} 帧达到速度收敛，提前终止模拟")
+                break
 
             # 自动停止条件
             if frame_count >= mpm.max_frames:

@@ -48,6 +48,7 @@ class ImplicitMPM:
             print("启用静力学求解模式")
 
         self.no_advect = self.cfg.get("no_advect", False)
+        self.particle_damping = self.cfg.get("particle_damping", 1.0)
 
         self.scale = self.cfg.get("scale", 1.0)
         self.offset = self.cfg.get("offset", (0, 0))
@@ -68,6 +69,15 @@ class ImplicitMPM:
         self.max_schwarz_iter = config.get("max_schwarz_iter", 1)  # Schwarz迭代次数
         self.max_frames = config.get("max_frames", 60)  # 最大帧数
         self.use_record = config.get("use_record", False)  # 是否使用录制
+
+        # 速度收敛检测参数
+        self.velocity_convergence_threshold = config.get("velocity_convergence_threshold", 0)
+        self.velocity_convergence_check_interval = config.get("velocity_convergence_check_interval", 10)
+        self.velocity_convergence_consecutive_required = config.get("velocity_convergence_consecutive_required", 10)
+        self.enable_velocity_convergence = self.velocity_convergence_threshold > 0
+        self.velocity_convergence_consecutive_count = 0  # 连续收敛次数计数器
+        if self.enable_velocity_convergence:
+            print(f"启用速度收敛检测: 阈值={self.velocity_convergence_threshold:.2e}, 检测间隔={self.velocity_convergence_check_interval}帧, 需要连续{self.velocity_convergence_consecutive_required}次")
         self.recorder = None
         if self.use_record:
             self.recorder = ParticleRecorder(
@@ -175,30 +185,36 @@ class ImplicitMPM:
         self.particles.build_neighbor_list()
 
     def post_p2g(self):
-        self.solver.save_previous_velocity()
+        if self.implicit:
+                self.solver.save_previous_velocity()
         self.grid.apply_boundary_conditions()
+
+        # 构建有质量grid节点的mapping
+        if self.implicit and self.grid.use_mapping:
+            active_count = self.grid.build_mapping()
+            # 调整优化器维度以匹配压缩后的大小
+            required_dim = active_count * self.dim
+            if self.solver.optimizer.dim != required_dim:
+                self.solver.optimizer.resize(required_dim)
+                print(f"Resized optimizer to dimension: {required_dim}")
 
     def step(self):
         for _ in range(self.max_iter):
             self.pre_p2g()
             self.p2g()
-
-            if self.implicit:
-                self.solver.save_previous_velocity()
-
-            self.grid.apply_boundary_conditions()
+            self.post_p2g()
             
             self.solve()
             
             self.g2p(self.dt)
             
-            # 静力学求解时不进行advect
-            if not self.no_advect:
-                self.particles.advect(self.dt)
+            self.particles.advect(self.dt)
 
     @ti.kernel
     def p2g(self):
         for p in range(self.particles.n_particles):
+            # 应用粒子damping
+            self.particles.v[p] *= self.particle_damping
             base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
 
             for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
@@ -206,17 +222,17 @@ class ImplicitMPM:
                 dpos = self.grid.get_dpos_from_offset_and_fx(offset, fx)
                 p_mass = self.particles.get_particle_mass(p)
                 weight = self.particles.wip[p,offset]
-                self.grid.m[grid_idx] += weight * p_mass
-                self.grid.v[grid_idx] += weight * p_mass * (self.particles.v[p] + self.particles.C[p] @ dpos)
+                ti.atomic_add(self.grid.m[grid_idx], weight * p_mass)
+                ti.atomic_add(self.grid.v[grid_idx], weight * p_mass * (self.particles.v[p] + self.particles.C[p] @ dpos))
 
                 # 插值体积力到网格，按质量加权
-                self.grid.volume_force[grid_idx] += weight * p_mass * self.particles.volume_force[p]
+                ti.atomic_add(self.grid.volume_force[grid_idx], weight * p_mass * self.particles.volume_force[p])
 
-                if self.particles.is_boundary_particle[p]:
+                if self.particles.is_boundary_particle[p] and offset[0] == 1 and offset[1] == 1 :
                     self.grid.is_particle_boundary_grid[grid_idx] = 1
 
         for I in ti.grouped(self.grid.m):
-            if self.grid.m[I] > 1e-10:
+            if self.grid.m[I] > 0:
                 self.grid.v[I] /= self.grid.m[I]
                 self.grid.volume_force[I] /= self.grid.m[I]
 
@@ -238,6 +254,7 @@ class ImplicitMPM:
             self.particles.v[p] = new_v
             if self.implicit:
                 self.particles.F[p] = (ti.Matrix.identity(self.float_type, self.grid.dim) + dt * new_C) @ self.particles.F[p]
+
             else:
                 self.particles.F[p] = (ti.Matrix.identity(self.float_type, self.grid.dim) + dt * self.particles.C[p]) @ self.particles.F[p]
             self.particles.C[p] = new_C
@@ -283,7 +300,40 @@ class ImplicitMPM:
             y_pos = (j+0.5)*self.grid.dx_y + self.offset[1]
             lines_end.append((self.grid.domain_width + self.offset[0], y_pos))
         return lines_end
-    
+
+    def check_velocity_convergence(self, frame):
+        """检查速度是否收敛（需要连续多次小于阈值）"""
+        if not self.enable_velocity_convergence:
+            return False
+
+        # 只在指定间隔检查
+        if frame % self.velocity_convergence_check_interval != 0:
+            return False
+
+        # 计算最大网格速度
+        max_v_mag = self.grid.compute_max_velocity_magnitude()
+
+        # 检查是否小于阈值
+        below_threshold = max_v_mag < self.velocity_convergence_threshold
+
+        if below_threshold:
+            self.velocity_convergence_consecutive_count += 1
+            print(f"Frame {frame}: 速度小于阈值! 最大网格速度: {max_v_mag:.2e} < 阈值: {self.velocity_convergence_threshold:.2e} (连续第{self.velocity_convergence_consecutive_count}次)")
+
+            # 检查是否达到连续要求次数
+            if self.velocity_convergence_consecutive_count >= self.velocity_convergence_consecutive_required:
+                print(f"Frame {frame}: 达到速度收敛条件! 连续{self.velocity_convergence_consecutive_count}次小于阈值")
+                return True
+        else:
+            # 重置连续计数器
+            if self.velocity_convergence_consecutive_count > 0:
+                print(f"Frame {frame}: 速度超过阈值，重置连续计数器。最大网格速度: {max_v_mag:.2e} >= 阈值: {self.velocity_convergence_threshold:.2e}")
+            else:
+                print(f"Frame {frame}: 最大网格速度: {max_v_mag:.2e}")
+            self.velocity_convergence_consecutive_count = 0
+
+        return False
+
     def render(self):
         # 在无GUI模式下跳过渲染
         if self.no_gui or self.gui is None:
@@ -564,7 +614,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description='运行单域隐式MPM模拟')
-    parser.add_argument('--config', default="config/config_2d_test3.json",
+    parser.add_argument('--config', default="config/config_2d_test4.json",
                        help='配置文件路径 (默认: config/test_test3.json)')
     parser.add_argument('--no-gui', action='store_true',
                        help='禁用GUI界面运行')
@@ -584,21 +634,30 @@ if __name__ == "__main__":
     ti.init(arch=arch, default_fp=float_type, device_memory_GB=20, log_level=ti.ERROR)
     mpm = ImplicitMPM(cfg, no_gui=args.no_gui)
 
-
-    # 原有的动态求解模式
-    i = 0
-
-    max_frames = mpm.max_frames
-    while (i < max_frames) and ((mpm.gui is not None and mpm.gui.running) or mpm.no_gui):
-        mpm.step()
-        mpm.render()
-        i += 1
-
-    # 在最后一帧记录应力数据
-    print("记录最终帧的应力数据...")
-    mpm.save_stress_data(i)
-    if mpm.recorder is None:
+    if mpm.static_solve:
+        mpm.run_static_solve()
         exit()
-    print("Playback finished.")
-    # 播放录制动画
-    mpm.recorder.play(loop=True, fps=60)
+    else:
+        print("开始动态隐式MPM模拟...")
+        # 原有的动态求解模式
+        i = 0
+
+        max_frames = mpm.max_frames
+        while (i < max_frames) and ((mpm.gui is not None and mpm.gui.running) or mpm.no_gui):
+           mpm.step()
+           mpm.render()
+           i += 1
+
+           # 检查速度收敛
+           if mpm.check_velocity_convergence(i):
+               print(f"在第 {i} 帧达到速度收敛，提前终止模拟")
+               break
+
+        # 在最后一帧记录应力数据
+        print("记录最终帧的应力数据...")
+        mpm.save_stress_data(i)
+        if mpm.recorder is None:
+            exit()
+        print("Playback finished.")
+        # 播放录制动画
+        mpm.recorder.play(loop=True, fps=60)

@@ -100,6 +100,10 @@ class Grid:
         self.is_boundary_grid = ti.Vector.field(self.dim, ti.i32, grid_shape)
         self.boundary_v = ti.Vector.field(self.dim, self.float_type, grid_shape)
         self.is_particle_boundary_grid = ti.field(ti.i32, grid_shape)
+
+        # X方向速度约束选项
+        self.constrain_x_velocity = config.get("constrain_x_velocity", False)
+
         default_DBC_range = [[0.0, 0.0], [0.0, 0.0]] if self.dim == 2 else [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]
         DBC_range = config.get("DBC_range", [default_DBC_range])
         self.num_DBC = len(DBC_range)
@@ -108,6 +112,30 @@ class Grid:
             for i in range(self.num_DBC):
                 for d in range(self.dim):
                     self.DBC_range[i, d] = ti.Vector(DBC_range[i][d])
+
+        # DBC边界速度配置
+        default_boundary_v = [0.0] * self.dim
+        DBC_boundary_v = config.get("DBC_boundary_v", [default_boundary_v] * self.num_DBC)
+        if self.num_DBC > 0:
+            self.DBC_boundary_v = ti.Vector.field(self.dim, self.float_type, shape=self.num_DBC)
+            for i in range(self.num_DBC):
+                for d in range(self.dim):
+                    if i < len(DBC_boundary_v):
+                        self.DBC_boundary_v[i][d] = DBC_boundary_v[i][d] if d < len(DBC_boundary_v[i]) else 0.0
+                    else:
+                        self.DBC_boundary_v[i][d] = 0.0
+
+        # Mapping功能：压缩有质量的grid节点
+        max_grid_points = self.get_total_grid_points()
+        self.active_grid_count = ti.field(ti.i32, shape=())  # 有质量的grid数量
+        self.grid_to_compressed = ti.field(ti.i32, shape=grid_shape)  # grid index -> 压缩index (-1表示无效)
+        self.compressed_to_grid = ti.Vector.field(self.dim, ti.i32, shape=max_grid_points)  # 压缩index -> grid indices
+
+        # 初始化mapping为无效值
+        self.grid_to_compressed.fill(-1)
+
+        # 配置是否使用mapping
+        self.use_mapping = config.get("use_mapping", False)
 
     def get_total_grid_points(self):
         """获取网格点总数"""
@@ -118,14 +146,24 @@ class Grid:
 
     @ti.func
     def get_idx(self, I):
-        idx = 0
-        if ti.static(self.dim == 2):
-            idx = I[0] * self.ny * self.dim + I[1] * self.dim
+        """根据配置自动选择原始索引或压缩映射索引"""
+        if ti.static(self.use_mapping):
+            # 使用压缩映射
+            compressed_idx = self.get_compressed_index(I)
+            res = compressed_idx * self.dim
+            if compressed_idx < 0:
+                res = -1
+            return res  # 无效的grid节点
         else:
-            # 3D情况保持原有计算方式，使用size
-            for d in ti.static(range(self.dim)):
-                idx += I[d] * self.size ** (self.dim-1-d) *self.dim
-        return idx
+            # 使用原始索引计算
+            idx = 0
+            if ti.static(self.dim == 2):
+                idx = I[0] * self.ny * self.dim + I[1] * self.dim
+            else:
+                # 3D情况保持原有计算方式，使用size
+                for d in ti.static(range(self.dim)):
+                    idx += I[d] * self.size ** (self.dim-1-d) *self.dim
+            return idx
 
     @ti.func
     def get_grid_pos(self, I):
@@ -136,6 +174,83 @@ class Grid:
         if ti.static(self.dim == 3):
             pos[2] = I[2] * self.dx_z
         return pos
+
+    def build_mapping(self):
+        """构建有质量grid节点的mapping"""
+        # 重置mapping
+        self.grid_to_compressed.fill(-1)
+        self.active_grid_count[None] = 0
+
+        # 重新建立映射
+        if self.dim == 2:
+            self._build_mapping_2d()
+        else:
+            self._build_mapping_3d()
+
+        print(f"Active grid count: {self.active_grid_count[None]} / {self.get_total_grid_points()}")
+        return self.active_grid_count[None]
+
+    @ti.kernel
+    def _count_active_grids_2d(self) -> ti.i32:
+        """统计2D有质量的grid数量"""
+        count = 0
+        for i, j in self.m:
+            if i==21 and j==15:
+                print(self.m[i,j])
+            if self.m[i, j] > 0:  # 使用合理的质量阈值，避免数值误差
+                ti.atomic_add(count, 1)
+        return count
+
+    @ti.kernel
+    def _count_active_grids_3d(self) -> ti.i32:
+        """统计3D有质量的grid数量"""
+        count = 0
+        for i, j, k in self.m:
+            if self.m[i, j, k] > 0:  # 使用合理的质量阈值，避免数值误差
+                ti.atomic_add(count, 1)
+        return count
+
+    @ti.kernel
+    def _build_mapping_2d(self):
+        """使用原子操作避免竞争条件"""
+        for i, j in self.m:
+            if self.m[i, j] > 0:  # 使用合理的质量阈值，避免数值误差
+                # 使用原子操作获取唯一的compressed索引
+                compressed_idx = ti.atomic_add(self.active_grid_count[None], 1)
+                # 建立双向映射
+                self.grid_to_compressed[i, j] = compressed_idx
+                if i ==21 and j==15:
+                    print(f"Mapping grid (21,15) to compressed index {compressed_idx}")
+                self.compressed_to_grid[compressed_idx] = ti.Vector([i, j])
+
+    @ti.kernel
+    def _build_mapping_3d(self):
+        """使用原子操作避免竞争条件"""
+        for i, j, k in self.m:
+            if self.m[i, j, k] > 0:  # 使用合理的质量阈值，避免数值误差
+                # 使用原子操作获取唯一的compressed索引
+                compressed_idx = ti.atomic_add(self.active_grid_count[None], 1)
+                # 建立双向映射
+                self.grid_to_compressed[i, j, k] = compressed_idx
+                self.compressed_to_grid[compressed_idx] = ti.Vector([i, j, k])
+
+    @ti.func
+    def get_active_grid_count(self):
+        """获取有质量的grid节点数量"""
+        return self.active_grid_count[None]
+
+    @ti.func
+    def get_compressed_index(self, I):
+        """获取grid索引对应的压缩索引"""
+        if ti.static(self.dim == 2):
+            return self.grid_to_compressed[I[0], I[1]]
+        else:
+            return self.grid_to_compressed[I[0], I[1], I[2]]
+
+    @ti.func
+    def get_grid_indices_from_compressed(self, compressed_idx):
+        """从压缩索引获取grid索引"""
+        return self.compressed_to_grid[compressed_idx]
 
     @ti.func
     def pos_to_grid_index(self, pos):
@@ -221,35 +336,45 @@ class Grid:
                         self.boundary_v[I][d] = 0
                     else:
                         self.boundary_v[I][d] = self.v[I][d]
-            
-            if self.num_DBC >0:
+
+            # X方向速度约束：如果启用，则强制所有网格点的x方向速度为0
+            if ti.static(self.constrain_x_velocity):
+                self.is_boundary_grid[I][0] = 1
+                self.boundary_v[I][0] = 0.0
+
+            if self.num_DBC > 0:
                 pos = self.get_grid_pos(I)
-                is_DBC = True
+                applied_DBC = False
                 for i in range(self.num_DBC):
-                    for d in ti.static(range(self.dim)):
-                        if not (self.DBC_range[i, d][0] <= pos[d] <= self.DBC_range[i, d][1]):
-                            is_DBC = False
-                if is_DBC:
-                    self.is_boundary_grid[I] = ti.Vector([1]*self.dim)
-                    self.boundary_v[I] = ti.Vector([0.0]*self.dim)
+                    if not applied_DBC:
+                        is_DBC = True
+                        for d in ti.static(range(self.dim)):
+                            if not (self.DBC_range[i, d][0] <= pos[d] <= self.DBC_range[i, d][1]):
+                                is_DBC = False
+                        if is_DBC:
+                            self.is_boundary_grid[I] = ti.Vector([1]*self.dim)
+                            self.boundary_v[I] = self.DBC_boundary_v[i]
+                            applied_DBC = True
                     
 
 
     @ti.kernel
-    def set_boundary_v_grid(self,v_grad: ti.template()):
-        for I in ti.grouped(self.is_boundary_grid):
-            idx = self.get_idx(I)
-            for d in ti.static(range(self.dim)):
-                if self.is_boundary_grid[I][d]:
-                    v_grad[idx+ d] = self.boundary_v[I][d]
-            
-    @ti.kernel
     def set_boundary_grad(self,grad: ti.template()):
-        for I in ti.grouped(self.is_boundary_grid):
-            idx = self.get_idx(I)
-            for d in ti.static(range(self.dim)):
-                if self.is_boundary_grid[I][d]:
-                    grad[idx+d] = 0.0 
+        if ti.static(self.use_mapping):
+            # 使用压缩映射时只遍历有质量的节点
+            for compressed_idx in range(self.get_active_grid_count()):
+                I = self.get_grid_indices_from_compressed(compressed_idx)
+                vidx = compressed_idx * self.dim
+                for d in ti.static(range(self.dim)):
+                    if self.is_boundary_grid[I][d]:
+                        grad[vidx+d] = 0.0
+        else:
+            # 原始方法：遍历所有边界节点
+            for I in ti.grouped(self.is_boundary_grid):
+                idx = self.get_idx(I)
+                for d in ti.static(range(self.dim)):
+                    if self.is_boundary_grid[I][d]:
+                        grad[idx+d] = 0.0 
                     
     @ti.kernel
     def set_boundary_v(self):
@@ -298,4 +423,16 @@ class Grid:
                 y = j * self.dx_y + self.offset[1]
                 lines_end.append([self.offset[0] + self.domain_width, y])
         return lines_end
+
+    @ti.kernel
+    def compute_max_velocity_magnitude(self) -> ti.f64:
+        """计算所有网格点速度的最大模长"""
+        max_v_mag = 0.0
+        for I in ti.grouped(self.v):
+            v_mag = 0.0
+            for d in ti.static(range(self.dim)):
+                v_mag += self.v[I][d] ** 2
+            v_mag = ti.sqrt(v_mag)
+            max_v_mag = ti.max(max_v_mag, v_mag)
+        return max_v_mag
 

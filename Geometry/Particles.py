@@ -296,9 +296,23 @@ class Particles:
         
         # 第一步：计算每个shape需要的粒子数量
         particles_per_area = []
+
+        # 计算总域面积/体积
+        if self.dim == 2:
+            total_domain_area = self.domain_width * self.domain_height
+            total_grid_cells = self.grid_nx * self.grid_ny
+        else:  # 3D
+            total_domain_area = self.domain_width * self.domain_height * self.domain_depth
+            total_grid_cells = self.grid_nx * self.grid_ny * self.grid_nz
+
+        # 计算每单位面积/体积的粒子密度
+        particles_per_unit_area = (total_grid_cells * self.particles_per_grid) / total_domain_area
+
         for i in range(self.num_areas):
-            n = int(self.grid_size**self.dim * self.areas[i] * self.particles_per_grid)
+            # 根据shape的实际面积/体积计算粒子数量
+            n = int(self.areas[i] * particles_per_unit_area)
             particles_per_area.append(n)
+            print(f"Shape {i}: 面积={self.areas[i]:.6f}, 粒子数={n}")
         
         # 第二步：使用粒子生成器生成所有粒子
         all_particles = self.particle_generator.generate_particles_for_shapes(

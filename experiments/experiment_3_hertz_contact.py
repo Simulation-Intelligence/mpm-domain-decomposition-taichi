@@ -75,8 +75,15 @@ def get_actual_volume_force_mass(config_path, mpm_instance=None, results_dir=Non
         return volume_force_masses[0]  # 假设只有一个体积力
     return None
 
-def extract_parameters_from_config(config, actual_mass=None):
-    """从配置文件提取所有必要参数"""
+def generate_summary_dir_name(use_schwarz, grid_sizes):
+    """基于关键参数生成唯一的汇总目录名"""
+    solver_type = "schwarz" if use_schwarz else "single"
+    grid_range = f"grid{min(grid_sizes)}-{max(grid_sizes)}"
+    dir_name = f"analytical_summary_{solver_type}_{grid_range}"
+    return f"experiment_results/{dir_name}"
+
+def extract_basic_parameters_from_config(config):
+    """从配置文件提取基本参数（不依赖于actual mass）"""
 
     # 检查是否是Schwarz配置（有Domain1/Domain2）还是单域配置
     if 'Domain1' in config:
@@ -101,46 +108,67 @@ def extract_parameters_from_config(config, actual_mass=None):
             radius = shape['params']['semi_axes'][0]
             break
 
-    # 力参数 - 检查是否存在volume_forces
+    # 力参数 - 使用理论计算（基于配置文件的几何和密度）
     applied_pressure = 100.0  # 默认值
     load_height = 0.005  # 默认值
+    theoretical_mass = None
 
     if 'volume_forces' in domain_config and domain_config['volume_forces']:
         volume_force = domain_config['volume_forces'][0]
         force_magnitude = abs(volume_force['force'][1])  # 只关心垂直方向
 
-        if actual_mass is not None:
-            # 使用实际粒子总质量计算等效压力
-            # 总力 = 体力 × 实际总质量
-            total_force = force_magnitude * actual_mass
+        # 载荷区域几何
+        force_range = volume_force['params']['range']
+        load_width = force_range[0][1] - force_range[0][0]
+        load_height = force_range[1][1] - force_range[1][0]
 
-            # 载荷区域长度计算
-            force_range = volume_force['params']['range']
-            load_width = force_range[0][1] - force_range[0][0]  
+        # 计算理论质量：区域体积 × 密度
+        theoretical_mass = load_width * load_height * rho  # 2D情况，假设厚度为1
 
-            # 等效接触压力 = 总力 / 载荷区域长度
-            applied_pressure = total_force / load_width
+        # 计算等效接触压力：体力 × 理论质量 / 载荷宽度
+        total_force_theoretical = force_magnitude * theoretical_mass
+        applied_pressure = total_force_theoretical / load_width
 
-            print(f"使用实际粒子质量计算:")
-            print(f"  体力大小: {force_magnitude} N/kg")
-            print(f"  实际粒子总质量: {actual_mass:.6f} kg")
-            print(f"  总力: {total_force:.6f} N")
-            print(f"  载荷宽度: {load_width} m")
-            print(f"  等效接触压力: {applied_pressure:.2f} Pa")
-        else:
-            # 载荷区域
-            force_range = volume_force['params']['range']
-            load_height = force_range[1][1] - force_range[1][0]
-
-            # 计算等效接触压力：体力 × 材料密度 × 载荷高度
-            applied_pressure = force_magnitude * rho * load_height
-            print(f"使用理论密度计算:")
-            print(f"  体力大小: {force_magnitude} N/kg")
-            print(f"  材料密度: {rho} kg/m³")
-            print(f"  载荷高度: {load_height} m")
-            print(f"  等效接触压力: {applied_pressure:.2f} Pa")
+        print(f"使用理论几何计算解析解参数:")
+        print(f"  体力大小: {force_magnitude} N/kg")
+        print(f"  载荷区域: 宽度={load_width} m, 高度={load_height} m")
+        print(f"  材料密度: {rho} kg/m³")
+        print(f"  理论质量: {theoretical_mass:.6f} kg")
+        print(f"  理论总力: {total_force_theoretical:.6f} N")
+        print(f"  等效接触压力: {applied_pressure:.2f} Pa")
     else:
         print("未找到volume_forces，使用默认压力值")
+
+    return E, nu, rho, center, radius, applied_pressure, load_height, theoretical_mass
+
+def calculate_stress_normalization_factor(config, actual_mass, theoretical_mass):
+    """计算应力归一化因子"""
+    if actual_mass is None or theoretical_mass is None:
+        return 1.0
+
+    # 归一化因子 = 理论质量 / 实际质量
+    normalization_factor = theoretical_mass / actual_mass
+
+    print(f"应力归一化计算:")
+    print(f"  理论质量: {theoretical_mass:.6f} kg")
+    print(f"  实际质量: {actual_mass:.6f} kg")
+    print(f"  归一化因子: {normalization_factor:.6f}")
+
+    return normalization_factor
+
+def extract_parameters_from_config(config, actual_mass=None):
+    """从配置文件提取所有必要参数（保持向后兼容）"""
+
+    E, nu, rho, center, radius, applied_pressure, load_height, theoretical_mass = extract_basic_parameters_from_config(config)
+
+    # 为了向后兼容，如果提供了actual_mass，我们仍然支持基于actual_mass的计算
+    # 但推荐使用新的分离式方法
+
+    # 重新获取domain_config
+    if 'Domain1' in config:
+        domain_config = config['Domain1']
+    else:
+        domain_config = config
 
     # 应力输出区域
     if 'stress_output_regions' in domain_config:
@@ -175,6 +203,7 @@ def extract_parameters_from_config(config, actual_mass=None):
         'center': center, 'radius': radius,
         'applied_pressure': applied_pressure,
         'load_height': load_height,
+        'theoretical_mass': theoretical_mass,
         'x_range': x_range, 'y_range': y_range,
         'grid_size': grid_size,
         'grid_nx': grid_nx, 'grid_ny': grid_ny,
@@ -183,10 +212,15 @@ def extract_parameters_from_config(config, actual_mass=None):
     }
 
 def calculate_hertz_stress_field(config_path, actual_max_y=None, actual_mass=None):
-    """计算y=0位置的Hertz接触压力分布"""
+    """计算y=0位置的Hertz接触压力分布
+
+    注意：解析解计算现在使用理论质量，不再依赖actual_mass
+    actual_mass参数保留仅用于向后兼容
+    """
     from analytical_solutions.test3 import calculate_hertz_pressure_at_y_zero, calculate_contact_width
 
-    params = extract_parameters_from_config(load_config(config_path), actual_mass)
+    # 使用理论参数计算解析解（不使用actual_mass）
+    params = extract_parameters_from_config(load_config(config_path), actual_mass=None)
 
     print("Hertz接触问题参数:")
     print(f"材料: E={params['E']:.0e} Pa, nu={params['nu']}, rho={params['rho']}")
@@ -304,13 +338,17 @@ def run_mpm_simulation(config_path):
     print(f"执行命令: {' '.join(mpm_cmd)}")
 
     try:
-        # 不捕获输出，让模拟进度实时显示
-        result = subprocess.run(mpm_cmd, timeout=7200)
+        # 捕获输出以便调试
+        result = subprocess.run(mpm_cmd, capture_output=True, text=True, timeout=7200)
 
         if result.returncode == 0:
             print("单域MPM模拟完成")
         else:
             print(f"单域MPM模拟失败，返回码: {result.returncode}")
+            if result.stdout:
+                print(f"stdout: {result.stdout[-1000:]}")  # 最后1000字符
+            if result.stderr:
+                print(f"stderr: {result.stderr[-1000:]}")  # 最后1000字符
             return None, None
 
     except subprocess.TimeoutExpired:
@@ -345,13 +383,17 @@ def run_schwarz_simulation(config_path):
     print(f"执行命令: {' '.join(mpm_cmd)}")
 
     try:
-        # 不捕获输出，让模拟进度实时显示
-        result = subprocess.run(mpm_cmd, timeout=7200)
+        # 捕获输出以便调试
+        result = subprocess.run(mpm_cmd, capture_output=True, text=True, timeout=7200)
 
         if result.returncode == 0:
             print("Schwarz域分解MPM模拟完成")
         else:
             print(f"Schwarz域分解MPM模拟失败，返回码: {result.returncode}")
+            if result.stdout:
+                print(f"stdout: {result.stdout[-1000:]}")  # 最后1000字符
+            if result.stderr:
+                print(f"stderr: {result.stderr[-1000:]}")  # 最后1000字符
             return None, None
 
     except subprocess.TimeoutExpired:
@@ -372,7 +414,103 @@ def run_schwarz_simulation(config_path):
     return None, None
 
 
-def load_mpm_boundary_particle_stress(use_schwarz=False,  max_y_threshold=0.1):
+def load_mpm_boundary_particle_stress_for_grid(use_schwarz=False, grid_size=None, max_y_threshold=0.1):
+    """为特定网格大小加载MPM模拟结果中边界粒子的应力数据"""
+    import glob
+    import re
+    from datetime import datetime
+
+    if grid_size is not None:
+        # 如果指定了网格大小，查找包含该网格大小的结果目录
+        base_output_dir = "experiment_results"
+        if not os.path.exists(base_output_dir):
+            print(f"Experiment results directory not found: {base_output_dir}")
+            return None
+
+        if use_schwarz:
+            pattern = os.path.join(base_output_dir, f"schwarz_*_grid{grid_size}")
+            dirs = glob.glob(pattern)
+            if not dirs:
+                # 也尝试查找没有grid后缀的目录，但时间戳接近的
+                all_schwarz_dirs = glob.glob(os.path.join(base_output_dir, "schwarz_*"))
+                # 这里可以添加更复杂的匹配逻辑
+                dirs = all_schwarz_dirs
+        else:
+            pattern = os.path.join(base_output_dir, f"single_domain_*_grid{grid_size}")
+            dirs = glob.glob(pattern)
+            if not dirs:
+                # 也尝试查找没有grid后缀的目录
+                all_single_dirs = glob.glob(os.path.join(base_output_dir, "single_domain_*"))
+                dirs = all_single_dirs
+
+        if not dirs:
+            print(f"No results found for grid_size={grid_size}")
+            return None
+
+        # 选择最新的目录
+        def extract_timestamp(dirname):
+            basename = os.path.basename(dirname)
+            if use_schwarz:
+                match = re.search(r'schwarz_(\d{8}_\d{6})', basename)
+            else:
+                match = re.search(r'single_domain_(\d{8}_\d{6})', basename)
+            if match:
+                timestamp_str = match.group(1)
+                return datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+            return datetime.min
+
+        latest_dir = max(dirs, key=extract_timestamp)
+        result_dir = latest_dir
+        print(f"Using result directory for grid {grid_size}: {latest_dir}")
+    else:
+        # 如果没有指定网格大小，使用原来的逻辑
+        return load_mpm_boundary_particle_stress(use_schwarz, max_y_threshold)
+
+    # 加载数据的逻辑与原函数相同
+    if use_schwarz:
+        # 寻找Domain2的应力文件
+        domain2_stress_files = [f for f in os.listdir(result_dir)
+                               if f.startswith('domain2_stress_frame_') and f.endswith('.npy')]
+        if not domain2_stress_files:
+            print("No Domain2 stress data files found")
+            return None
+
+        stress_file = domain2_stress_files[0]
+        frame_num = stress_file.split('_')[3].split('.')[0]
+
+        stress_data = np.load(os.path.join(result_dir, f'domain2_stress_frame_{frame_num}.npy'))
+        positions = np.load(os.path.join(result_dir, f'domain2_positions_frame_{frame_num}.npy'))
+        boundary_flags = np.load(os.path.join(result_dir, f'domain2_boundary_flags_frame_{frame_num}.npy'))
+
+        print(f"Loaded {len(positions)} particles from Domain2, frame {frame_num}")
+    else:
+        # 单域情况的加载逻辑
+        stress_files = [f for f in os.listdir(result_dir)
+                       if f.startswith('stress_frame_') and f.endswith('.npy')]
+        if not stress_files:
+            print("No stress data files found")
+            return None
+
+        stress_file = stress_files[0]
+        frame_num = stress_file.split('_')[2].split('.')[0]
+
+        stress_data = np.load(os.path.join(result_dir, f'stress_frame_{frame_num}.npy'))
+        positions = np.load(os.path.join(result_dir, f'positions_frame_{frame_num}.npy'))
+        boundary_flags = np.load(os.path.join(result_dir, f'boundary_flags_frame_{frame_num}.npy'))
+
+        print(f"Loaded {len(positions)} particles from single domain, frame {frame_num}")
+
+    # 其余代码与原函数相同...
+    # 过滤边界粒子等逻辑
+    return {
+        'stress': stress_data,
+        'positions': positions,
+        'boundary_flags': boundary_flags,
+        'results_dir': result_dir,
+        'y_max': np.max(positions[:, 1]) if len(positions) > 0 else 0.0
+    }
+
+def load_mpm_boundary_particle_stress(use_schwarz=False, max_y_threshold=0.1):
     """加载MPM模拟结果中边界粒子的应力数据，可选择性过滤上边界粒子"""
     if use_schwarz:
         # Schwarz域分解：查找最新的时间戳目录
@@ -522,8 +660,13 @@ def load_mpm_boundary_particle_stress(use_schwarz=False,  max_y_threshold=0.1):
         print(f"Error loading MPM results: {e}")
         return None
 
-def compare_with_mpm(analytical_results, mpm_results, output_dir, save_image=True, grid_size=None):
-    """对比解析解和MPM结果"""
+def compare_with_mpm(analytical_results, mpm_results, output_dir, save_image=True, grid_size=None,
+                     normalization_factor=1.0):
+    """对比解析解和MPM结果
+
+    Args:
+        normalization_factor: 应力归一化因子，用于将MPM应力归一化到理论质量基准
+    """
     from analytical_solutions.test3 import calculate_contact_width
 
     params = analytical_results['params']
@@ -535,7 +678,7 @@ def compare_with_mpm(analytical_results, mpm_results, output_dir, save_image=Tru
     # 创建图形
     _, ax = plt.subplots(1, 1, figsize=(12, 8))
 
-    # 解析解 - y=0位置的压力分布
+    # 解析解 - y=0位置的压力分布（基于理论质量计算）
     x_coords = analytical_results['x_coords']
     stress_yy = analytical_results['stress_yy']  # 现在是1D数组
     center_x = params['center'][0]
@@ -545,19 +688,34 @@ def compare_with_mpm(analytical_results, mpm_results, output_dir, save_image=Tru
     x_analytical = x_coords[contact_indices]
     pressure_analytical = -stress_yy[contact_indices]/1000
 
-    # MPM结果
+    # MPM结果（原始数据）
     mpm_x = mpm_results['positions'][:, 0]
-    mpm_stress_yy = mpm_results['stress'][:, 1, 1]  # σ_yy分量
-    mpm_pressure = -mpm_stress_yy/1000  # 转换为正的压力值
+    mpm_stress_yy_raw = mpm_results['stress'][:, 1, 1]  # σ_yy分量（原始值）
+
+    # 应用归一化因子到MPM应力
+    mpm_stress_yy_normalized = mpm_stress_yy_raw * normalization_factor
+    mpm_pressure = -mpm_stress_yy_normalized/1000  # 转换为正的压力值
 
     # 只显示接触区域内的MPM数据
     mpm_contact_mask = (mpm_x >= center_x - contact_width) & (mpm_x <= center_x + contact_width)
     mpm_x_contact = mpm_x[mpm_contact_mask]
     mpm_pressure_contact = mpm_pressure[mpm_contact_mask]
 
-    # 直接使用原始压力值，不进行平移
-    ax.plot(x_analytical, pressure_analytical, 'r-', linewidth=2, label='Analytical (Hertz theory)')
-    ax.scatter(mpm_x_contact, mpm_pressure_contact, c='blue', s=20, alpha=0.7, label='MPM simulation')
+    # 绘制结果
+    ax.plot(x_analytical, pressure_analytical, 'r-', linewidth=2,
+            label='Analytical (Hertz theory, theoretical mass)')
+
+    if normalization_factor != 1.0:
+        ax.scatter(mpm_x_contact, mpm_pressure_contact, c='blue', s=20, alpha=0.7,
+                  label=f'MPM simulation (normalized by {normalization_factor:.3f})')
+    else:
+        ax.scatter(mpm_x_contact, mpm_pressure_contact, c='blue', s=20, alpha=0.7,
+                  label='MPM simulation (raw)')
+
+    print(f"应力归一化信息：")
+    print(f"  归一化因子: {normalization_factor:.6f}")
+    print(f"  MPM应力范围（原始）: {mpm_stress_yy_raw.min():.2e} - {mpm_stress_yy_raw.max():.2e} Pa")
+    print(f"  MPM应力范围（归一化后）: {mpm_stress_yy_normalized.min():.2e} - {mpm_stress_yy_normalized.max():.2e} Pa")
 
     # 标记接触边界
     ax.axvline(x=center_x - contact_width, color='red', linestyle='--', alpha=0.7,
@@ -597,7 +755,7 @@ def compare_with_mpm(analytical_results, mpm_results, output_dir, save_image=Tru
     print(f"Analytical pressure range: {pressure_analytical.min():.2f} - {pressure_analytical.max():.2f} kPa")
     print(f"MPM pressure range: {mpm_pressure_contact.min():.2f} - {mpm_pressure_contact.max():.2f} kPa")
 
-def save_grid_study_summary_data(analytical_results, all_mpm_results, all_grid_sizes, output_dir, contact_width, center_x):
+def save_grid_study_summary_data(analytical_results, all_mpm_results, all_grid_sizes, output_dir, contact_width, center_x, normalization_factors=None):
     """保存网格研究汇总数据到文件"""
     import json
 
@@ -672,6 +830,10 @@ def save_grid_study_summary_data(analytical_results, all_mpm_results, all_grid_s
         "mpm_results": mpm_data_by_grid
     }
 
+    # 添加归一化因子（如果提供）
+    if normalization_factors is not None:
+        summary_data["normalization_factors"] = [float(f) for f in normalization_factors]
+
     with open(os.path.join(output_dir, 'grid_study_summary.json'), 'w') as f:
         json.dump(summary_data, f, indent=2)
 
@@ -680,8 +842,14 @@ def save_grid_study_summary_data(analytical_results, all_mpm_results, all_grid_s
     print(f"  - {os.path.join(output_dir, 'grid_study_mpm_data.npz')}")
     print(f"  - {os.path.join(output_dir, 'grid_study_summary.json')}")
 
-def create_grid_study_summary_plot(analytical_results, all_mpm_results, all_grid_sizes, output_dir):
-    """创建网格研究汇总对比图：一条理论曲线和所有MPM结果"""
+def create_grid_study_summary_plot(analytical_results, all_mpm_results, all_grid_sizes, output_dir,
+                                  normalization_factors=None, save_data=True):
+    """创建网格研究汇总对比图：一条理论曲线和所有MPM结果
+
+    Args:
+        normalization_factors: 每个网格大小对应的归一化因子列表
+        save_data: 是否保存汇总数据，summary-only模式下设为False
+    """
     from analytical_solutions.test3 import calculate_contact_width
     import os
 
@@ -717,7 +885,17 @@ def create_grid_study_summary_plot(analytical_results, all_mpm_results, all_grid
     # 绘制所有MPM结果
     for i, (mpm_results, grid_size) in enumerate(zip(all_mpm_results, all_grid_sizes)):
         mpm_x = mpm_results['positions'][:, 0]
-        mpm_stress_yy = mpm_results['stress'][:, 1, 1]  # σ_yy分量
+        mpm_stress_yy_raw = mpm_results['stress'][:, 1, 1]  # σ_yy分量（原始值）
+
+        # 应用归一化因子
+        if normalization_factors is not None and i < len(normalization_factors):
+            normalization_factor = normalization_factors[i]
+            mpm_stress_yy = mpm_stress_yy_raw * normalization_factor
+            label_suffix = f" (norm: {normalization_factor:.3f})"
+        else:
+            mpm_stress_yy = mpm_stress_yy_raw
+            label_suffix = ""
+
         mpm_pressure = -mpm_stress_yy/1000  # 转换为正的压力值
 
         # 只显示接触区域内的MPM数据
@@ -728,7 +906,7 @@ def create_grid_study_summary_plot(analytical_results, all_mpm_results, all_grid
         # 绘制MPM结果
         ax.scatter(mpm_x_contact, mpm_pressure_contact,
                   c=[colors[i]], s=30, alpha=0.7,
-                  label=f'MPM (Grid {grid_size})', zorder=5)
+                  label=f'MPM (Grid {grid_size}){label_suffix}', zorder=5)
 
     # 标记接触边界
     ax.axvline(x=center_x - contact_width, color='red', linestyle='--', alpha=0.7,
@@ -759,8 +937,9 @@ def create_grid_study_summary_plot(analytical_results, all_mpm_results, all_grid
     except:
         pass
 
-    # 保存汇总数据
-    save_grid_study_summary_data(analytical_results, all_mpm_results, all_grid_sizes, output_dir, contact_width, center_x)
+    # 保存汇总数据（仅在非summary-only模式下）
+    if save_data:
+        save_grid_study_summary_data(analytical_results, all_mpm_results, all_grid_sizes, output_dir, contact_width, center_x, normalization_factors)
 
     # 打印统计信息
     print(f"\nGrid Study Summary Statistics:")
@@ -777,91 +956,109 @@ def create_grid_study_summary_plot(analytical_results, all_mpm_results, all_grid
               f"({len(mpm_pressure_contact)} particles)")
 
 def run_summary_only_mode(args):
-    """仅汇总模式：从现有结果目录中加载数据并生成汇总图"""
-    import glob
-    import re
-    from datetime import datetime
+    """仅汇总模式：从analytical_summary目录加载已保存的汇总数据并生成图表"""
+    import json
 
+    # 根据参数确定要加载的汇总目录
     grid_start, grid_end = args.grid_range
     grid_step = args.grid_step
     grid_sizes = list(range(grid_start, grid_end + 1, grid_step))
 
-    print(f"搜索网格大小: {grid_sizes}")
-    print(f"使用配置: {args.schwarz_config if args.use_schwarz else args.config}")
+    summary_output_dir = generate_summary_dir_name(args.use_schwarz, grid_sizes)
 
-    # 收集现有结果
-    all_mpm_results = []
-    all_grid_sizes = []
-    analytical_result_for_summary = None
+    print(f"从汇总数据目录加载数据: {summary_output_dir}")
 
-    for grid_size in grid_sizes:
-        print(f"\n搜索 grid_size={grid_size} 的结果...")
+    # 检查汇总数据目录是否存在
+    if not os.path.exists(summary_output_dir):
+        print(f"❌ 汇总数据目录不存在: {summary_output_dir}")
+        print("请先运行批量网格研究 (--batch-grid-study) 生成汇总数据")
+        return
 
-        # 构造对应的配置文件路径
-        if args.use_schwarz:
-            config_file = f"config/schwarz_2d_test3_grid{grid_size}.json"
-        else:
-            config_file = f"config/config_2d_test3_grid{grid_size}.json"
+    # 加载汇总数据文件
+    summary_json_file = os.path.join(summary_output_dir, "grid_study_summary.json")
+    analytical_data_file = os.path.join(summary_output_dir, "grid_study_analytical_data.npz")
+    mpm_data_file = os.path.join(summary_output_dir, "grid_study_mpm_data.npz")
 
-        if not os.path.exists(config_file):
-            print(f"  配置文件不存在: {config_file}")
-            continue
+    # 检查必需的文件是否存在
+    missing_files = []
+    for file_path, name in [(summary_json_file, "grid_study_summary.json"),
+                           (analytical_data_file, "grid_study_analytical_data.npz"),
+                           (mpm_data_file, "grid_study_mpm_data.npz")]:
+        if not os.path.exists(file_path):
+            missing_files.append(name)
 
-        # 加载MPM结果
-        try:
-            if args.use_schwarz:
-                mpm_results = load_mpm_boundary_particle_stress(
-                    use_schwarz=True,
-                    config_path=config_file,
-                    max_y_threshold=args.max_y_threshold
-                )
+    if missing_files:
+        print(f"❌ 缺少汇总数据文件: {', '.join(missing_files)}")
+        print("请先运行批量网格研究 (--batch-grid-study) 生成完整的汇总数据")
+        return
+
+    try:
+        # 加载JSON元数据
+        print("加载汇总元数据...")
+        with open(summary_json_file, 'r') as f:
+            summary_metadata = json.load(f)
+
+        # 加载解析解数据
+        print("加载解析解数据...")
+        analytical_npz = np.load(analytical_data_file)
+        print("解析解数据加载成功")
+        print(f"解析解数据包含: {analytical_npz.files}")
+        analytical_results = {
+            'x_coords': analytical_npz['x_coords'],
+            'stress_yy': -analytical_npz['pressure_kPa'] * 1000,  # 将pressure_kPa转换为stress_yy (Pa)
+            'params': summary_metadata['analytical_solution']['parameters']
+        }
+
+        # 加载MPM数据
+        print("加载MPM数据...")
+        mpm_npz = np.load(mpm_data_file, allow_pickle=True)
+        all_grid_sizes = summary_metadata['experiment_info']['grid_sizes_tested']
+
+        # 重构MPM结果数据
+        all_mpm_results = []
+        for i, grid_size in enumerate(all_grid_sizes):
+            grid_key = f'grid_{grid_size}'
+            if f'{grid_key}_x' in mpm_npz:
+                # 从保存的x坐标和压力数据重构MPM结果格式
+                x_coords = mpm_npz[f'{grid_key}_x']
+                pressure_kPa = mpm_npz[f'{grid_key}_pressure']
+
+                # 构造positions数组 (x坐标，y设为0)
+                positions = np.column_stack([x_coords, np.zeros_like(x_coords)])
+
+                # 构造stress数组 (将压力转换为stress_yy)
+                stress_yy = -pressure_kPa * 1000  # kPa转Pa，压力转应力
+                n_particles = len(x_coords)
+                stress = np.zeros((n_particles, 2, 2))
+                stress[:, 1, 1] = stress_yy  # 设置yy分量
+
+                mpm_result = {
+                    'positions': positions,
+                    'stress': stress,
+                    'y_max': 0.0  # 占位值，汇总模式不需要此值
+                }
+                all_mpm_results.append(mpm_result)
             else:
-                mpm_results = load_mpm_boundary_particle_stress(
-                    use_schwarz=False,
-                    config_path=config_file,
-                    max_y_threshold=args.max_y_threshold
-                )
+                print(f"  警告: 未找到 grid_size={grid_size} 的数据")
 
-            if mpm_results is None:
-                print(f"  无法加载 grid_size={grid_size} 的MPM结果")
-                continue
+        # 加载归一化因子（如果存在）
+        normalization_factors = None
+        if 'normalization_factors' in summary_metadata:
+            normalization_factors = summary_metadata['normalization_factors']
+            print(f"加载归一化因子: {normalization_factors}")
 
-            print(f"  成功加载 grid_size={grid_size} 的结果: {len(mpm_results['positions'])} 个粒子")
+        print(f"✅ 成功加载 {len(all_mpm_results)} 个网格大小的数据: {all_grid_sizes}")
 
-            # 计算对应的解析解（如果还没有的话）
-            if analytical_result_for_summary is None:
-                print(f"  计算解析解...")
-                results_dir = mpm_results.get('results_dir')
-                actual_mass = get_actual_volume_force_mass(config_file, results_dir=results_dir)
-                actual_max_y = mpm_results['y_max']
-                analytical_result_for_summary = calculate_hertz_stress_field(config_file, actual_max_y, actual_mass)
+        # 重新生成汇总图（不保存数据）
+        print("重新生成汇总对比图...")
+        create_grid_study_summary_plot(analytical_results, all_mpm_results, all_grid_sizes, summary_output_dir,
+                                      normalization_factors=normalization_factors, save_data=False)
 
-            all_mpm_results.append(mpm_results)
-            all_grid_sizes.append(grid_size)
+        print(f"\n✅ 汇总模式完成! 结果保存在: {summary_output_dir}/")
 
-        except Exception as e:
-            print(f"  加载 grid_size={grid_size} 时出错: {e}")
-            continue
-
-    if not all_mpm_results:
-        print("❌ 未找到任何有效的结果数据")
-        print("请确保:")
-        print("  1. 已运行过批量网格研究 (--batch-grid-study)")
-        print("  2. 配置文件存在于 config/ 目录")
-        print("  3. 模拟结果存在于 experiment_results/ 目录")
-        return
-
-    if analytical_result_for_summary is None:
-        print("❌ 无法计算解析解")
-        return
-
-    print(f"\n✅ 成功加载 {len(all_grid_sizes)} 个网格大小的结果: {all_grid_sizes}")
-
-    # 生成汇总图和保存数据
-    print(f"\n生成汇总对比图和保存汇总数据...")
-    summary_output_dir = "experiment_results/analytical_summary"
-    create_grid_study_summary_plot(analytical_result_for_summary, all_mpm_results, all_grid_sizes, summary_output_dir)
-    print(f"\n✅ 汇总模式完成! 结果保存在: {summary_output_dir}/")
+    except Exception as e:
+        print(f"❌ 加载汇总数据时出错: {e}")
+        print("请检查数据文件完整性，或重新运行批量网格研究")
 
 def run_batch_grid_study(args):
     """运行批量网格研究：生成不同domain2-grid-size的配置并运行实验"""
@@ -887,6 +1084,7 @@ def run_batch_grid_study(args):
     # 收集所有结果用于汇总图
     all_mpm_results = []
     all_grid_sizes = []
+    all_normalization_factors = []  # 收集归一化因子
     analytical_result_for_summary = None
 
     for i, grid_size in enumerate(grid_sizes):
@@ -955,15 +1153,18 @@ def run_batch_grid_study(args):
         print(f"   执行命令: {' '.join(mpm_cmd)}")
 
         try:
-            # 不捕获输出，让模拟进度实时显示
-            result = subprocess.run(mpm_cmd, capture_output=True,timeout=7200)
+            # 捕获输出以便调试
+            result = subprocess.run(mpm_cmd, capture_output=True, text=True, timeout=7200)
 
             # 检查返回码，0表示成功
             if result.returncode == 0:
                 print(f"   模拟完成，开始分析结果")
             else:
                 print(f"   模拟失败，返回码: {result.returncode}")
-                continue
+                if result.stdout:
+                    print(f"   stdout: {result.stdout[-1000:]}")  # 最后1000字符
+                if result.stderr:
+                    print(f"   stderr: {result.stderr[-1000:]}")  # 最后1000字符
 
         except subprocess.TimeoutExpired:
             print(f"   模拟超时（超过2小时），跳过此网格大小")
@@ -1005,18 +1206,24 @@ def run_batch_grid_study(args):
         print(f"σ_yy: 最小值={analytical_results['stress_yy'].min():.2e} Pa")
         print(f"σ_yy: 最大值={analytical_results['stress_yy'].max():.2e} Pa")
 
-        # 6. 对比分析并保存专用图片
+        # 6. 计算归一化因子
+        theoretical_mass = analytical_results['params'].get('theoretical_mass')
+        normalization_factor = calculate_stress_normalization_factor(load_config(config_file), actual_mass, theoretical_mass)
+
+        # 7. 对比分析并保存专用图片（应用归一化）
         if args.use_schwarz:
-            print(f"6. 对比解析解与Domain2结果")
+            print(f"7. 对比解析解与Domain2结果（应用归一化）")
         else:
-            print(f"6. 对比解析解与单域MPM结果")
-        compare_with_mpm(analytical_results, mpm_results, output_dir, save_image=True, grid_size=grid_size)
+            print(f"7. 对比解析解与单域MPM结果（应用归一化）")
+        compare_with_mpm(analytical_results, mpm_results, output_dir, save_image=True, grid_size=grid_size,
+                        normalization_factor=normalization_factor)
 
         print(f"实验 {i+1} 完成! 结果保存在: {output_dir}")
 
         # 收集结果用于汇总图
         all_mpm_results.append(mpm_results)
         all_grid_sizes.append(grid_size)
+        all_normalization_factors.append(normalization_factor)
         if analytical_result_for_summary is None:
             analytical_result_for_summary = analytical_results
 
@@ -1033,8 +1240,9 @@ def run_batch_grid_study(args):
     # 生成汇总对比图
     if all_mpm_results and analytical_result_for_summary:
         print(f"\n生成汇总对比图和保存汇总数据...")
-        summary_output_dir = "experiment_results/analytical_summary"
-        create_grid_study_summary_plot(analytical_result_for_summary, all_mpm_results, all_grid_sizes, summary_output_dir)
+        summary_output_dir = generate_summary_dir_name(args.use_schwarz, all_grid_sizes)
+        create_grid_study_summary_plot(analytical_result_for_summary, all_mpm_results, all_grid_sizes, summary_output_dir,
+                                      normalization_factors=all_normalization_factors)
         print(f"汇总结果保存在: {summary_output_dir}/")
 
 def main():
@@ -1106,30 +1314,36 @@ def main():
         if args.use_schwarz:
             print(f"\n1. 加载现有Schwarz Domain2边界粒子应力数据")
             config_path = args.schwarz_config
-            mpm_results = load_mpm_boundary_particle_stress(use_schwarz=True, config_path=config_path, max_y_threshold=args.max_y_threshold)
+            mpm_results = load_mpm_boundary_particle_stress(use_schwarz=True, max_y_threshold=args.max_y_threshold)
         else:
             print(f"\n1. 加载现有单域MPM边界粒子应力数据")
             config_path = args.config
-            mpm_results = load_mpm_boundary_particle_stress(use_schwarz=False, config_path=config_path, max_y_threshold=args.max_y_threshold)
+            mpm_results = load_mpm_boundary_particle_stress(use_schwarz=False, max_y_threshold=args.max_y_threshold)
 
         if mpm_results is None:
             print("❌ 无法加载现有模拟结果，请先运行模拟或检查结果目录")
             return
 
-        # 计算解析解（从已保存的文件中读取actual_mass）
-        print(f"\n2. 计算对应的Hertz接触解析解")
+        # 计算解析解（使用理论质量）
+        print(f"\n2. 计算对应的Hertz接触解析解（使用理论质量）")
         results_dir = mpm_results.get('results_dir')
         actual_mass = get_actual_volume_force_mass(config_path, results_dir=results_dir)
-        analytical_results = calculate_hertz_stress_field(config_path, actual_mass=actual_mass)
+        print(f"   加载到的实际质量: {actual_mass:.6f} kg")
+        analytical_results = calculate_hertz_stress_field(config_path, actual_mass=None)  # 不使用actual_mass
         save_results(analytical_results, args.output_dir)
 
         print(f"解析解垂直应力统计:")
         print(f"σ_yy: 最小值={analytical_results['stress_yy'].min():.2e} Pa")
         print(f"σ_yy: 最大值={analytical_results['stress_yy'].max():.2e} Pa")
 
+        # 计算归一化因子
+        theoretical_mass = analytical_results['params'].get('theoretical_mass')
+        normalization_factor = calculate_stress_normalization_factor(load_config(config_path), actual_mass, theoretical_mass)
+
         # 对比分析
-        print("\n3. 对比解析解与现有MPM结果")
-        compare_with_mpm(analytical_results, mpm_results, args.output_dir, save_image=not args.no_save_image)
+        print("\n3. 对比解析解与现有MPM结果（应用归一化）")
+        compare_with_mpm(analytical_results, mpm_results, args.output_dir,
+                        save_image=not args.no_save_image, normalization_factor=normalization_factor)
 
         solver_type = "Schwarz域分解" if args.use_schwarz else "单域MPM"
         print(f"\n{solver_type}直接比较完成! 结果保存在: {args.output_dir}")
@@ -1147,25 +1361,30 @@ def main():
 
         # 2. 加载Domain2应力数据，获取实际粒子分布
         print(f"\n2. 加载Domain2边界粒子应力数据")
-        mpm_results = load_mpm_boundary_particle_stress(use_schwarz=True, config_path=args.schwarz_config, max_y_threshold=args.max_y_threshold)
+        mpm_results = load_mpm_boundary_particle_stress(use_schwarz=True, max_y_threshold=args.max_y_threshold)
 
         if mpm_results is None:
             print("Domain2结果加载失败，无法进行对比")
             return
 
-        # 3. 根据实际粒子最大y和实际质量计算解析解
+        # 3. 使用理论质量计算解析解
         actual_max_y = mpm_results['y_max']
-        print(f"\n3. 根据Domain2粒子分布和实际质量计算Hertz接触解析解 (y_max={actual_max_y:.4f})")
-        analytical_results = calculate_hertz_stress_field(args.schwarz_config, actual_max_y, actual_mass)
+        print(f"\n3. 计算Hertz接触解析解（使用理论质量，Domain2粒子y_max={actual_max_y:.4f}）")
+        analytical_results = calculate_hertz_stress_field(args.schwarz_config, actual_max_y, actual_mass=None)
         save_results(analytical_results, args.output_dir)
 
         print(f"解析解垂直应力统计:")
         print(f"σ_yy: 最小值={analytical_results['stress_yy'].min():.2e} Pa")
         print(f"σ_yy: 最大值={analytical_results['stress_yy'].max():.2e} Pa")
 
-        # 4. 对比分析
-        print("\n4. 对比解析解与Domain2结果")
-        compare_with_mpm(analytical_results, mpm_results, args.output_dir, save_image=not args.no_save_image)
+        # 计算归一化因子
+        theoretical_mass = analytical_results['params'].get('theoretical_mass')
+        normalization_factor = calculate_stress_normalization_factor(load_config(args.schwarz_config), actual_mass, theoretical_mass)
+
+        # 4. 对比分析（应用归一化）
+        print("\n4. 对比解析解与Domain2结果（应用归一化）")
+        compare_with_mpm(analytical_results, mpm_results, args.output_dir,
+                        save_image=not args.no_save_image, normalization_factor=normalization_factor)
         print(f"\nSchwarz域分解实验3完成! 结果保存在: {args.output_dir}")
 
     else:
@@ -1180,25 +1399,30 @@ def main():
 
         # 2. 加载MPM应力数据，获取实际粒子分布
         print(f"\n2. 加载MPM边界粒子应力数据")
-        mpm_results = load_mpm_boundary_particle_stress(use_schwarz=False, config_path=args.config, max_y_threshold=args.max_y_threshold)
+        mpm_results = load_mpm_boundary_particle_stress(use_schwarz=False, max_y_threshold=args.max_y_threshold)
 
         if mpm_results is None:
             print("MPM结果加载失败，无法进行对比")
             return
 
-        # 3. 根据实际粒子最大y和实际质量计算解析解
+        # 3. 使用理论质量计算解析解
         actual_max_y = mpm_results['y_max']
-        print(f"\n3. 根据实际粒子分布和实际质量计算Hertz接触解析解 (y_max={actual_max_y:.4f})")
-        analytical_results = calculate_hertz_stress_field(args.config, actual_max_y, actual_mass)
+        print(f"\n3. 计算Hertz接触解析解（使用理论质量，实际粒子y_max={actual_max_y:.4f}）")
+        analytical_results = calculate_hertz_stress_field(args.config, actual_max_y, actual_mass=None)
         save_results(analytical_results, args.output_dir)
 
         print(f"解析解垂直应力统计:")
         print(f"σ_yy: 最小值={analytical_results['stress_yy'].min():.2e} Pa")
         print(f"σ_yy: 最大值={analytical_results['stress_yy'].max():.2e} Pa")
 
-        # 4. 对比分析
-        print("\n4. 对比解析解与MPM结果")
-        compare_with_mpm(analytical_results, mpm_results, args.output_dir, save_image=not args.no_save_image)
+        # 计算归一化因子
+        theoretical_mass = analytical_results['params'].get('theoretical_mass')
+        normalization_factor = calculate_stress_normalization_factor(load_config(args.config), actual_mass, theoretical_mass)
+
+        # 4. 对比分析（应用归一化）
+        print("\n4. 对比解析解与MPM结果（应用归一化）")
+        compare_with_mpm(analytical_results, mpm_results, args.output_dir,
+                        save_image=not args.no_save_image, normalization_factor=normalization_factor)
         print(f"\n实验3完成! 结果保存在: {args.output_dir}")
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ from simulators.mpm_solver import MPMSolver
 config = Config(data={
         "dt": 0.001,
         "float_type": "f64",
-        "elasticity_model": "linear",  # "neohookean" or "linear"
+        "elasticity_model": "neohookean",  # "neohookean" or "linear"
         "dim": 2,
         "E": 4.0,
         "nu": 0.4,
@@ -54,7 +54,7 @@ def init_particles():
             particles.x[p][d] = ti.random() * 0.5 + 0.25
             particles.v[p] = ti.Vector([0.0] * dim)
             for q in ti.static(range(dim)):
-                particles.F[p][d,q] = 200 if d == q else -10
+                particles.F[p][d,q] = ti.random() * 1.0 + 0.5
 
 # init_particles()
 particles.build_neighbor_list()
@@ -73,28 +73,33 @@ init_velocity(solver.v_grad)
 
 def test_gradient_derivative():
 
-    # 自动求导计算梯度
-    auto_grad = ti.field(float_type, shape=n_vars)
-    solver.compute_energy_grad_auto(solver.v_grad, auto_grad)
-
     # 手动计算梯度
     manual_grad = ti.field(float_type, shape=n_vars)
     solver.compute_energy_grad_manual(solver.v_grad, manual_grad)
 
-    # 比较结果
+    # 比较与有限差分结果
+    h = 1e-4
+    finite_diff_grad = ti.field(float_type, shape=n_vars)
+    for i in range(n_vars):
+        solver.v_grad[i] += h
+        e1 = solver.compute_energy(solver.v_grad)
+        solver.v_grad[i] -= 2 * h
+        e2 = solver.compute_energy(solver.v_grad)
+        finite_diff_grad[i] = (e1 - e2) / (2 * h)
+        solver.v_grad[i] += h
     max_error = 0.0
     for i in range(n_vars):
-        error = abs(auto_grad[i] - manual_grad[i]) / abs(auto_grad[i] + 1e-10)
+        error = abs(finite_diff_grad[i] - manual_grad[i]) / abs(finite_diff_grad[i] + 1e-10)
         max_error = max(max_error, error)
         idx1 = i/2 // grid.size
         idx2 = i/2 % grid.size
         if error > 1e-4:
-            print(f"x:{idx1},y:{idx2},显著差异 @ {i}: Auto={auto_grad[i]:.4e}, Manual={manual_grad[i]:.4e}, Δ={error:.4e}")
-        elif auto_grad[i] != 0:
-            print(f"x:{idx1},y:{idx2},小差异 @ {i}: Auto={auto_grad[i]:.4e}, Manual={manual_grad[i]:.4e}, Δ={error:.4e}")
+            print(f"x:{idx1},y:{idx2},显著差异 @ {i}: FiniteDiff={finite_diff_grad[i]:.4e}, Manual={manual_grad[i]:.4e}, Δ={error:.4e}")
+        elif finite_diff_grad[i] != 0:
+            print(f"x:{idx1},y:{idx2},小差异 @ {i}: FiniteDiff={finite_diff_grad[i]:.4e}, Manual={manual_grad[i]:.4e}, Δ={error:.4e}")
 
     print(f"最大梯度相对误差: {max_error:.10f}")
-    assert max_error < 1e-4, "手动梯度与自动求导结果不一致"
+    assert max_error < 1e-4, "手动梯度与有限差分结果不一致"
 
 def test_hessian_derivative():
     # 手动计算hessian
@@ -104,7 +109,7 @@ def test_hessian_derivative():
 
 
     # finite difference hessian
-    h = 1e-4
+    h = 1e-6
     finite_diff_hessian = ti.field(float_type, shape=(n_vars, n_vars))
     finite_diff_hessian.fill(0.0)
     new_grad1 = ti.field(float_type, shape=n_vars)

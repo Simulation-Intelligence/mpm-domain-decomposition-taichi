@@ -3,17 +3,18 @@
     "float_type": "f64",
     "dim": 2,
     "grid_nx": 64,
-    "grid_ny": 33,
+    "grid_ny": 64,
     "domain_width": 1.0,
-    "domain_height": 0.515625,
+    "domain_height": 1.0,
     "offset": [
         0.0,
         0.0
     ],
-    "particles_per_grid": 8,
+    "particles_per_grid": 4,
     "sampling_method": "mesh",
     "elasticity_model": "linear",
-    "dt": 0.01,
+    "constrain_x_velocity": true,
+    "dt": 0.001,
     "max_iter": 1,
     "solve_max_iter": 1000,
     "solve_init_iter": 100,
@@ -36,6 +37,7 @@
     "bound": 1,
     "initial_velocity_y": 0,
     "damping": 0,
+    "particle_damping": 0.99,
     "volume_forces": [
         {
             "type": "rectangle",
@@ -46,8 +48,8 @@
                         1
                     ],
                     [
-                        0.44,
-                        0.45
+                        0.94,
+                        0.95
                     ]
                 ]
             },
@@ -57,17 +59,23 @@
             ]
         }
     ],
+    "DBC_range": [
+            [
+                [0, 1],
+                [0, 0.06]
+            ]
+        ],
     "shapes": [
         {
             "type": "ellipse",
             "params": {
                 "center": [
                     0.5,
-                    0.45
+                    0.95
                 ],
                 "semi_axes": [
-                    0.4,
-                    0.4
+                    0.44,
+                    0.44
                 ]
             },
             "operation": "add",
@@ -82,8 +90,39 @@
                         1
                     ],
                     [
-                        0.45,
+                        0.95,
+                        2.0
+                    ]
+                ]
+            },
+            "operation": "subtract"
+        },
+                {
+            "type": "ellipse",
+            "params": {
+                "center": [
+                    0.5,
+                    0.05
+                ],
+                "semi_axes": [
+                    0.44,
+                    0.44
+                ]
+            },
+            "operation": "add",
+            "material_id": 0
+        },
+        {
+            "type": "rectangle",
+            "params": {
+                "range": [
+                    [
+                        0,
                         1
+                    ],
+                    [
+                        -1,
+                        0.05
                     ]
                 ]
             },
@@ -92,8 +131,10 @@
     ],
     "implicit_solver": "Newton",
     "boundary_size": 0.0001,
-    "eta": 0.001,
-    "max_frames": 5000,
+    "eta": 0.0001,
+    "max_frames": 50000,
     "use_record": false,
-    "no_gui": false
+    "no_gui": false,
+    "velocity_convergence_threshold": 1e-6,
+    "velocity_convergence_check_interval": 10
 }

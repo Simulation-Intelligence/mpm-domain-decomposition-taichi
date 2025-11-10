@@ -196,7 +196,8 @@ def generate_test3_schwarz_config(
             "compare_diff": False,
             "bound": 1,
             "initial_velocity_y": -0,
-            "damping": 0.5 if implicit else 0.5,
+            "damping": 0.0 if implicit else 0.5,
+            "particle_damping": 0.99,
             "volume_forces": [
                 {
                     "type": "rectangle",
@@ -278,6 +279,7 @@ def generate_test3_schwarz_config(
             "use_mesh_boundary": True,
             "initial_velocity_y": -0,
             "damping": 0.01 if implicit else 0.5,
+            "particle_damping": 1.0,
             "shapes": [
                 {
                     "type": "ellipse",

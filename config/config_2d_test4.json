@@ -2,16 +2,17 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 80,
-        "grid_ny": 40,
+        "grid_nx": 256,
+        "grid_ny": 128,
         "domain_width": 1.0,
         "domain_height": 0.5,
-        "particles_per_grid": 16,
-        "sampling_method": "mesh",
-        "elasticity_model": "linear",
-        "dt": 1e-4,
+        "particles_per_grid": 4,
+        "sampling_method": "regular",
+        "elasticity_model": "neohookean",
+        "use_mapping": true,
+        "dt": 0.0001,
         "max_iter": 1,
-        "solve_max_iter": 1000,
+        "solve_max_iter": 20000,
         "solve_init_iter": 100,
         "offset": [
             0.0,
@@ -19,7 +20,7 @@
         ],
         "gravity": [
             0.0,
-            -9.8
+           -0.03875248015873022
         ],
         "DBC_range": [
             [
@@ -27,17 +28,19 @@
                 [0, 1]
             ]
         ],
-        "damping":0.5,
+        "damping":0,
+        "particle_damping": 0.999,
         "material_params": [
             {
                 "id": 0,
                 "name": "default",
-                "E": 1e6,
-                "nu": 0.3,
+                "E": 1e5,
+                "nu": 0.4,
                 "rho": 1e3
             }
         ],
-        "implicit": false,
+        "implicit": true,
+        "static_solve": true,
         "use_auto_diff": false,
         "compare_diff": false,
         "bound": 2,
@@ -48,12 +51,12 @@
                 "params": {
                     "range": [
                         [
-                            0.05,
-                            0.8
+                            0.08,
+                            0.9
                         ],
                         [
-                            0.35,
-                            0.45
+                            0.39,
+                            0.40
                         ]
                     ]
                 },
@@ -64,5 +67,9 @@
         ],
         "implicit_solver": "Newton",
         "eta": 1e-4,
-        "record_frames": 3000
+    "max_frames": 50000,
+    "use_record": false,
+    "no_gui": false,
+    "velocity_convergence_threshold": 1e-6,
+    "velocity_convergence_check_interval": 10
 }

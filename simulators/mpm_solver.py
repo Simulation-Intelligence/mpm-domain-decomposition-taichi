@@ -9,6 +9,8 @@ from Geometry.Particles import Particles
 from Optimizer.BFGS import BFGS
 from Optimizer.LBFGS import LBFGS
 from Optimizer.Newton import Newton
+from Optimizer.CG import CG
+from Optimizer.PCG import PCG
 
 from Util.Config import Config
 
@@ -80,9 +82,19 @@ class MPMSolver:
             # 使用材料1的p_mass进行梯度归一化
             avg_p_mass = (self.particles.p_mass_1 + self.particles.p_mass_2) / 2.0
             self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=None,dim=total_grid_points * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
+        elif solver_type == "CG":
+            # 使用材料1的p_mass进行梯度归一化
+            avg_p_mass = (self.particles.p_mass_1 + self.particles.p_mass_2) / 2.0
+            self.optimizer = CG(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=None,dim=total_grid_points * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
+        elif solver_type == "PCG":
+            # 使用材料1的p_mass进行梯度归一化
+            avg_p_mass = (self.particles.p_mass_1 + self.particles.p_mass_2) / 2.0
+            preconditioner_type = config.get("preconditioner_type", "diagonal")
+            self.optimizer = PCG(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=None,dim=total_grid_points * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type,preconditioner_type=preconditioner_type)
 
     def solve_implicit(self):
         self.grid.set_boundary_v()
+        # self.optimizer.resize(self.grid.get_total_grid_points() * self.dim)
         self.set_initial_guess()
         iter=self.optimizer.minimize(self.solve_max_iter, self.solve_init_iter)
         self.iter_history.append(iter)
@@ -92,6 +104,12 @@ class MPMSolver:
     @ti.func
     def get_idx(self, I):
         return self.grid.get_idx(I)
+
+    @ti.func
+    def get_compressed_idx(self, I):
+        """获取压缩后的索引"""
+        compressed_idx = self.grid.get_compressed_index(I)
+        return compressed_idx * self.dim
 
     @ti.func
     def wrap_grid_idx(self, I):
@@ -191,21 +209,44 @@ class MPMSolver:
 
     @ti.kernel
     def compute_grid_energy(self, v_flat: ti.template()):
-        for I in ti.grouped(self.grid.v):
-            vidx = self.get_idx(I)
-            vel = self.get_vel(v_flat,vidx)
-            
-            # 惯性项 - 静力学求解时跳过
-            if not ti.static(self.static_solve):
-                self.total_energy[None] += 0.5 * self.grid.m[I] * (vel - self.grid.v_prev[I]).norm_sqr()
+        if ti.static(self.grid.use_mapping):
+            # 使用压缩映射时只遍历有质量的节点
+            for compressed_idx in range(self.grid.get_active_grid_count()):
+                I = self.grid.get_grid_indices_from_compressed(compressed_idx)
+                vidx = compressed_idx * self.dim
+                vel = self.get_vel(v_flat, vidx)
 
-            # 计算势能
-            pos = I * self.grid.dx + vel * self.dt
-            total_external_force = self.gravity + self.grid.volume_force[I]
-            #阻尼力
-            if not ti.static(self.static_solve):
-                total_external_force += self.get_damping_force(I) 
-            self.total_energy[None] -= total_external_force.dot(pos) * self.grid.m[I]
+                # 惯性项 - 静力学求解时跳过
+                if not ti.static(self.static_solve):
+                    self.total_energy[None] += 0.5 * self.grid.m[I] * (vel - self.grid.v_prev[I]).norm_sqr()
+
+                # 计算势能
+                pos = I * self.grid.dx + vel * self.dt
+                total_external_force = self.gravity + self.grid.volume_force[I]
+                #阻尼力
+                if not ti.static(self.static_solve):
+                    total_external_force += self.get_damping_force(I)
+                self.total_energy[None] -= total_external_force.dot(pos) * self.grid.m[I]
+        else:
+            # 原始方法：遍历所有节点
+            for I in ti.grouped(self.grid.v):
+                vidx = self.get_idx(I)
+                vel = self.get_vel(v_flat,vidx)
+
+                if self.grid.m[I] == 0.0:
+                    continue
+
+                # 惯性项 - 静力学求解时跳过
+                if not ti.static(self.static_solve):
+                    self.total_energy[None] += 0.5 * self.grid.m[I] * (vel - self.grid.v_prev[I]).norm_sqr()
+
+                # 计算势能
+                pos = I * self.grid.dx + vel * self.dt
+                total_external_force = self.gravity + self.grid.volume_force[I]
+                #阻尼力
+                if not ti.static(self.static_solve):
+                    total_external_force += self.get_damping_force(I)
+                self.total_energy[None] -= total_external_force.dot(pos) * self.grid.m[I]
 
 
     @ti.kernel
@@ -240,7 +281,6 @@ class MPMSolver:
                 # 累加梯度
                 for d in ti.static(range(self.dim)):
                     ti.atomic_add(grad_flat[vidx+d], grad[d])
-
     @ti.kernel
     def manual_particle_energy_grad_linear(self, v_flat: ti.template(), grad_flat: ti.template()):
         for p in range(self.particles.n_particles):
@@ -271,37 +311,68 @@ class MPMSolver:
                 grid_idx = self.wrap_grid_idx(base + offset)
                 vidx = self.get_idx(grid_idx)
 
+                assert vidx >= 0, "Invalid grid index in gradient computation"
                 grad = 4*self.dt*dE_dvel_grad @ self.particles.dwip[p, offset]
-
+                    
                 # 累加梯度
                 for d in ti.static(range(self.dim)):
                     ti.atomic_add(grad_flat[vidx+d], grad[d])
 
     @ti.kernel
     def manual_grid_energy_grad(self, v_flat: ti.template(), grad_flat: ti.template()):
+        if ti.static(self.grid.use_mapping):
+            # 使用压缩映射时只遍历有质量的节点
+            for compressed_idx in range(self.grid.get_active_grid_count()):
+                I = self.grid.get_grid_indices_from_compressed(compressed_idx)
+                vidx = compressed_idx * self.dim
+                vel = self.get_vel(v_flat, vidx)
 
-        for I in ti.grouped(self.grid.v):
-            vidx = self.get_idx(I)
-            vel = self.get_vel(v_flat,vidx)
-            
-            # 初始化梯度
-            grad = ti.Vector.zero(self.float_type, self.dim)
-            
-            # 惯性项梯度 - 静力学求解时跳过
-            if not ti.static(self.static_solve):
-                grad += self.grid.m[I] * (vel - self.grid.v_prev[I])
-            
-            # 计算外部力（重力 + 体积力）
-            total_external_force = self.gravity + self.grid.volume_force[I]
-            # 阻尼力
-            if not ti.static(self.static_solve):
-                total_external_force += self.get_damping_force(I)
-            grad -= total_external_force * self.dt * self.grid.m[I]
+                # 初始化梯度
+                grad = ti.Vector.zero(self.float_type, self.dim)
 
+                # 惯性项梯度 - 静力学求解时跳过
+                if not ti.static(self.static_solve):
+                    grad += self.grid.m[I] * (vel - self.grid.v_prev[I])
 
-            # 累加梯度
-            for d in ti.static(range(self.dim)):
-                ti.atomic_add(grad_flat[vidx+d], grad[d])
+                # 计算外部力（重力 + 体积力）
+                total_external_force = self.gravity + self.grid.volume_force[I]
+                # 阻尼力
+                if not ti.static(self.static_solve):
+                    total_external_force += self.get_damping_force(I)
+                grad -= total_external_force * self.dt * self.grid.m[I]
+
+                # 写入梯度
+                for d in ti.static(range(self.dim)):
+                    ti.atomic_add(grad_flat[vidx+d], grad[d])
+        else:
+            # 原始方法：遍历所有节点
+            for I in ti.grouped(self.grid.v):
+                vidx = self.get_idx(I)
+                vel = self.get_vel(v_flat,vidx)
+
+                # 初始化梯度
+                grad = ti.Vector.zero(self.float_type, self.dim)
+
+                if self.grid.m[I] == 0.0:
+                    for d in ti.static(range(self.dim)):
+                        grad_flat[vidx+d]= 0.0
+                    continue
+
+                # 惯性项梯度 - 静力学求解时跳过
+                if not ti.static(self.static_solve):
+                    grad += self.grid.m[I] * (vel - self.grid.v_prev[I])
+
+                # 计算外部力（重力 + 体积力）
+                total_external_force = self.gravity + self.grid.volume_force[I]
+                # 阻尼力
+                if not ti.static(self.static_solve):
+                    total_external_force += self.get_damping_force(I)
+                grad -= total_external_force * self.dt * self.grid.m[I]
+
+                # 累加梯度
+                for d in ti.static(range(self.dim)):
+                    ti.atomic_add(grad_flat[vidx+d], grad[d])
+
     @ti.kernel
     def manual_particle_energy_hess_neohookean(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
 
@@ -323,7 +394,7 @@ class MPMSolver:
 
             weight = self.particles.get_particle_weight(p)
 
-            for offset in ti.grouped(ti.ndrange(*self.neighbor)):
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
                 FTw=4 * self.dt * F.transpose() @ self.particles.dwip[p, offset]
                 FWWF=F_inv_T @ FTw.outer_product(FTw) @ F_inv
                 h1=mu *FTw.dot(FTw) * ti.Matrix.identity(self.float_type, self.dim)
@@ -340,7 +411,7 @@ class MPMSolver:
                     if not self.grid.is_boundary_grid[grid_idx][i] and not self.grid.is_boundary_grid[grid_idx][j]:
                         hess[vidx+i, vidx+j] += hessian[i,j]
     @ti.kernel
-    def manual_particle_energy_hess_1_neohookean(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
+    def manual_particle_energy_hess_neohookean_1(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
 
         for p in range(self.particles.n_particles):
             # 计算速度梯度
@@ -351,7 +422,9 @@ class MPMSolver:
             new_F = (ti.Matrix.identity(self.float_type, self.dim) + vel_grad) @ F
             
             # 对new_F进行SVD分解 - 使用与NeoHookean.py相同的polar_svd逻辑
-            U, sigma_mat, VT = ti.svd(new_F)
+            U, sigma_mat, V = ti.svd(new_F)
+
+            VT = V.transpose()
             
             # 确保行列式为正 - 按照NeoHookean.py的polar_svd逻辑
             if U.determinant() < 0:
@@ -385,21 +458,29 @@ class MPMSolver:
             d2Psi_dsigma2_11 = d2Psi_dsigma2_psd[1, 1]
             d2Psi_dsigma2_01 = d2Psi_dsigma2_psd[0, 1]
             
-            # 计算B矩阵
+            # 计算B矩阵 - 按照C++参考实现
             sigma_prod = sigma[0] * sigma[1]
-            B_left = (mu + (mu - lam * ti.log(sigma_prod)) / sigma_prod) / 2
-            
+            middle = mu - lam * ti.log(sigma_prod)
+            BLeftCoef = (mu + middle / (sigma[0] * sigma[1])) / 2.0
+
             # 计算dPsi_div_dsigma
             inv0 = 1.0 / sigma[0]
             dPsi_dsigma_0 = mu * (sigma[0] - inv0) + lam * inv0 * ln_sigma_prod
             inv1 = 1.0 / sigma[1]
             dPsi_dsigma_1 = mu * (sigma[1] - inv1) + lam * inv1 * ln_sigma_prod
-            
-            B_right = (dPsi_dsigma_0 + dPsi_dsigma_1) / (2 * ti.max(sigma[0] + sigma[1], 1e-6))
-            
-            # 构建2x2 B矩阵并使用make_PSD
-            B_matrix = ti.Matrix([[B_left + B_right, B_left - B_right], 
-                                  [B_left - B_right, B_left + B_right]])
+
+            # 计算rightCoef - 按照C++参考实现
+            rightCoef = (dPsi_dsigma_0 + dPsi_dsigma_1)
+            sum_sigma = sigma[0] + sigma[1]
+            eps = 1.0e-6
+            if sum_sigma < eps:
+                rightCoef /= 2 * eps
+            else:
+                rightCoef /= 2 * sum_sigma
+
+            # 构建2x2 B矩阵并使用make_PSD - 按照C++参考实现
+            B_matrix = ti.Matrix([[BLeftCoef + rightCoef, BLeftCoef - rightCoef],
+                                  [BLeftCoef - rightCoef, BLeftCoef + rightCoef]])
             
             # 使用make_PSD函数确保正定性
             B_psd = self.make_PSD(B_matrix)
@@ -410,13 +491,13 @@ class MPMSolver:
             # 构建M矩阵 (4x4)
             M = ti.Matrix.zero(self.float_type, 4, 4)
             M[0, 0] = d2Psi_dsigma2_00
-            M[0, 3] = d2Psi_dsigma2_01
+            M[0, 2] = d2Psi_dsigma2_01
             M[1, 1] = B_00
-            M[1, 2] = B_01
-            M[2, 1] = B_01
-            M[2, 2] = B_11
-            M[3, 0] = d2Psi_dsigma2_01
-            M[3, 3] = d2Psi_dsigma2_11
+            M[1, 3] = B_01
+            M[3, 1] = B_01
+            M[3, 3] = B_11
+            M[2, 0] = d2Psi_dsigma2_01
+            M[2, 2] = d2Psi_dsigma2_11
             
             base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
             
@@ -433,15 +514,15 @@ class MPMSolver:
                         for r in ti.static(range(self.dim)):
                             rs = s * self.dim + r
                             dP_dF[ij, rs] = M[0, 0] * U[i, 0] * VT[0, j] * U[r, 0] * VT[0, s] \
-                                          + M[0, 3] * U[i, 0] * VT[0, j] * U[r, 1] * VT[1, s] \
-                                          + M[1, 1] * U[i, 1] * VT[0, j] * U[r, 1] * VT[0, s] \
-                                          + M[1, 2] * U[i, 1] * VT[0, j] * U[r, 0] * VT[1, s] \
-                                          + M[2, 1] * U[i, 0] * VT[1, j] * U[r, 1] * VT[0, s] \
-                                          + M[2, 2] * U[i, 0] * VT[1, j] * U[r, 0] * VT[1, s] \
-                                          + M[3, 0] * U[i, 1] * VT[1, j] * U[r, 0] * VT[0, s] \
-                                          + M[3, 3] * U[i, 1] * VT[1, j] * U[r, 1] * VT[1, s]
-                            
-            for offset in ti.grouped(ti.ndrange(*self.neighbor)):
+                                          + M[0, 2] * U[i, 0] * VT[0, j] * U[r, 1] * VT[1, s] \
+                                          + M[2, 0] * U[i, 1] * VT[1, j] * U[r, 0] * VT[0, s] \
+                                          + M[2, 2] * U[i, 1] * VT[1, j] * U[r, 1] * VT[1, s] \
+                                          + M[1, 1] * U[i, 0] * VT[1, j] * U[r, 0] * VT[1, s] \
+                                          + M[1, 3] * U[i, 0] * VT[1, j] * U[r, 1] * VT[0, s] \
+                                          + M[3, 1] * U[i, 1] * VT[0, j] * U[r, 0] * VT[1, s] \
+                                          + M[3, 3] * U[i, 1] * VT[0, j] * U[r, 1] * VT[0, s]
+
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
                 grid_idx = self.wrap_grid_idx(base + offset)
                 vidx = self.get_idx(grid_idx)
                 
@@ -465,8 +546,12 @@ class MPMSolver:
 
                         # 应用系数并累加到全局稀疏 Hessian
                         hess_val *= coeff
-                        if not self.grid.is_boundary_grid[grid_idx][vi] and not self.grid.is_boundary_grid[grid_idx][vj]:
-                            hess[vidx + vi, vidx + vj] += hess_val
+                        if vidx >= 0 and not self.grid.is_boundary_grid[grid_idx][vi] and not self.grid.is_boundary_grid[grid_idx][vj]:
+                            # 添加边界检查和调试信息
+                            row_idx = vidx + vi
+                            col_idx = vidx + vj
+                            if row_idx >= 0 and col_idx >= 0:  # 基本有效性检查
+                                hess[row_idx, col_idx] += hess_val
 
     @ti.kernel
     def manual_particle_energy_hess_linear(self,hess: ti.sparse_matrix_builder()):
@@ -479,7 +564,7 @@ class MPMSolver:
             mu, lam = self.particles.get_material_params(p)
             weight = self.particles.get_particle_weight(p)
 
-            for offset in ti.grouped(ti.ndrange(*self.neighbor)):
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
                 FTw = 4 * self.dt * F.transpose() @ self.particles.dwip[p, offset]
                 FTw_norm_sqr = FTw.norm_sqr()
                 # Simplified linear elasticity Hessian: mu*(I+I) + lambda*outer_product(I)
@@ -495,37 +580,54 @@ class MPMSolver:
                 grid_idx = self.wrap_grid_idx(base + offset)
                 vidx = self.get_idx(grid_idx)
 
+                # 添加边界检查
                 for (i,j) in ti.static(ti.ndrange(self.dim, self.dim)):
                     if not self.grid.is_boundary_grid[grid_idx][i] and not self.grid.is_boundary_grid[grid_idx][j]:
                         matrix_i = vidx + i
                         matrix_j = vidx + j
                         hess_value = hessian[i,j]
                         hess[matrix_i, matrix_j] += hess_value
-
     @ti.kernel
     def manual_grid_energy_hess(self, hess: ti.sparse_matrix_builder()):
-        for I in ti.grouped(self.grid.v):
-            vidx = self.get_idx(I)
-            m_node = self.grid.m[I]
+        if ti.static(self.grid.use_mapping):
+            # 使用压缩映射时只遍历有质量的节点
+            for compressed_idx in range(self.grid.get_active_grid_count()):
+                I = self.grid.get_grid_indices_from_compressed(compressed_idx)
+                vidx = compressed_idx * self.dim
+                m_node = self.grid.m[I]
 
-            if m_node == 0.0:
-                # 空节点：没有物理能量贡献，但为了数值稳定加一个单位刚度
+                # 惯性项 Hessian: m * I (不需要检查m_node==0，因为压缩映射只包含有质量节点)
                 for d in ti.static(range(self.dim)):
-                   hess[vidx + d, vidx + d] += 1.0
-                continue
+                    matrix_idx = vidx + d
+                    if not ti.static(self.static_solve) and not self.grid.is_boundary_grid[I][d]:
+                        hess[matrix_idx, matrix_idx] += m_node
+                    else:
+                        # 边界节点固定：加一个单位刚度
+                        hess[matrix_idx, matrix_idx] += 1.0
 
-            # 惯性项 Hessian: m * I
-            if not ti.static(self.static_solve):
+        else:
+            # 原始方法：遍历所有节点
+            for I in ti.grouped(self.grid.v):
+                vidx = self.get_idx(I)
+                m_node = self.grid.m[I]
+
+                if m_node == 0.0:
+                    # 空节点：没有物理能量贡献，但为了数值稳定加一个单位刚度
+                    for d in ti.static(range(self.dim)):
+                       hess[vidx + d, vidx + d] += 1.0
+                    continue
+
+                # 惯性项 Hessian: m * I
                 for d in ti.static(range(self.dim)):
-                    if not self.grid.is_boundary_grid[I][d]:
+                    if not ti.static(self.static_solve) and not self.grid.is_boundary_grid[I][d]:
                         hess[vidx + d, vidx + d] += m_node
                     else:
                         # 边界节点固定：加一个单位刚度
-                       hess[vidx + d, vidx + d] += 1.0
+                        hess[vidx + d, vidx + d] += 1.0
 
 
     def compute_energy(self, v_flat: ti.template()):
-        self.grid.set_boundary_v_grid(v_flat)
+        """统一的能量计算方法，自动根据配置选择实现"""
         self.total_energy[None] = 0.0
         self.compute_particle_energy(v_flat)
         self.compute_grid_energy(v_flat)
@@ -539,12 +641,9 @@ class MPMSolver:
     
     def compute_energy_grad_manual(self, v_flat: ti.template(), grad_flat: ti.template()):
 
-        self.grid.set_boundary_v_grid(v_flat)
-
         grad_flat.fill(0.0)
         self.manual_particle_energy_grad(v_flat, grad_flat)
         self.manual_grid_energy_grad(v_flat, grad_flat)
-
         self.grid.set_boundary_grad(grad_flat)
 
         # return self.total_energy[None]
@@ -556,8 +655,6 @@ class MPMSolver:
                 a[I] = b[I]  
         
         copy_field(self.v_grad,v_flat)
-        
-        self.grid.set_boundary_v_grid(self.v_grad)
         
         grad_flat.fill(0.0)
 
@@ -597,8 +694,7 @@ class MPMSolver:
             self.manual_particle_energy_grad_neohookean(v_flat, grad_flat)
 
     def compute_hess(self, v_flat: ti.template(), hess: ti.sparse_matrix_builder()):
-        self.grid.set_boundary_v_grid(v_flat)
-
+        
         self.manual_particle_energy_hess(v_flat, hess)
         self.manual_grid_energy_hess(hess)
         
@@ -615,17 +711,35 @@ class MPMSolver:
 
     @ti.kernel
     def set_initial_guess(self):
-        for I in ti.grouped(self.grid.v):
-            idx = self.grid.get_idx(I)
-            for d in ti.static(range(self.dim)):
-                self.optimizer.x[idx+d] = self.grid.v[I][d]
+        if ti.static(self.grid.use_mapping):
+            # 使用压缩映射时只设置有质量的节点
+            for compressed_idx in range(self.grid.get_active_grid_count()):
+                I = self.grid.get_grid_indices_from_compressed(compressed_idx)
+                vidx = compressed_idx * self.dim
+                for d in ti.static(range(self.dim)):
+                    self.optimizer.x[vidx+d] = self.grid.v[I][d]
+        else:
+            # 原始方法：遍历所有节点
+            for I in ti.grouped(self.grid.v):
+                idx = self.grid.get_idx(I)
+                for d in ti.static(range(self.dim)):
+                    self.optimizer.x[idx+d] = self.grid.v[I][d]
 
     @ti.kernel
     def update_velocity(self):
-        for I in ti.grouped(self.grid.v):
-            idx = self.grid.get_idx(I)
-            for d in ti.static(range(self.dim)):
-                self.grid.v[I][d] = self.optimizer.x[idx+d]
+        if ti.static(self.grid.use_mapping):
+            # 使用压缩映射时只更新有质量的节点
+            for compressed_idx in range(self.grid.get_active_grid_count()):
+                I = self.grid.get_grid_indices_from_compressed(compressed_idx)
+                vidx = compressed_idx * self.dim
+                for d in ti.static(range(self.dim)):
+                    self.grid.v[I][d] = self.optimizer.x[vidx+d]
+        else:
+            # 原始方法：遍历所有节点
+            for I in ti.grouped(self.grid.v):
+                idx = self.grid.get_idx(I)
+                for d in ti.static(range(self.dim)):
+                    self.grid.v[I][d] = self.optimizer.x[idx+d]
     
     # =============== Volume Forces Support ===============
     def _parse_volume_forces(self, volume_forces_config):
