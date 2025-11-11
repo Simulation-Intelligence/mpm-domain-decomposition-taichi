@@ -6,6 +6,7 @@ stress_strain_output/
 # Experiment results and output files
 experiment_results/
 out.txt
+stress_strain_output_schwarz/
 
 # macOS system files
 .DS_Store
