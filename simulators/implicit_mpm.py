@@ -65,6 +65,11 @@ class ImplicitMPM:
         # 初始化粒子体积力（在粒子数据生成后）
         self.solver.initialize_volume_forces()
 
+        # 设置移动边界（如果配置了move_boundary）
+        if self.grid.has_move_boundary:
+            self.particles.setup_move_boundary(self.grid)
+            self.grid.setup_move_boundary(self.particles)
+
         # 其他公共参数初始化
         self.max_schwarz_iter = config.get("max_schwarz_iter", 1)  # Schwarz迭代次数
         self.max_frames = config.get("max_frames", 60)  # 最大帧数
@@ -179,6 +184,10 @@ class ImplicitMPM:
     def pre_p2g(self):
         self.grid.clear()
         self.particles.build_neighbor_list()
+
+        # 检查移动边界是否完成
+        if self.grid.has_move_boundary and self.grid.move_boundary_active[None]:
+            self.grid.check_particles_in_target(self.particles)
 
     def pre_p2g_sub(self):
         self.grid.clear_sub()
@@ -614,8 +623,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description='运行单域隐式MPM模拟')
-    parser.add_argument('--config', default="config/config_2d_test4.json",
-                       help='配置文件路径 (默认: config/test_test3.json)')
+    parser.add_argument('--config', default="config/config_2d.json",
+                       help='配置文件路径 (默认: config/config_2d.json)')
     parser.add_argument('--no-gui', action='store_true',
                        help='禁用GUI界面运行')
 

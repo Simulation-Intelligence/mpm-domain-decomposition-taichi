@@ -106,24 +106,62 @@ class Grid:
 
         default_DBC_range = [[0.0, 0.0], [0.0, 0.0]] if self.dim == 2 else [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]
         DBC_range = config.get("DBC_range", [default_DBC_range])
-        self.num_DBC = len(DBC_range)
-        if self.num_DBC > 0:
-            self.DBC_range = ti.Vector.field(2, self.float_type, shape=(self.num_DBC, self.dim))
-            for i in range(self.num_DBC):
+        initial_num_dbc = len(DBC_range)
+
+        # 为支持动态DBC，预留更多空间
+        max_dbc = initial_num_dbc + 10  # 预留10个额外的DBC空间
+        self.num_DBC = ti.field(ti.i32, shape=())
+        self.num_DBC[None] = initial_num_dbc
+
+        if max_dbc > 0:
+            self.DBC_range = ti.Vector.field(2, self.float_type, shape=(max_dbc, self.dim))
+            for i in range(initial_num_dbc):
                 for d in range(self.dim):
                     self.DBC_range[i, d] = ti.Vector(DBC_range[i][d])
 
         # DBC边界速度配置
         default_boundary_v = [0.0] * self.dim
-        DBC_boundary_v = config.get("DBC_boundary_v", [default_boundary_v] * self.num_DBC)
-        if self.num_DBC > 0:
-            self.DBC_boundary_v = ti.Vector.field(self.dim, self.float_type, shape=self.num_DBC)
-            for i in range(self.num_DBC):
+        DBC_boundary_v = config.get("DBC_boundary_v", [default_boundary_v] * initial_num_dbc)
+        if max_dbc > 0:
+            self.DBC_boundary_v = ti.Vector.field(self.dim, self.float_type, shape=max_dbc)
+            for i in range(initial_num_dbc):
                 for d in range(self.dim):
                     if i < len(DBC_boundary_v):
                         self.DBC_boundary_v[i][d] = DBC_boundary_v[i][d] if d < len(DBC_boundary_v[i]) else 0.0
                     else:
                         self.DBC_boundary_v[i][d] = 0.0
+
+        # move_boundary功能配置
+        self.move_boundary_config = config.get("move_boundary", None)
+        self.has_move_boundary = self.move_boundary_config is not None
+        if self.has_move_boundary:
+            # 解析move_boundary配置
+            self.move_start_region = self.move_boundary_config.get("start_region", [[0.0, 0.1], [0.0, 0.1]])
+            self.move_displacement = self.move_boundary_config.get("displacement", [0.1, 0.0])
+            self.move_speed = self.move_boundary_config.get("speed", 1.0)
+
+            # 计算目标区域
+            self.move_target_region = []
+            for d in range(self.dim):
+                start_range = self.move_start_region[d]
+                disp = self.move_displacement[d] if d < len(self.move_displacement) else 0.0
+                target_range = [start_range[0] + disp, start_range[1] + disp]
+                self.move_target_region.append(target_range)
+
+            # 状态管理
+            self.move_boundary_active = ti.field(ti.i32, shape=())  # 移动是否激活
+            self.move_boundary_completed = ti.field(ti.i32, shape=())  # 移动是否完成
+
+            # 动态DBC管理
+            max_move_dbc = 100  # 最大移动路径DBC数量
+            self.move_dbc_count = ti.field(ti.i32, shape=())
+            self.move_dbc_ranges = ti.Vector.field(2, self.float_type, shape=(max_move_dbc, self.dim))
+            self.move_dbc_velocities = ti.Vector.field(self.dim, self.float_type, shape=max_move_dbc)
+
+            # 初始化状态
+            self.move_boundary_active[None] = 1
+            self.move_boundary_completed[None] = 0
+            self.move_dbc_count[None] = 0
 
         # Mapping功能：压缩有质量的grid节点
         max_grid_points = self.get_total_grid_points()
@@ -342,10 +380,10 @@ class Grid:
                 self.is_boundary_grid[I][0] = 1
                 self.boundary_v[I][0] = 0.0
 
-            if self.num_DBC > 0:
+            if self.num_DBC[None] > 0:
                 pos = self.get_grid_pos(I)
                 applied_DBC = False
-                for i in range(self.num_DBC):
+                for i in range(self.num_DBC[None]):
                     if not applied_DBC:
                         is_DBC = True
                         for d in ti.static(range(self.dim)):
@@ -355,7 +393,26 @@ class Grid:
                             self.is_boundary_grid[I] = ti.Vector([1]*self.dim)
                             self.boundary_v[I] = self.DBC_boundary_v[i]
                             applied_DBC = True
-                    
+
+            # 应用move_boundary DBC条件
+            if ti.static(self.has_move_boundary):
+                if self.move_boundary_active[None] and not self.move_boundary_completed[None]:
+                    pos = self.get_grid_pos(I)
+                    applied_move_dbc = False
+
+                    # 检查是否在任何移动DBC范围内
+                    for i in range(self.move_dbc_count[None]):
+                        if not applied_move_dbc:
+                            in_move_dbc = True
+                            for d in ti.static(range(self.dim)):
+                                if not (self.move_dbc_ranges[i, d][0] <= pos[d] <= self.move_dbc_ranges[i, d][1]):
+                                    in_move_dbc = False
+
+                            if in_move_dbc:
+                                self.is_boundary_grid[I] = ti.Vector([1] * self.dim)
+                                self.boundary_v[I] = self.move_dbc_velocities[i]
+                                applied_move_dbc = True
+
 
 
     @ti.kernel
@@ -380,7 +437,150 @@ class Grid:
     def set_boundary_v(self):
         for I in ti.grouped(self.is_boundary_grid):
             self.v[I]=ti.select(self.is_boundary_grid[I],self.boundary_v[I],self.v[I])
-    
+
+    def setup_move_boundary(self, particles):
+        """设置移动边界的初始DBC范围"""
+        if not self.has_move_boundary:
+            return
+
+        # 创建从起始区域到目标区域的路径DBC
+        self.create_movement_path()
+
+    def create_movement_path(self):
+        """创建移动路径的DBC范围"""
+        if not self.has_move_boundary:
+            return
+
+        # 计算移动方向的单位向量
+        displacement = ti.Vector(self.move_displacement)
+        displacement_length = displacement.norm()
+        if displacement_length < 1e-8:
+            return
+
+        direction = displacement / displacement_length
+
+        # 在起始区域和目标区域之间创建DBC网格
+        num_steps = int(displacement_length / (min(self.dx_x, self.dx_y) * 0.5)) + 1
+        step_size = displacement_length / max(num_steps - 1, 1)
+
+        dbc_count = 0
+
+        # 为路径上的每个step创建DBC
+        for step in range(num_steps):
+            if dbc_count >= 100:  # 最大DBC数量限制
+                break
+
+            progress = step / max(num_steps - 1, 1)
+            current_displacement = displacement * progress
+
+            # 计算当前step的区域
+            current_region = []
+            for d in range(self.dim):
+                start_range = self.move_start_region[d]
+                disp = current_displacement[d] if d < len(current_displacement) else 0.0
+                current_range = [start_range[0] + disp, start_range[1] + disp]
+                current_region.append(current_range)
+
+            # 设置DBC范围
+            for d in range(self.dim):
+                self.move_dbc_ranges[dbc_count, d] = ti.Vector(current_region[d])
+
+            # 设置速度：指向目标
+            self.move_dbc_velocities[dbc_count] = direction * self.move_speed
+
+            dbc_count += 1
+
+        self.move_dbc_count[None] = dbc_count
+
+    @ti.func
+    def pos_in_region(self, pos, region):
+        """检查位置是否在指定区域内"""
+        in_region = True
+        for d in ti.static(range(self.dim)):
+            if not (region[d][0] <= pos[d] <= region[d][1]):
+                in_region = False
+        return in_region
+
+    def check_particles_in_target(self, particles):
+        """检查标记的粒子是否都到达目标区域"""
+        if not self.has_move_boundary or self.move_boundary_completed[None]:
+            return True
+
+        # 使用particles对象检查是否完成移动
+        tolerance = min(self.dx_x, self.dx_y)    # 容忍度设为网格大小
+        completion_status = particles.check_move_boundary_completion(self, tolerance)
+
+        # 如果完成，将目标区域添加到常规DBC并清理move_boundary
+        if completion_status:
+            self.move_boundary_completed[None] = 1
+            self.move_boundary_active[None] = 0
+            # 将目标区域添加到常规DBC_range
+            self.add_target_to_regular_dbc()
+            # 清理所有move_boundary相关内容
+            self.cleanup_move_boundary()
+
+        return completion_status
+
+    def update_move_boundary_dbc(self):
+        """更新移动边界的DBC条件"""
+        if not self.has_move_boundary or not self.move_boundary_active[None]:
+            return
+
+        # 应用移动DBC到边界条件中
+        self.apply_move_boundary_dbc()
+
+    @ti.kernel
+    def apply_move_boundary_dbc(self):
+        """将移动DBC应用到网格边界条件中"""
+        if ti.static(self.has_move_boundary):
+            for I in ti.grouped(self.is_boundary_grid):
+                if self.move_boundary_active[None] and not self.move_boundary_completed[None]:
+                    pos = self.get_grid_pos(I)
+
+                    # 检查是否在任何移动DBC范围内
+                    for i in range(self.move_dbc_count[None]):
+                        in_dbc = True
+                        for d in ti.static(range(self.dim)):
+                            if not (self.move_dbc_ranges[i, d][0] <= pos[d] <= self.move_dbc_ranges[i, d][1]):
+                                in_dbc = False
+                                break
+
+                        if in_dbc:
+                            self.is_boundary_grid[I] = ti.Vector([1] * self.dim)
+                            self.boundary_v[I] = self.move_dbc_velocities[i]
+                            break
+
+    def add_target_to_regular_dbc(self):
+        """将目标区域添加到常规DBC_range中"""
+        if not self.has_move_boundary:
+            return
+
+        # 在预留空间中添加目标区域作为新的DBC
+        new_dbc_index = self.num_DBC[None]
+
+        # 设置目标区域的DBC范围
+        for d in range(self.dim):
+            target_range = self.move_target_region[d]
+            self.DBC_range[new_dbc_index, d] = ti.Vector(target_range)
+
+        # 设置目标区域的速度为0
+        for d in range(self.dim):
+            self.DBC_boundary_v[new_dbc_index][d] = 0.0
+
+        # 更新DBC数量
+        self.num_DBC[None] = new_dbc_index + 1
+
+        print(f"Added target region to DBC_range. Total DBC ranges: {self.num_DBC[None]}")
+
+    def cleanup_move_boundary(self):
+        """清理所有move_boundary相关内容"""
+        if not self.has_move_boundary:
+            return
+
+        # 清零move_boundary相关的DBC
+        self.move_dbc_count[None] = 0
+        print("Cleaned up move_boundary DBC ranges")
+
     @ti.kernel
     def clear(self):
         for I in ti.grouped(self.v):

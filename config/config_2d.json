@@ -2,8 +2,8 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 128,
-        "grid_ny": 128,
+        "grid_nx": 50,
+        "grid_ny": 50,
         "domain_width": 1.0,
         "domain_height": 1.0,
         "particles_per_grid": 4,
@@ -11,7 +11,18 @@
         "use_mapping": true,
         "elasticity_model": "linear",
         "constrain_x_velocity": false,
-        "dt": 1.0  ,
+        "DBC_range": [
+            [
+                [0.19, 0.21],
+                [0.2, 0.6]
+            ]
+        ],
+        "move_boundary": {
+            "start_region": [[0.59, 0.61], [0.2, 0.6]],
+            "displacement": [0.1, 0.0],
+            "speed": 0.5
+        },
+        "dt": 0.001,
         "max_iter": 1,
         "solve_max_iter": 100000,
         "solve_init_iter": 100,
@@ -35,7 +46,7 @@
                 "rho": 1e3,
                 "initial_F": [
                     [
-                        1.5,
+                        1.0,
                         0.0
                     ],
                     [
@@ -46,11 +57,12 @@
             }
         ],
         "implicit": true,
-        "static_solve": true,
+        "static_solve": false,
         "use_auto_diff": false,
         "compare_diff": false,
         "bound": 3,
-        "initial_velocity_y": 0.0,
+        "boundary_size": 0.0001,
+        "initial_velocity_y": -0.0,
         "shapes": [
             {
                 "type": "rectangle",
@@ -61,44 +73,13 @@
                             0.6
                         ],
                         [
-                            0.2,
-                            0.6
+                            0.4,
+                            0.5
                         ]
                     ]
                 },
                 "operation": "add",
                 "material_id": 0
-            },
-                        {
-                "type": "rectangle",
-                "params": {
-                    "range": [
-                        [
-                            0.2,
-                            0.6
-                        ],
-                        [
-                            0.4,
-                            0.6
-                        ]
-                    ]
-                },
-                "operation": "change",
-                "material_id": 1
-            },
-            {
-                "type": "ellipse",
-                "params": {
-                    "center": [
-                        0.4,
-                        0.4
-                    ],
-                    "semi_axes": [
-                        0.1,
-                        0.1
-                    ]
-                },
-                "operation": "subtract"
             }
 
         ],

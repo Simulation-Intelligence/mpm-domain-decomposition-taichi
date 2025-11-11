@@ -2,17 +2,17 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 256,
-        "grid_ny": 128,
+        "grid_nx": 64,
+        "grid_ny": 32,
         "domain_width": 1.0,
         "domain_height": 0.5,
         "particles_per_grid": 4,
         "sampling_method": "regular",
         "elasticity_model": "neohookean",
         "use_mapping": true,
-        "dt": 0.0001,
+        "dt": 1,
         "max_iter": 1,
-        "solve_max_iter": 20000,
+        "solve_max_iter": 2000000,
         "solve_init_iter": 100,
         "offset": [
             0.0,
@@ -29,7 +29,7 @@
             ]
         ],
         "damping":0,
-        "particle_damping": 0.999,
+        "particle_damping": 0.99,
         "material_params": [
             {
                 "id": 0,
@@ -55,8 +55,8 @@
                             0.9
                         ],
                         [
-                            0.39,
-                            0.40
+                            0.35,
+                            0.45
                         ]
                     ]
                 },
@@ -66,7 +66,7 @@
 
         ],
         "implicit_solver": "Newton",
-        "eta": 1e-4,
+    "eta": 1e-4,
     "max_frames": 50000,
     "use_record": false,
     "no_gui": false,

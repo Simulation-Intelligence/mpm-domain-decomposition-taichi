@@ -16,8 +16,8 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 50,
-        "grid_ny": 50,
+        "grid_nx": 200,
+        "grid_ny": 200,
         "domain_width": 1.0,
         "domain_height": 1.0,
         "particles_per_grid": 4,
@@ -34,7 +34,7 @@
         ],
         "gravity": [
             0.0,
-            -0.3875248015873022
+            -3.3875248015873022
         ],
         "damping":0.5,
         "particle_damping": 0.99,
@@ -42,7 +42,7 @@
             {
                 "id": 0,
                 "name": "default",
-                "E": 1e5,
+                "E": 1e4,
                 "nu": 0.4,
                 "rho": 1e3
             }
@@ -84,8 +84,8 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 20,
-        "grid_ny": 30,
+        "grid_nx": 120,
+        "grid_ny": 80,
         "domain_width": 0.6,
         "domain_height": 0.4,
         "particles_per_grid": 4,
@@ -102,7 +102,7 @@
         ],
         "gravity": [
             0.0,
-            -0.3875248015873022
+            -3.3875248015873022
         ],
         "DBC_range": [
             [
@@ -119,7 +119,7 @@
             {
                 "id": 0,
                 "name": "default",
-                "E": 1e5,
+                "E": 1e4,
                 "nu": 0.4,
                 "rho": 1e3
             }
@@ -141,8 +141,8 @@
                             0.55
                         ],
                         [
-                            0.1,
-                            0.3
+                            0.10,
+                            0.30
                         ]
                     ]
                 },

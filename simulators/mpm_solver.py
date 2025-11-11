@@ -374,7 +374,7 @@ class MPMSolver:
                     ti.atomic_add(grad_flat[vidx+d], grad[d])
 
     @ti.kernel
-    def manual_particle_energy_hess_neohookean(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
+    def manual_particle_energy_hess_neohookean_1(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
 
         for p in range(self.particles.n_particles):
             # 计算速度梯度
@@ -411,7 +411,7 @@ class MPMSolver:
                     if not self.grid.is_boundary_grid[grid_idx][i] and not self.grid.is_boundary_grid[grid_idx][j]:
                         hess[vidx+i, vidx+j] += hessian[i,j]
     @ti.kernel
-    def manual_particle_energy_hess_neohookean_1(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
+    def manual_particle_energy_hess_neohookean(self,v_flat: ti.template(),hess: ti.sparse_matrix_builder()):
 
         for p in range(self.particles.n_particles):
             # 计算速度梯度
@@ -601,7 +601,7 @@ class MPMSolver:
                     matrix_idx = vidx + d
                     if not ti.static(self.static_solve) and not self.grid.is_boundary_grid[I][d]:
                         hess[matrix_idx, matrix_idx] += m_node
-                    else:
+                    elif self.grid.is_boundary_grid[I][d]:
                         # 边界节点固定：加一个单位刚度
                         hess[matrix_idx, matrix_idx] += 1.0
 
@@ -621,7 +621,7 @@ class MPMSolver:
                 for d in ti.static(range(self.dim)):
                     if not ti.static(self.static_solve) and not self.grid.is_boundary_grid[I][d]:
                         hess[vidx + d, vidx + d] += m_node
-                    else:
+                    elif self.grid.is_boundary_grid[I][d]:
                         # 边界节点固定：加一个单位刚度
                         hess[vidx + d, vidx + d] += 1.0
 

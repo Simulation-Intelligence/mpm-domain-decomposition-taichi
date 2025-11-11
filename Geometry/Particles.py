@@ -373,6 +373,10 @@ class Particles:
         self.is_boundary_particle = ti.field(ti.i32, self.n_particles)
         self.particle_material_id = ti.field(ti.i32, self.n_particles)
 
+        # move_boundary相关字段
+        self.is_move_boundary_particle = ti.field(ti.i32, self.n_particles)
+        self.target_position = ti.Vector.field(self.dim, self.float_type, self.n_particles)
+
         # 粒子体积力字段
         self.volume_force = ti.Vector.field(self.dim, self.float_type, self.n_particles)
         
@@ -461,3 +465,80 @@ class Particles:
     def advect(self, dt: ti.f32):
         """粒子运动积分"""
         self.advector.advect(self.x, self.v, dt)
+
+    def mark_move_boundary_particles(self, start_region, displacement):
+        """标记移动边界区域内的边界粒子"""
+        self.mark_particles_in_region(start_region, displacement)
+
+    @ti.kernel
+    def mark_particles_in_region(self, start_region: ti.types.ndarray(), displacement: ti.types.ndarray()):
+        """标记指定区域内的边界粒子用于移动"""
+        for i in range(self.n_particles):
+            if self.is_boundary_particle[i]:
+                pos = self.x[i]
+                in_region = True
+
+                # 检查是否在起始区域内
+                for d in ti.static(range(self.dim)):
+                    if not (start_region[d, 0] <= pos[d] <= start_region[d, 1]):
+                        in_region = False
+
+                if in_region:
+                    self.is_move_boundary_particle[i] = 1
+                    # 计算目标位置
+                    target_pos = pos
+                    for d in ti.static(range(self.dim)):
+                        if d < displacement.shape[0]:
+                            target_pos[d] += displacement[d]
+                    self.target_position[i] = target_pos
+                    print(f"Particle {i} marked for move boundary. Target position: {self.target_position[i]}")
+            else:
+                    self.is_move_boundary_particle[i] = 0
+
+    @ti.kernel
+    def check_particles_reached_target(self, displacement: ti.types.ndarray(), tolerance: ti.f32) -> ti.i32:
+        """检查所有标记的粒子是否都超过了目标位置"""
+        all_reached = 1
+
+        for i in range(self.n_particles):
+            if self.is_move_boundary_particle[i] and all_reached:
+                pos = self.x[i]
+                target_pos = self.target_position[i]
+
+                # 检查粒子是否在移动方向上超过了目标位置
+                reached = True
+                for d in ti.static(range(self.dim)):
+                    if d < displacement.shape[0]:
+                        move_direction = displacement[d]
+                        if move_direction != 0:
+                            if move_direction > 0:  # 正方向移动
+                                if pos[d] < target_pos[d] + tolerance:
+                                    reached = False
+                            else:  # 负方向移动
+                                if pos[d] > target_pos[d] - tolerance:
+                                    reached = False
+                if not reached:
+                    all_reached = 0
+
+        return all_reached
+
+    def setup_move_boundary(self, grid):
+        """设置移动边界，需要grid对象来获取移动配置"""
+        if not hasattr(grid, 'has_move_boundary') or not grid.has_move_boundary:
+            return
+
+        # 将numpy数组转换为适当的格式
+        start_region_np = np.array(grid.move_start_region, dtype=np.float32 if grid.float_type == ti.f32 else np.float64)
+        displacement_np = np.array(grid.move_displacement, dtype=np.float32 if grid.float_type == ti.f32 else np.float64)
+
+        # 标记移动边界粒子
+        self.mark_move_boundary_particles(start_region_np, displacement_np)
+
+    def check_move_boundary_completion(self, grid, tolerance=0.05):
+        """检查移动边界是否完成"""
+        if not hasattr(grid, 'has_move_boundary') or not grid.has_move_boundary:
+            return True
+
+        displacement_np = np.array(grid.move_displacement, dtype=np.float32 if grid.float_type == ti.f32 else np.float64)
+
+        return self.check_particles_reached_target(displacement_np, tolerance)
