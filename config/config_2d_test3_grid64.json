@@ -96,5 +96,5 @@
     "eta": 0.0001,
     "max_frames": 10000,
     "use_record": false,
-    "no_gui": false
+    "no_gui": true
 }

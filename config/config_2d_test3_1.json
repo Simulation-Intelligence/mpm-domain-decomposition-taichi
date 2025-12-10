@@ -16,7 +16,7 @@
     "constrain_x_velocity": true,
     "dt": 0.001,
     "max_iter": 1,
-    "solve_max_iter": 1000,
+    "solve_max_iter": 2,
     "solve_init_iter": 100,
     "gravity": [
         0.0,

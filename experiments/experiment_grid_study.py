@@ -18,13 +18,17 @@ import matplotlib.pyplot as plt
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# 导入质量计算函数
-try:
-    from experiments.experiment_3_hertz_contact import get_actual_volume_force_mass
-    MASS_CALCULATION_AVAILABLE = True
-except ImportError:
-    MASS_CALCULATION_AVAILABLE = False
-    print("警告: 无法导入质量计算函数，将使用理论质量")
+# 不再需要导入质量计算函数，直接使用理论质量
+# try:
+#     from experiments.experiment_3_hertz_contact import get_actual_volume_force_mass
+#     MASS_CALCULATION_AVAILABLE = True
+# except ImportError:
+#     MASS_CALCULATION_AVAILABLE = False
+#     print("警告: 无法导入质量计算函数，将使用理论质量")
+
+# 现在直接使用理论质量，不再需要实际质量计算
+MASS_CALCULATION_AVAILABLE = False
+print("注意: 已修改为直接使用理论质量计算，不再使用实际质量")
 
 def load_config(config_path):
     """加载配置文件"""
@@ -128,10 +132,15 @@ def find_latest_result_dir(use_schwarz=False):
 
     dirs = glob.glob(pattern)
     if not dirs:
+        print(f"警告: 未找到匹配的结果目录，使用模式: {pattern}")
+        # 列出所有可能的目录以便调试
+        all_dirs = glob.glob("experiment_results/*")
+        print(f"可用的结果目录: {[os.path.basename(d) for d in all_dirs if os.path.isdir(d)]}")
         return None
 
     # 按修改时间排序，返回最新的
     latest_dir = max(dirs, key=os.path.getctime)
+    print(f"找到最新结果目录: {latest_dir}")
     return latest_dir
 
 def backup_result_dir(source_dir, grid_size, output_base_dir, use_schwarz=False):
@@ -270,7 +279,7 @@ def extract_hertz_parameters_from_config(config, actual_mass=None):
 
     # 材料参数
     material = domain_config['material_params'][0]
-    E = material['E'] / 2.0  # 按要求E除以2
+    E = material['E'] / 2 # 按要求E除以2
     nu = material['nu']
     rho = material['rho']
 
@@ -302,13 +311,11 @@ def extract_hertz_parameters_from_config(config, actual_mass=None):
     load_width = force_range[0][1] - force_range[0][0]
     load_height = force_range[1][1] - force_range[1][0]
 
-    # 计算质量：如果提供了实际质量则使用，否则计算理论质量
+    # 直接使用理论质量，不再依赖实际质量
+    mass_to_use = load_width * load_height * rho  # 2D情况，假设厚度为1
+    print(f"使用理论质量: {mass_to_use:.6f} kg")
     if actual_mass is not None:
-        mass_to_use = actual_mass
-        print(f"使用实际质量: {actual_mass:.6f} kg")
-    else:
-        mass_to_use = load_width * load_height * rho  # 2D情况，假设厚度为1
-        print(f"使用理论质量: {mass_to_use:.6f} kg")
+        print(f"忽略实际质量: {actual_mass:.6f} kg (改为使用理论质量)")
 
     # 计算等效接触压力：体力 × 质量 / 载荷宽度
     total_force = force_magnitude * mass_to_use
@@ -390,38 +397,81 @@ def load_mpm_stress_results(result_dir, use_schwarz=False, y_filter_min=None, y_
     """加载MPM模拟的应力结果"""
     print(f"加载结果目录: {result_dir}")
 
-    if use_schwarz:
-        # 双域MPM：加载Domain2的结果（包含底部边界粒子）
-        stress_files = [f for f in os.listdir(result_dir)
-                       if f.startswith('domain2_stress_frame_') and f.endswith('.npy')]
-        if not stress_files:
-            print("No Domain2 stress data files found")
-            return None
+    # 首先检查新的文件结构 stress_data/frame_X/
+    stress_data_dir = os.path.join(result_dir, "stress_data")
+    frame_dirs = []
 
-        stress_file = stress_files[0]
-        frame_num = stress_file.split('_')[3].split('.')[0]
+    if os.path.exists(stress_data_dir):
+        frame_dirs = [d for d in os.listdir(stress_data_dir)
+                      if d.startswith('frame_') and os.path.isdir(os.path.join(stress_data_dir, d))]
 
-        stress_data = np.load(os.path.join(result_dir, f'domain2_stress_frame_{frame_num}.npy'))
-        positions = np.load(os.path.join(result_dir, f'domain2_positions_frame_{frame_num}.npy'))
-        boundary_flags = np.load(os.path.join(result_dir, f'domain2_boundary_flags_frame_{frame_num}.npy'))
+    if frame_dirs:
+        # 新文件结构：使用最新的frame目录
+        latest_frame = max(frame_dirs, key=lambda x: int(x.split('_')[1]))
+        frame_path = os.path.join(stress_data_dir, latest_frame)
+        frame_num = latest_frame.split('_')[1]
 
-        print(f"Loaded {len(positions)} Domain2 particles from frame {frame_num}")
+        print(f"使用新文件结构，加载frame {frame_num}: {frame_path}")
+
+        if use_schwarz:
+            # 双域MPM：查找Domain2文件
+            stress_file = os.path.join(frame_path, "domain2_stress.npy")
+            positions_file = os.path.join(frame_path, "domain2_positions.npy")
+            boundary_file = os.path.join(frame_path, "domain2_boundary_flags.npy")
+
+            if not all(os.path.exists(f) for f in [stress_file, positions_file, boundary_file]):
+                print("No Domain2 stress data files found in new structure")
+                return None
+
+        else:
+            # 单域MPM：使用标准文件名
+            stress_file = os.path.join(frame_path, "stress.npy")
+            positions_file = os.path.join(frame_path, "positions.npy")
+            boundary_file = os.path.join(frame_path, "boundary_flags.npy")
+
+            if not all(os.path.exists(f) for f in [stress_file, positions_file, boundary_file]):
+                print("No stress data files found in new structure")
+                return None
+
+        stress_data = np.load(stress_file)
+        positions = np.load(positions_file)
+        boundary_flags = np.load(boundary_file)
+
     else:
-        # 单域MPM：加载常规结果
-        stress_files = [f for f in os.listdir(result_dir)
-                       if f.startswith('stress_frame_') and f.endswith('.npy')]
-        if not stress_files:
-            print("No stress data files found")
-            return None
+        # 旧文件结构：直接在结果目录中查找
+        print("使用旧文件结构")
 
-        stress_file = stress_files[0]
-        frame_num = stress_file.split('_')[2].split('.')[0]
+        if use_schwarz:
+            # 双域MPM：加载Domain2的结果（包含底部边界粒子）
+            stress_files = [f for f in os.listdir(result_dir)
+                           if f.startswith('domain2_stress_frame_') and f.endswith('.npy')]
+            if not stress_files:
+                print("No Domain2 stress data files found")
+                return None
 
-        stress_data = np.load(os.path.join(result_dir, f'stress_frame_{frame_num}.npy'))
-        positions = np.load(os.path.join(result_dir, f'positions_frame_{frame_num}.npy'))
-        boundary_flags = np.load(os.path.join(result_dir, f'boundary_flags_frame_{frame_num}.npy'))
+            stress_file = stress_files[0]
+            frame_num = stress_file.split('_')[3].split('.')[0]
 
-        print(f"Loaded {len(positions)} particles from frame {frame_num}")
+            stress_data = np.load(os.path.join(result_dir, f'domain2_stress_frame_{frame_num}.npy'))
+            positions = np.load(os.path.join(result_dir, f'domain2_positions_frame_{frame_num}.npy'))
+            boundary_flags = np.load(os.path.join(result_dir, f'domain2_boundary_flags_frame_{frame_num}.npy'))
+
+        else:
+            # 单域MPM：加载常规结果
+            stress_files = [f for f in os.listdir(result_dir)
+                           if f.startswith('stress_frame_') and f.endswith('.npy')]
+            if not stress_files:
+                print("No stress data files found")
+                return None
+
+            stress_file = stress_files[0]
+            frame_num = stress_file.split('_')[2].split('.')[0]
+
+            stress_data = np.load(os.path.join(result_dir, f'stress_frame_{frame_num}.npy'))
+            positions = np.load(os.path.join(result_dir, f'positions_frame_{frame_num}.npy'))
+            boundary_flags = np.load(os.path.join(result_dir, f'boundary_flags_frame_{frame_num}.npy'))
+
+    print(f"Loaded {len(positions)} particles from frame {frame_num}")
 
     try:
         # 过滤边界粒子
@@ -631,27 +681,24 @@ def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_
             print(f"无法加载网格 {grid_size} 的结果")
             continue
 
-        # 获取实际质量并计算对应的解析解
+        # 直接使用理论质量计算解析解
         try:
             config_path = os.path.join(result_dir, "config.json")
             if not os.path.exists(config_path):
-                print(f"  警告: 未找到配置文件 {config_path}，使用理论质量")
-                actual_mass = None
-            elif MASS_CALCULATION_AVAILABLE:
-                actual_mass = get_actual_volume_force_mass(config_path, mpm_instance=None, results_dir=result_dir)
-                print(f"  获取实际质量: {actual_mass:.6f} kg")
+                print(f"  警告: 未找到配置文件 {config_path}，使用基础配置")
+                # 使用基础配置和理论质量作为fallback
+                analytical_results = calculate_hertz_analytical_solution(base_config_path, actual_mass=None)
             else:
-                print(f"  警告: 质量计算函数不可用，使用理论质量")
-                actual_mass = None
+                # 不再获取实际质量，直接使用理论质量
+                print(f"  使用理论质量计算解析解")
+                analytical_results = calculate_hertz_analytical_solution(config_path, actual_mass=None)
 
-            # 使用实际质量计算解析解
-            analytical_results = calculate_hertz_analytical_solution(config_path, actual_mass=actual_mass)
             all_analytical_results[grid_size] = analytical_results
 
         except Exception as e:
-            print(f"  警告: 计算实际质量失败: {e}")
+            print(f"  警告: 计算解析解失败: {e}")
             # 使用基础配置和理论质量作为fallback
-            analytical_results = calculate_hertz_analytical_solution(base_config_path)
+            analytical_results = calculate_hertz_analytical_solution(base_config_path, actual_mass=None)
             all_analytical_results[grid_size] = analytical_results
 
         # 存储MPM结果用于汇总图
@@ -775,9 +822,9 @@ def main():
     parser = argparse.ArgumentParser(description='网格分辨率批处理实验')
     parser.add_argument('--use-schwarz', action='store_true',
                        help='使用Schwarz双域求解器（默认使用单域）')
-    parser.add_argument('--grid-range', nargs=2, type=int, default=[64, 160],
+    parser.add_argument('--grid-range', nargs=2, type=int, default=[80, 240],
                        help='网格大小范围 [开始, 结束] (默认: 64 160)')
-    parser.add_argument('--grid-step', type=int, default=16,
+    parser.add_argument('--grid-step', type=int, default=40,
                        help='网格大小步长 (默认: 16)')
     parser.add_argument('--grid-sizes', nargs='+', type=int, default=None,
                        help='直接指定网格大小列表，覆盖range和step参数')
@@ -785,9 +832,9 @@ def main():
                        help='输出目录（默认自动生成）')
     parser.add_argument('--timeout', type=int, default=None,
                        help='单个模拟超时时间（秒，默认1小时）')
-    parser.add_argument('--y-filter-min', type=float, default=0.4,
+    parser.add_argument('--y-filter-min', type=float, default=0.3,
                        help='Y坐标过滤最小值（默认: 0.4）')
-    parser.add_argument('--y-filter-max', type=float, default=0.6,
+    parser.add_argument('--y-filter-max', type=float, default=0.7,
                        help='Y坐标过滤最大值（默认: 0.6）')
 
     # 分析模式选项

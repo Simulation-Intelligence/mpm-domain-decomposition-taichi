@@ -84,6 +84,9 @@ class BoundaryExchanger:
                 # 使用已有的函数计算网格索引
                 base, fx = self.small_time_domain.grid.particle_to_grid_base_and_fx(x)
                 w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
+
+                # 保存原始的boundary_v值（可能包含move boundary设置的值）
+                original_boundary_v = to_boundary_v[I]
                 to_boundary_v[I] = ti.Vector.zero(self.big_time_domain.grid.float_type, self.big_time_domain.grid.dim)
 
                 for offset in ti.static(ti.grouped(ti.ndrange(*self.small_time_domain.particles.neighbor))):
@@ -110,11 +113,14 @@ class BoundaryExchanger:
                         to_boundary_v[I] += weight * from_boundary_v[grid_idx] * self.small_time_domain.grid.m[grid_idx]
 
                 big_time_domain_set_boundary = self.big_time_domain.grid.is_particle_boundary_grid[I] and m > 1e-10
-                big_time_domain_set_boundary = big_time_domain_set_boundary and (not is_small_time_domain_boundary or self.big_time_domain.grid.m[I] < m)
+                # big_time_domain_set_boundary = big_time_domain_set_boundary and (not is_small_time_domain_boundary or self.big_time_domain.grid.m[I] < m)
 
                 if big_time_domain_set_boundary:
                     self.big_time_domain.grid.is_boundary_grid[I] = [1] * self.big_time_domain.grid.dim
                     to_boundary_v[I] = to_boundary_v[I] / m
+                else:
+                    # 如果没有边界交换覆盖，恢复原始的boundary_v（保留move boundary设置）
+                    to_boundary_v[I] = original_boundary_v
 
     @ti.kernel
     def project_to_small_time_domain_boundary(self, from_boundary_v: ti.template(), to_boundary_v: ti.template()):
@@ -129,6 +135,9 @@ class BoundaryExchanger:
                 # 使用已有的函数计算网格索引
                 base, fx = self.big_time_domain.grid.particle_to_grid_base_and_fx(x)
                 w = [0.5*(1.5 - fx)**2, 0.75 - (fx - 1.0)**2, 0.5*(fx - 0.5)**2]
+
+                # 保存原始的boundary_v值（可能包含move boundary设置的值）
+                original_boundary_v = to_boundary_v[I]
                 to_boundary_v[I] = ti.Vector.zero(self.small_time_domain.grid.float_type, self.small_time_domain.grid.dim)
 
                 for offset in ti.static(ti.grouped(ti.ndrange(*self.big_time_domain.particles.neighbor))):
@@ -155,8 +164,11 @@ class BoundaryExchanger:
                         to_boundary_v[I] += weight * from_boundary_v[grid_idx] * self.big_time_domain.grid.m[grid_idx]
 
                 small_time_domain_set_boundary = self.small_time_domain.grid.is_particle_boundary_grid[I] and m > 1e-10
-                small_time_domain_set_boundary = small_time_domain_set_boundary and (not is_big_time_domain_boundary or self.small_time_domain.grid.m[I] < m)
+                # small_time_domain_set_boundary = small_time_domain_set_boundary and (not is_big_time_domain_boundary or self.small_time_domain.grid.m[I] < m)
 
                 if small_time_domain_set_boundary:
                     self.small_time_domain.grid.is_boundary_grid[I] = [1] * self.small_time_domain.grid.dim
                     to_boundary_v[I] = to_boundary_v[I] / m
+                else:
+                    # 如果没有边界交换覆盖，恢复原始的boundary_v（保留move boundary设置）
+                    to_boundary_v[I] = original_boundary_v

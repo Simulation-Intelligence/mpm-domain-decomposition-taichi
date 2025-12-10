@@ -101,6 +101,9 @@ class Particles:
         
         # 材料参数表
         self.material_params = self._parse_material_params(config)
+
+        # 边界粒子范围限制
+        self.boundary_particle_ranges = self._parse_boundary_particle_ranges(config.get("boundary_particle_range", None))
         
         # 两种材料的参数作为类成员变量（Python变量）
         if len(self.material_params) >= 1:
@@ -146,6 +149,9 @@ class Particles:
                 self.set_boundary(method="manual")
             else:
                 self.set_boundary(method="automatic")
+            
+            # 所有边界标记完成后，应用boundary_particle_range过滤
+            # self.apply_boundary_particle_range_filter()
 
     def _parse_material_params(self, config):
         """解析材料参数表"""
@@ -198,7 +204,30 @@ class Particles:
             }
 
         return params_dict
-    
+
+    def _parse_boundary_particle_ranges(self, boundary_particle_range):
+        """解析边界粒子范围配置，支持单个区域和多个矩形区域"""
+        if boundary_particle_range is None:
+            return None
+
+        if isinstance(boundary_particle_range, list) and len(boundary_particle_range) > 0:
+            first_elem = boundary_particle_range[0]
+
+            # 检查是否是旧格式：单个区域 [[x_min, x_max], [y_min, y_max]]
+            if isinstance(first_elem, list) and len(first_elem) == 2 and \
+               all(isinstance(x, (int, float)) for x in first_elem):
+                print("检测到单个区域格式")
+                return [boundary_particle_range]
+
+            # 检查是否是新格式：多个区域 [[[x1_min, x1_max], [y1_min, y1_max]], [[x2_min, x2_max], [y2_min, y2_max]], ...]
+            elif isinstance(first_elem, list) and len(first_elem) > 0 and \
+                 isinstance(first_elem[0], list) and len(first_elem[0]) == 2:
+                print(f"检测到多区域格式，共 {len(boundary_particle_range)} 个矩形区域")
+                return boundary_particle_range
+
+        print(f"Warning: 无法识别的boundary_particle_range格式: {boundary_particle_range}")
+        return None
+
     @ti.func
     def get_material_params(self, particle_id):
         """获取指定粒子的材料参数(Taichi函数)"""
@@ -446,7 +475,6 @@ class Particles:
         if method == "mesh" and self.sampling_method == "mesh":
             # 如果使用mesh采样，边界信息已经在粒子生成时设置，无需额外检测
             print("使用mesh采样的边界信息，跳过边界检测")
-            return
         elif method == "automatic":
             self.set_boundary_automatic()
         elif method == "manual" and hasattr(self, 'boundary_range') and self.boundary_range is not None:
@@ -454,6 +482,80 @@ class Particles:
         else:
             print(f"Warning: Using automatic boundary detection")
             self.set_boundary_automatic()
+
+
+
+    def apply_boundary_particle_range_filter(self):
+        """应用boundary_particle_range过滤器，只保留在指定区域内的边界粒子"""
+        if self.boundary_particle_ranges is None:
+            return  # 如果没有配置范围限制，直接返回
+
+        print(f"应用boundary_particle_range过滤器: {len(self.boundary_particle_ranges)} 个矩形区域")
+
+        # 统计过滤前的边界粒子数量
+        before_count = self.count_boundary_particles()
+
+        # 转换所有区域为numpy数组
+        import numpy as np
+        regions_array = np.array(self.boundary_particle_ranges, dtype=np.float32 if self.float_type == ti.f32 else np.float64)
+
+        # 应用多区域过滤
+        self.filter_boundary_particles_by_multiple_rectangles(regions_array, len(self.boundary_particle_ranges))
+
+        # 统计过滤后的边界粒子数量
+        after_count = self.count_boundary_particles()
+
+        print(f"边界粒子范围过滤: {before_count} -> {after_count} (移除了 {before_count - after_count} 个)")
+
+    @ti.kernel
+    def filter_boundary_particles_by_rectangle(self, range_array: ti.types.ndarray()):
+        """在指定范围外的边界粒子取消边界标记"""
+        for i in range(self.n_particles):
+            if self.is_boundary_particle[i]:
+                pos = self.x[i]
+                in_range = True
+
+                # 检查是否在指定范围内 - 避免在静态循环中使用break
+                for d in ti.static(range(self.dim)):
+                    if in_range and not (range_array[d, 0] <= pos[d] <= range_array[d, 1]):
+                        in_range = False
+
+                # 如果不在范围内，取消边界标记
+                if not in_range:
+                    self.is_boundary_particle[i] = 0
+
+    @ti.kernel
+    def filter_boundary_particles_by_multiple_rectangles(self, regions_array: ti.types.ndarray(), num_regions: ti.i32):
+        """根据多个矩形区域过滤边界粒子，只保留在任何一个区域内的边界粒子"""
+        for i in range(self.n_particles):
+            if self.is_boundary_particle[i]:
+                pos = self.x[i]
+                in_any_region = False
+
+                # 检查是否在任何一个区域内
+                for region_idx in range(num_regions):
+                    in_this_region = True
+                    # 避免使用break，改用逻辑控制
+                    for d in ti.static(range(self.dim)):
+                        if in_this_region and not (regions_array[region_idx, d, 0] <= pos[d] <= regions_array[region_idx, d, 1]):
+                            in_this_region = False
+
+                    # 如果这个区域匹配，记录结果（不能用break，所以继续检查所有区域）
+                    if in_this_region:
+                        in_any_region = True
+
+                # 如果不在任何区域内，取消边界标记
+                if not in_any_region:
+                    self.is_boundary_particle[i] = 0
+
+    @ti.kernel
+    def count_boundary_particles(self) -> ti.i32:
+        """统计边界粒子数量"""
+        count = 0
+        for i in range(self.n_particles):
+            if self.is_boundary_particle[i]:
+                count += 1
+        return count
 
     def build_neighbor_list(self):
         """构建邻居列表"""
@@ -491,36 +593,9 @@ class Particles:
                         if d < displacement.shape[0]:
                             target_pos[d] += displacement[d]
                     self.target_position[i] = target_pos
-                    print(f"Particle {i} marked for move boundary. Target position: {self.target_position[i]}")
             else:
                     self.is_move_boundary_particle[i] = 0
 
-    @ti.kernel
-    def check_particles_reached_target(self, displacement: ti.types.ndarray(), tolerance: ti.f32) -> ti.i32:
-        """检查所有标记的粒子是否都超过了目标位置"""
-        all_reached = 1
-
-        for i in range(self.n_particles):
-            if self.is_move_boundary_particle[i] and all_reached:
-                pos = self.x[i]
-                target_pos = self.target_position[i]
-
-                # 检查粒子是否在移动方向上超过了目标位置
-                reached = True
-                for d in ti.static(range(self.dim)):
-                    if d < displacement.shape[0]:
-                        move_direction = displacement[d]
-                        if move_direction != 0:
-                            if move_direction > 0:  # 正方向移动
-                                if pos[d] < target_pos[d] + tolerance:
-                                    reached = False
-                            else:  # 负方向移动
-                                if pos[d] > target_pos[d] - tolerance:
-                                    reached = False
-                if not reached:
-                    all_reached = 0
-
-        return all_reached
 
     def setup_move_boundary(self, grid):
         """设置移动边界，需要grid对象来获取移动配置"""
@@ -534,11 +609,3 @@ class Particles:
         # 标记移动边界粒子
         self.mark_move_boundary_particles(start_region_np, displacement_np)
 
-    def check_move_boundary_completion(self, grid, tolerance=0.05):
-        """检查移动边界是否完成"""
-        if not hasattr(grid, 'has_move_boundary') or not grid.has_move_boundary:
-            return True
-
-        displacement_np = np.array(grid.move_displacement, dtype=np.float32 if grid.float_type == ti.f32 else np.float64)
-
-        return self.check_particles_reached_target(displacement_np, tolerance)

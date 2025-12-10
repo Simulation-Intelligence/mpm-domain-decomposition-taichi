@@ -52,7 +52,7 @@ def init_particles():
     for p in range(n_particles):
         for d in ti.static(range(dim)):
             particles.x[p][d] = ti.random() * 0.5 + 0.25
-            particles.v[p] = ti.Vector([0.0] * dim)
+            particles.v[p] = ti.Vector([ti.random() for _ in range(dim)])
             for q in ti.static(range(dim)):
                 particles.F[p][d,q] = ti.random() * 1.0 + 0.5
 
@@ -78,7 +78,7 @@ def test_gradient_derivative():
     solver.compute_energy_grad_manual(solver.v_grad, manual_grad)
 
     # 比较与有限差分结果
-    h = 1e-4
+    h = 1e-3
     finite_diff_grad = ti.field(float_type, shape=n_vars)
     for i in range(n_vars):
         solver.v_grad[i] += h
@@ -109,7 +109,7 @@ def test_hessian_derivative():
 
 
     # finite difference hessian
-    h = 1e-6
+    h = 1e-3
     finite_diff_hessian = ti.field(float_type, shape=(n_vars, n_vars))
     finite_diff_hessian.fill(0.0)
     new_grad1 = ti.field(float_type, shape=n_vars)
@@ -141,5 +141,5 @@ def test_hessian_derivative():
     assert max_error < 1e-4, "手动Hessian与有限差分结果不一致"
 
 if __name__ == "__main__":
-    test_gradient_derivative()
+    # test_gradient_derivative()
     test_hessian_derivative()

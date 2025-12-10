@@ -30,6 +30,10 @@ class MPMSolver:
         self.solve_max_iter = config.get("solve_max_iter", 50)
         self.solve_init_iter = config.get("solve_init_iter", 10)
 
+        # 最后100帧无限制max_iter的设置
+        self.unlimited_iter_for_last_frames = False
+        self.unlimited_max_iter = config.get("unlimited_max_iter", 10000)  # 最后100帧时的max_iter
+
         # 静力学求解选项
         self.static_solve = config.get("static_solve", False)
 
@@ -92,11 +96,53 @@ class MPMSolver:
             preconditioner_type = config.get("preconditioner_type", "diagonal")
             self.optimizer = PCG(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=None,dim=total_grid_points * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type,preconditioner_type=preconditioner_type)
 
+        # F矩阵备份，用于临时保存和恢复
+        self.F_backup = None
+
+    def save_F(self):
+        """保存当前F矩阵"""
+        import taichi as ti
+        if self.F_backup is None:
+            # 创建备份字段，与particles.F相同的形状和类型
+            self.F_backup = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=self.particles.n_particles)
+
+        # 复制F矩阵到备份
+        self.copy_F_to_backup()
+
+    def restore_F(self):
+        """恢复F矩阵"""
+        if self.F_backup is not None:
+            self.copy_backup_to_F()
+
+    @ti.kernel
+    def copy_F_to_backup(self):
+        """将F矩阵复制到备份"""
+        for p in range(self.particles.n_particles):
+            self.F_backup[p] = self.particles.F[p]
+
+    @ti.kernel
+    def copy_backup_to_F(self):
+        """将备份复制回F矩阵"""
+        for p in range(self.particles.n_particles):
+            self.particles.F[p] = self.F_backup[p]
+
+    def set_unlimited_iter_mode(self, enable=True):
+        """设置是否启用最后100帧的无限制迭代模式"""
+        self.unlimited_iter_for_last_frames = enable
+        if enable:
+            print(f"启用最后100帧无限制迭代模式，max_iter: {self.unlimited_max_iter}")
+        else:
+            print(f"禁用无限制迭代模式，恢复正常max_iter: {self.solve_max_iter}")
+
     def solve_implicit(self):
         self.grid.set_boundary_v()
         # self.optimizer.resize(self.grid.get_total_grid_points() * self.dim)
         self.set_initial_guess()
-        iter=self.optimizer.minimize(self.solve_max_iter, self.solve_init_iter)
+
+        # 根据是否启用最后100帧模式选择max_iter
+        max_iter = self.unlimited_max_iter if self.unlimited_iter_for_last_frames else self.solve_max_iter
+
+        iter=self.optimizer.minimize(max_iter, self.solve_init_iter)
         self.iter_history.append(iter)
         self.update_velocity()
         return iter
@@ -221,7 +267,10 @@ class MPMSolver:
                     self.total_energy[None] += 0.5 * self.grid.m[I] * (vel - self.grid.v_prev[I]).norm_sqr()
 
                 # 计算势能
-                pos = I * self.grid.dx + vel * self.dt
+                pos = ti.Vector([
+                    I[0] * self.grid.dx_x + self.grid.offset[0],
+                    I[1] * self.grid.dx_y + self.grid.offset[1]
+                ]) + vel * self.dt
                 total_external_force = self.gravity + self.grid.volume_force[I]
                 #阻尼力
                 if not ti.static(self.static_solve):
@@ -241,7 +290,7 @@ class MPMSolver:
                     self.total_energy[None] += 0.5 * self.grid.m[I] * (vel - self.grid.v_prev[I]).norm_sqr()
 
                 # 计算势能
-                pos = I * self.grid.dx + vel * self.dt
+                pos = I * ti.Vector([self.grid.dx_x, self.grid.dx_y]) + self.grid.offset + vel * self.dt
                 total_external_force = self.gravity + self.grid.volume_force[I]
                 #阻尼力
                 if not ti.static(self.static_solve):
@@ -454,6 +503,7 @@ class MPMSolver:
             
             # 使用make_PSD函数确保正定性
             d2Psi_dsigma2_psd = self.make_PSD(d2Psi_dsigma2)
+            # d2Psi_dsigma2_psd = d2Psi_dsigma2
             d2Psi_dsigma2_00 = d2Psi_dsigma2_psd[0, 0]
             d2Psi_dsigma2_11 = d2Psi_dsigma2_psd[1, 1]
             d2Psi_dsigma2_01 = d2Psi_dsigma2_psd[0, 1]
@@ -484,6 +534,7 @@ class MPMSolver:
             
             # 使用make_PSD函数确保正定性
             B_psd = self.make_PSD(B_matrix)
+            # B_psd = B_matrix
             B_00 = B_psd[0, 0]
             B_01 = B_psd[0, 1]
             B_11 = B_psd[1, 1]
@@ -724,7 +775,7 @@ class MPMSolver:
                 idx = self.grid.get_idx(I)
                 for d in ti.static(range(self.dim)):
                     self.optimizer.x[idx+d] = self.grid.v[I][d]
-
+                    
     @ti.kernel
     def update_velocity(self):
         if ti.static(self.grid.use_mapping):
@@ -761,6 +812,8 @@ class MPMSolver:
 
         # 记录每个体积力对应的实际粒子总质量
         self.volume_force_total_mass = ti.field(self.float_type, shape=field_size)
+        # 记录每个体积力对应的理论质量（区域面积/体积 × 密度）
+        self.volume_force_theoretical_mass = ti.field(self.float_type, shape=field_size)
         
         # 填充数据
         if self.n_volume_forces > 0:
@@ -768,17 +821,25 @@ class MPMSolver:
                 force_type = force_config.get("type", "rectangle")
                 force_vector = force_config.get("force", [0.0] * self.dim)
                 params = force_config.get("params", {})
-                
+                # 获取密度（默认使用第一个材料的密度）
+                density = force_config.get("density", self.particles.material_params[0]['rho'] if self.particles.material_params else 1000.0)
+
                 # 设置力向量
                 self.volume_force_vectors[i] = ti.Vector(force_vector)
                 
                 if force_type == "rectangle":
                     self.volume_force_types[i] = 0
                     force_range = params.get("range", [])
+
+                    # 计算矩形区域的面积/体积和理论质量
+                    area_volume = 1.0
                     for d in range(min(self.dim, len(force_range))):
                         if len(force_range[d]) >= 2:
                             self.volume_force_rect_ranges[i, d*2] = force_range[d][0]    # min
                             self.volume_force_rect_ranges[i, d*2+1] = force_range[d][1]  # max
+                            area_volume *= (force_range[d][1] - force_range[d][0])
+
+                    self.volume_force_theoretical_mass[i] = area_volume * density
                             
                 elif force_type == "ellipse":
                     self.volume_force_types[i] = 1
@@ -788,6 +849,19 @@ class MPMSolver:
                         self.volume_force_ellipse_params[i, d] = center[d]
                     for d in range(min(self.dim, len(semi_axes))):
                         self.volume_force_ellipse_params[i, self.dim + d] = semi_axes[d]
+
+                    # 计算椭圆区域的面积/体积和理论质量
+                    import math
+                    if self.dim == 2:
+                        # 2D椭圆面积: π * a * b
+                        area_volume = math.pi * semi_axes[0] * semi_axes[1]
+                    elif self.dim == 3:
+                        # 3D椭球体积: (4/3) * π * a * b * c
+                        area_volume = (4.0/3.0) * math.pi * semi_axes[0] * semi_axes[1] * semi_axes[2]
+                    else:
+                        area_volume = 1.0  # 默认值
+
+                    self.volume_force_theoretical_mass[i] = area_volume * density
     
 
     @ti.kernel
@@ -833,10 +907,63 @@ class MPMSolver:
 
             self.particles.volume_force[p] = total_force
 
+    @ti.kernel
+    def _apply_mass_normalization(self):
+        """基于理论质量与实际质量的比值对体积力进行归一化"""
+        # 计算并打印质量信息（仅用于调试）
+        for i in range(self.n_volume_forces):
+            theoretical_mass = self.volume_force_theoretical_mass[i]
+            actual_mass = self.volume_force_total_mass[i]
+            if actual_mass > 1e-12:  # 避免除零
+                mass_ratio = theoretical_mass / actual_mass
+                print(f"Volume force {i}: theoretical_mass={theoretical_mass:.6e}, actual_mass={actual_mass:.6e}, ratio={mass_ratio:.6f}")
+            else:
+                print(f"Volume force {i}: No particles in region")
+
+        # 对每个粒子的体积力进行归一化
+        for p in range(self.particles.n_particles):
+            pos = self.particles.x[p]
+            normalized_force = ti.Vector.zero(self.float_type, self.dim)
+
+            # 检查粒子在哪些体积力区域内，并应用相应的归一化
+            for i in range(self.n_volume_forces):
+                in_region = True
+
+                if self.volume_force_types[i] == 0:  # rectangle
+                    for d in ti.static(range(self.dim)):
+                        min_val = self.volume_force_rect_ranges[i, d*2]
+                        max_val = self.volume_force_rect_ranges[i, d*2+1]
+                        if pos[d] < min_val or pos[d] > max_val:
+                            in_region = False
+
+                elif self.volume_force_types[i] == 1:  # ellipse
+                    sum_normalized = 0.0
+                    for d in ti.static(range(self.dim)):
+                        center_d = self.volume_force_ellipse_params[i, d]
+                        semi_axis_d = self.volume_force_ellipse_params[i, self.dim + d]
+                        diff = pos[d] - center_d
+                        sum_normalized += (diff / semi_axis_d)**2
+                    in_region = sum_normalized <= 1.0
+
+                if in_region:
+                    theoretical_mass = self.volume_force_theoretical_mass[i]
+                    actual_mass = self.volume_force_total_mass[i]
+
+                    if actual_mass > 1e-12:  # 避免除零
+                        mass_ratio = theoretical_mass / actual_mass
+                        # 应用质量比归一化
+                        normalized_force += self.volume_force_vectors[i] * mass_ratio
+                    else:
+                        # 如果没有实际质量，直接使用原始力
+                        normalized_force += self.volume_force_vectors[i]
+
+            self.particles.volume_force[p] = normalized_force
+
     def initialize_volume_forces(self):
         """初始化粒子体积力（在粒子数据生成后调用）"""
         if self.n_volume_forces > 0:
             self._mark_particles_with_volume_forces()
+            self._apply_mass_normalization()
 
     def get_volume_force_masses(self):
         """获取每个体积力对应的粒子总质量"""
@@ -1035,7 +1162,14 @@ class MPMSolver:
 
     def compute_stress_strain_with_averaging(self):
         """计算应力应变前先对F[p]进行平均"""
+        # 保存原始F矩阵
+        self.save_F()
+
         # 首先对F[p]进行一次p2g，g2p进行平均
         self.average_F_p2g_g2p()
+
         # 然后计算应力应变
         self.compute_stress_strain()
+
+        # 恢复原始F矩阵
+        self.restore_F()

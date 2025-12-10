@@ -17,8 +17,12 @@
                 [0.2, 0.6]
             ]
         ],
+        "boundary_particle_range": [
+            [0.0, 1.0],
+            [0.0, 0.45]
+        ],
         "move_boundary": {
-            "start_region": [[0.59, 0.61], [0.2, 0.6]],
+            "start_region": [[0.599, 0.601], [0.2, 0.6]],
             "displacement": [0.1, 0.0],
             "speed": 0.5
         },
@@ -87,5 +91,6 @@
         "eta": 1e-4,
         "max_frames": 2000,
         "use_record": false,
-        "no_gui": false
+        "no_gui": false,
+        "stress_save_interval": 500
     }

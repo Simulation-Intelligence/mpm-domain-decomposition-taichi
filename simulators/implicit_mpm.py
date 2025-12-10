@@ -20,10 +20,11 @@ from Util.Project import project
 # ------------------ 主模拟器 ------------------
 @ti.data_oriented
 class ImplicitMPM:
-    def __init__(self, config:Config, common_particles:Particles=None, config_overrides:dict=None, no_gui=False):
+    def __init__(self, config:Config, common_particles:Particles=None, config_overrides:dict=None, no_gui=False, config_path=None):
         # 应用配置覆盖
         self.cfg = self._apply_config_overrides(config, config_overrides)
         self.original_cfg = config  # 保存原始配置
+        self.config_path = config_path  # 保存配置文件路径
 
         # GUI设置
         self.no_gui = no_gui or self.cfg.get("no_gui", False)
@@ -39,6 +40,7 @@ class ImplicitMPM:
         self.implicit = self.cfg.get("implicit", True)
         self.max_iter = self.cfg.get("max_iter", 1)
         self.dt = self.cfg.get("dt", 2e-3)
+        self.auto_boundary = self.cfg.get("auto_boundary", False)
         
         # 静力学求解配置
         self.static_solve = self.cfg.get("static_solve", False)
@@ -52,6 +54,10 @@ class ImplicitMPM:
 
         self.scale = self.cfg.get("scale", 1.0)
         self.offset = self.cfg.get("offset", (0, 0))
+
+        # 帧计数和最后100帧检测
+        self.current_frame = 0
+        self.last_frames_count = self.cfg.get("last_frames_count", 100)  # 最后多少帧启用无限制迭代
 
         
         
@@ -74,6 +80,10 @@ class ImplicitMPM:
         self.max_schwarz_iter = config.get("max_schwarz_iter", 1)  # Schwarz迭代次数
         self.max_frames = config.get("max_frames", 60)  # 最大帧数
         self.use_record = config.get("use_record", False)  # 是否使用录制
+
+        # 应力保存配置
+        self.stress_save_interval = config.get("stress_save_interval", 0)  # 0表示仅最后一帧保存
+        self.saved_stress_frames = []  # 记录已保存应力数据的帧号
 
         # 速度收敛检测参数
         self.velocity_convergence_threshold = config.get("velocity_convergence_threshold", 0)
@@ -185,9 +195,7 @@ class ImplicitMPM:
         self.grid.clear()
         self.particles.build_neighbor_list()
 
-        # 检查移动边界是否完成
-        if self.grid.has_move_boundary and self.grid.move_boundary_active[None]:
-            self.grid.check_particles_in_target(self.particles)
+        # 新的move_boundary实现不需要预先检查，在P2G和apply_boundary_conditions中动态处理
 
     def pre_p2g_sub(self):
         self.grid.clear_sub()
@@ -208,16 +216,35 @@ class ImplicitMPM:
                 print(f"Resized optimizer to dimension: {required_dim}")
 
     def step(self):
+        # 检查是否进入最后100帧
+        frames_remaining = self.max_frames - self.current_frame
+        if frames_remaining <= self.last_frames_count:
+            # 启用最后100帧的无限制迭代模式
+            if not self.solver.unlimited_iter_for_last_frames:
+                self.solver.set_unlimited_iter_mode(True)
+        else:
+            # 禁用无限制迭代模式（如果之前启用过）
+            if self.solver.unlimited_iter_for_last_frames:
+                self.solver.set_unlimited_iter_mode(False)
+
         for _ in range(self.max_iter):
             self.pre_p2g()
             self.p2g()
             self.post_p2g()
-            
+
             self.solve()
-            
+
             self.g2p(self.dt)
-            
+
             self.particles.advect(self.dt)
+
+        # 增加帧计数器
+        self.current_frame += 1
+
+    def set_max_frames(self, max_frames):
+        """设置最大帧数"""
+        self.max_frames = max_frames
+        print(f"设置最大帧数: {max_frames}, 最后 {self.last_frames_count} 帧将启用无限制迭代模式")
 
     @ti.kernel
     def p2g(self):
@@ -237,13 +264,78 @@ class ImplicitMPM:
                 # 插值体积力到网格，按质量加权
                 ti.atomic_add(self.grid.volume_force[grid_idx], weight * p_mass * self.particles.volume_force[p])
 
-                if self.particles.is_boundary_particle[p] and offset[0] == 1 and offset[1] == 1 :
-                    self.grid.is_particle_boundary_grid[grid_idx] = 1
+                # 插值move_boundary粒子的位移到网格
+                if ti.static(self.grid.has_move_boundary):
+                    if self.particles.is_move_boundary_particle[p] and offset[0] == 1 and offset[1] == 1  :
+                        # 计算当前位置与目标位置的相对位移
+                        relative_displacement = self.particles.target_position[p] - self.particles.x[p]
+                        # 按权重和质量插值到网格
+                        ti.atomic_add(self.grid.move_displacement_field[grid_idx], weight * p_mass * relative_displacement)
+                        ti.atomic_add(self.grid.move_mass_field[grid_idx], weight * p_mass)
+
+                if ti.static(not self.auto_boundary) and self.particles.is_boundary_particle[p] :
+                    # 检查当前grid是否在boundary_particle_range内
+                    in_boundary_range = False
+                    # 计算grid的世界坐标位置
+                    pos = ti.Vector([
+                        grid_idx[0] * self.grid.dx_x,
+                        grid_idx[1] * self.grid.dx_y
+                    ])
+
+                    # 检查是否在任何一个boundary_particle_range内
+                    for range_idx in ti.static(range(len(self.particles.boundary_particle_ranges))):
+                        range_x = self.particles.boundary_particle_ranges[range_idx][0]
+                        range_y = self.particles.boundary_particle_ranges[range_idx][1]
+                        if (pos[0] >= range_x[0] and pos[0] <= range_x[1] and
+                            pos[1] >= range_y[0] and pos[1] <= range_y[1]):
+                            in_boundary_range = True
+
+                    if in_boundary_range:
+                        self.grid.is_particle_boundary_grid[grid_idx] = 1
 
         for I in ti.grouped(self.grid.m):
             if self.grid.m[I] > 0:
                 self.grid.v[I] /= self.grid.m[I]
                 self.grid.volume_force[I] /= self.grid.m[I]
+
+                # 自动边界检测：检查是否在boundary_particle_range内，并且检查邻居grid
+                if ti.static(self.auto_boundary):
+                    # 检查当前grid是否在boundary_particle_range内
+                    in_boundary_range = True
+                    # 计算grid的世界坐标位置
+                    # pos = ti.Vector([
+                    #     I[0] * self.grid.dx_x,
+                    #     I[1] * self.grid.dx_y
+                    # ])
+
+                    # 检查是否在任何一个boundary_particle_range内
+                    # for range_idx in ti.static(range(len(self.particles.boundary_particle_ranges))):
+                    #     range_x = self.particles.boundary_particle_ranges[range_idx][0]
+                    #     range_y = self.particles.boundary_particle_ranges[range_idx][1]
+                    #     if (pos[0] >= range_x[0] and pos[0] <= range_x[1] and
+                    #         pos[1] >= range_y[0] and pos[1] <= range_y[1]):
+                    #         in_boundary_range = True
+
+                    if in_boundary_range:
+                        # 检查8个相邻grid是否有质量为0的
+                        has_zero_mass_neighbor = False
+                        for di in ti.static([-1, 0, 1]):
+                            for dj in ti.static([-1, 0, 1]):
+                                if not (di == 0 and dj == 0):  # 跳过中心grid
+                                    neighbor_idx = I + ti.Vector([di, dj])
+                                    # 边界检查
+                                    if (neighbor_idx[0] >= 0 and neighbor_idx[0] < self.grid.nx and
+                                        neighbor_idx[1] >= 0 and neighbor_idx[1] < self.grid.ny):
+                                        if self.grid.m[neighbor_idx] == 0:
+                                            has_zero_mass_neighbor = True
+
+                        if has_zero_mass_neighbor:
+                            self.grid.is_particle_boundary_grid[I] = 1
+
+            # 归一化move_boundary位移场
+            if ti.static(self.grid.has_move_boundary):
+                if self.grid.move_mass_field[I] > 0:
+                    self.grid.move_displacement_field[I] /= self.grid.move_mass_field[I]
 
 
     @ti.kernel
@@ -505,8 +597,34 @@ class ImplicitMPM:
         
         return False
 
+    def _create_experiment_directory(self, config_path=None):
+        """创建实验目录并备份配置文件"""
+        import json
+        import os
+        import shutil
+        from datetime import datetime
+
+        # 创建带时间戳的主实验目录
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_output_dir = "experiment_results"
+        experiment_name = f"single_domain_{timestamp}"
+        experiment_dir = os.path.join(base_output_dir, experiment_name)
+        os.makedirs(experiment_dir, exist_ok=True)
+
+        # 备份配置文件
+        if config_path and os.path.exists(config_path):
+            config_backup_path = os.path.join(experiment_dir, "config_backup.json")
+            shutil.copy2(config_path, config_backup_path)
+            print(f"配置文件已备份到: {config_backup_path}")
+
+        # 创建stress_data子目录
+        stress_data_dir = os.path.join(experiment_dir, "stress_data")
+        os.makedirs(stress_data_dir, exist_ok=True)
+
+        return experiment_dir, stress_data_dir
+
     def save_stress_data(self, frame_number):
-        """保存最终帧的应力数据"""
+        """保存指定帧的应力数据"""
         import json
         import os
         from datetime import datetime
@@ -548,23 +666,25 @@ class ImplicitMPM:
         
         print(f"Filtered out {np.sum(~valid_mask)} particles at origin position")
         print(f"Saving data for {len(filtered_positions)} particles")
-        
-        # 创建统一的输出目录结构
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_output_dir = "experiment_results"
-        output_dir = os.path.join(base_output_dir, f"single_domain_{timestamp}")
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # 保存为numpy文件（用于可视化）
-        np.save(f"{output_dir}/stress_frame_{frame_number}.npy", filtered_stress_data)
-        np.save(f"{output_dir}/positions_frame_{frame_number}.npy", filtered_positions)
-        np.save(f"{output_dir}/boundary_flags_frame_{frame_number}.npy", filtered_boundary_flags)
 
-        # 保存actual mass信息
+        # 创建或获取实验目录
+        if not hasattr(self, '_experiment_dir') or not hasattr(self, '_stress_data_dir'):
+            self._experiment_dir, self._stress_data_dir = self._create_experiment_directory(self.config_path)
+
+        # 为当前帧创建单独的子目录
+        frame_dir = f"{self._stress_data_dir}/frame_{frame_number}"
+        os.makedirs(frame_dir, exist_ok=True)
+
+        # 保存为numpy文件（用于可视化）到该帧的子目录
+        np.save(f"{frame_dir}/stress.npy", filtered_stress_data)
+        np.save(f"{frame_dir}/positions.npy", filtered_positions)
+        np.save(f"{frame_dir}/boundary_flags.npy", filtered_boundary_flags)
+
+        # 保存actual mass信息到该帧的子目录
         try:
             actual_masses = self.solver.get_volume_force_masses()
             if actual_masses:
-                np.save(f"{output_dir}/actual_masses_frame_{frame_number}.npy", np.array(actual_masses))
+                np.save(f"{frame_dir}/actual_masses.npy", np.array(actual_masses))
                 print(f"Saved actual masses: {actual_masses}")
         except Exception as e:
             print(f"Warning: Could not save actual masses: {e}")
@@ -598,14 +718,15 @@ class ImplicitMPM:
             }
         }
         
-        with open(f"{output_dir}/stress_stats_frame_{frame_number}.json", 'w') as f:
+        with open(f"{frame_dir}/stress_stats.json", 'w') as f:
             json.dump(stats, f, indent=2)
 
-        print(f"应力数据已保存到 {output_dir}/")
+        print(f"应力数据已保存到 {self._experiment_dir}/")
+        print(f"stress数据保存在: {self._stress_data_dir}/")
         print(f"von Mises应力范围: {stats['von_mises_stress']['min']:.3e} - {stats['von_mises_stress']['max']:.3e}")
         print(f"平均von Mises应力: {stats['von_mises_stress']['mean']:.3e}")
-        
-        return output_dir
+
+        return self._experiment_dir
 
     def run_static_solve(self):
         """执行静力学求解 - 只进行一步求解直到受力平衡"""
@@ -614,7 +735,7 @@ class ImplicitMPM:
         print("静力学求解完成")
         
         # 保存结果
-        self.save_stress_data(1)
+        self.save_stress_data(1, self.config_path)
         
         # 渲染最终结果
         self.render()
@@ -641,7 +762,7 @@ if __name__ == "__main__":
         arch = ti.cpu
 
     ti.init(arch=arch, default_fp=float_type, device_memory_GB=20, log_level=ti.ERROR)
-    mpm = ImplicitMPM(cfg, no_gui=args.no_gui)
+    mpm = ImplicitMPM(cfg, no_gui=args.no_gui, config_path=args.config)
 
     if mpm.static_solve:
         mpm.run_static_solve()
@@ -657,14 +778,26 @@ if __name__ == "__main__":
            mpm.render()
            i += 1
 
+           # 间隔保存应力数据
+           if mpm.stress_save_interval > 0 and i % mpm.stress_save_interval == 0:
+               print(f"保存第 {i} 帧的应力数据...")
+               mpm.save_stress_data(i)
+               mpm.saved_stress_frames.append(i)
+
            # 检查速度收敛
            if mpm.check_velocity_convergence(i):
                print(f"在第 {i} 帧达到速度收敛，提前终止模拟")
                break
 
-        # 在最后一帧记录应力数据
-        print("记录最终帧的应力数据...")
-        mpm.save_stress_data(i)
+        # 在最后一帧记录应力数据（如果还没有保存过）
+        if mpm.stress_save_interval == 0 or i not in mpm.saved_stress_frames:
+            print("记录最终帧的应力数据...")
+            mpm.save_stress_data(i)
+            mpm.saved_stress_frames.append(i)
+
+        # 打印保存的应力数据帧信息
+        if mpm.saved_stress_frames:
+            print(f"共保存了 {len(mpm.saved_stress_frames)} 个帧的应力数据: {mpm.saved_stress_frames}")
         if mpm.recorder is None:
             exit()
         print("Playback finished.")

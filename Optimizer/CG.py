@@ -102,7 +102,7 @@ class CG:
 
         return alpha
 
-    def minimize(self, max_iter=200, init_iter=50):
+    def minimize(self, max_iter=20000, init_iter=50):
         """
         CG优化主循环
 

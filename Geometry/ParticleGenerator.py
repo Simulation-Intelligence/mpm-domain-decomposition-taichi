@@ -993,6 +993,12 @@ class ParticleGenerator:
                 previous_add_shapes = [s for s in shapes[:i] if s["operation"] == "add"]
                 hole_point = self._get_shape_center(shape)
 
+                # 首先从all_segments中移除所有在当前subtract范围内的segments
+                original_count = len(all_segments)
+                all_segments = self._remove_segments_in_shape(all_segments, shape)
+                removed_count = original_count - len(all_segments)
+                print(f"  移除了 {removed_count} 个在subtract范围内的已有边界段")
+
                 # 检查subtract是否与add区域相交
                 intersects_add = self._subtract_intersects_add(shape, previous_add_shapes)
 
@@ -1010,8 +1016,10 @@ class ParticleGenerator:
 
                 elif intersects_add:
                     # hole点不在add内部但与add相交：添加相交部分的边界以闭合边界
-                    segments, vertex_id_counter = self._add_shape_boundary_with_inclusion(
-                        shape, previous_add_shapes, vertex_id_counter, boundary_marker=1, target_segment_length=target_segment_length)
+                    # 但需要排除在之前subtract内的边界段
+                    previous_subtract_shapes = [s for s in shapes[:i] if s["operation"] == "subtract"]
+                    segments, vertex_id_counter = self._add_shape_boundary_with_inclusion_excluding_subtract(
+                        shape, previous_add_shapes, previous_subtract_shapes, vertex_id_counter, boundary_marker=1, target_segment_length=target_segment_length)
                     all_segments.extend(segments)
                     print(f"  添加了 {len(segments)} 个边界段（相交部分，用于闭合边界）")
                 else:
@@ -1528,6 +1536,52 @@ class ParticleGenerator:
 
         return filtered_segments, new_vertex_id
 
+    def _add_shape_boundary_with_inclusion_excluding_subtract(self, shape, include_shapes, exclude_shapes, start_vertex_id, boundary_marker=2, target_segment_length=None):
+        """添加形状边界，保留在include_shapes内但排除在exclude_shapes内的边界点"""
+        # 先生成完整的边界
+        if shape["type"] == "rectangle":
+            segments, _ = self._add_rectangle_to_poly(
+                shape["params"], start_vertex_id, boundary_marker, target_segment_length)
+        elif shape["type"] == "ellipse":
+            segments, _ = self._add_ellipse_to_poly(
+                shape["params"], start_vertex_id, boundary_marker, target_segment_length)
+        else:
+            return [], start_vertex_id
+
+        # 只保留在include_shapes内且不在exclude_shapes内的边界段
+        filtered_segments = []
+        vertex_mapping = {}
+        new_vertex_id = start_vertex_id
+
+        for segment in segments:
+            # 检查边界段的中点是否在任何include_shape内
+            v1_pos = segment["vertex1_pos"]
+            v2_pos = segment["vertex2_pos"]
+            midpoint = ((v1_pos[0] + v2_pos[0]) / 2, (v1_pos[1] + v2_pos[1]) / 2)
+
+            # 如果中点在任何include区域内且不在任何exclude区域内，则保留该边界段
+            if (self._point_in_shapes(midpoint, include_shapes) and
+                not self._point_in_shapes(midpoint, exclude_shapes)):
+                # 重新映射顶点ID
+                if v1_pos not in vertex_mapping:
+                    vertex_mapping[v1_pos] = new_vertex_id
+                    new_vertex_id += 1
+                if v2_pos not in vertex_mapping:
+                    vertex_mapping[v2_pos] = new_vertex_id
+                    new_vertex_id += 1
+
+                filtered_segment = {
+                    "id": len(filtered_segments) + 1,
+                    "vertex1": vertex_mapping[v1_pos],
+                    "vertex2": vertex_mapping[v2_pos],
+                    "vertex1_pos": v1_pos,
+                    "vertex2_pos": v2_pos,
+                    "boundary_marker": boundary_marker
+                }
+                filtered_segments.append(filtered_segment)
+
+        return filtered_segments, new_vertex_id
+
     def _point_in_shapes(self, point, shapes):
         """检查点是否在任何给定形状内"""
         for shape in shapes:
@@ -1639,6 +1693,22 @@ class ParticleGenerator:
             points.append((x, y))
 
         return points
+
+    def _remove_segments_in_shape(self, segments, shape):
+        """从segments列表中移除所有在指定形状内的segments"""
+        filtered_segments = []
+
+        for segment in segments:
+            # 检查边界段的中点是否在shape内
+            v1_pos = segment["vertex1_pos"]
+            v2_pos = segment["vertex2_pos"]
+            midpoint = ((v1_pos[0] + v2_pos[0]) / 2, (v1_pos[1] + v2_pos[1]) / 2)
+
+            # 如果中点不在shape内，则保留该边界段
+            if not self._is_particle_in_shape(midpoint, shape):
+                filtered_segments.append(segment)
+
+        return filtered_segments
 
 
 class ParticleInitializer:

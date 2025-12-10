@@ -11,7 +11,7 @@ from Util.Project import project
 
 @ti.data_oriented
 class MPM_Schwarz:
-    def __init__(self, main_config: Config, no_gui=False, config_overrides=None):
+    def __init__(self, main_config: Config, no_gui=False, config_overrides=None, config_path=None):
         """
         基于Schwarz域分解的双域MPM求解器
 
@@ -26,6 +26,7 @@ class MPM_Schwarz:
                 }
         """
         self.no_gui = no_gui
+        self.config_path = config_path
 
         # 应用配置覆盖
         self.main_config = self._apply_config_overrides(main_config, config_overrides)
@@ -56,8 +57,13 @@ class MPM_Schwarz:
         self.steps=self.main_config.get("steps", 10)  # 迭代步数
         self.max_frames = self.main_config.get("max_frames", 60)  # 最大帧数
         self.use_record = self.main_config.get("use_record", False)  # 是否使用录制
+
+        # 应力保存配置
+        self.stress_save_interval = self.main_config.get("stress_save_interval", 0)  # 0表示仅最后一帧保存
+        self.saved_stress_frames = []  # 记录已保存应力数据的帧号
         self.recorder = None
         self.visualize_grid = self.main_config.get("visualize_grid", False)
+        self.visualize_boundary_grid = self.main_config.get("visualize_boundary_grid", False)
         if self.use_record:
             lines_begin = None
             lines_end = None
@@ -119,6 +125,10 @@ class MPM_Schwarz:
         if not self.visualize_grid:
             self.grid_vertices1 = None
             self.grid_vertices2 = None
+            self.boundary_grid_points1 = None
+            self.boundary_grid_points2 = None
+            self.move_mass_grid_points1 = None
+            self.move_mass_grid_points2 = None
             return
 
         # 获取网格线条数据
@@ -148,6 +158,32 @@ class MPM_Schwarz:
             self.grid_vertices2.from_numpy(vertices2)
         else:
             self.grid_vertices2 = None
+
+        # 初始化边界网格点的可视化字段
+        if self.visualize_boundary_grid:
+            self._init_boundary_grid_points()
+        else:
+            self.boundary_grid_points1 = None
+            self.boundary_grid_points2 = None
+            self.move_mass_grid_points1 = None
+            self.move_mass_grid_points2 = None
+
+    def _init_boundary_grid_points(self):
+        """初始化边界网格点的可视化字段"""
+        # 为每个域预分配最大可能的边界网格点数
+        max_grid_points1 = self.Domain1.grid.nx * self.Domain1.grid.ny
+        max_grid_points2 = self.Domain2.grid.nx * self.Domain2.grid.ny
+
+        self.boundary_grid_points1 = ti.Vector.field(2, dtype=ti.f32, shape=max_grid_points1)
+        self.boundary_grid_points2 = ti.Vector.field(2, dtype=ti.f32, shape=max_grid_points2)
+        self.move_mass_grid_points1 = ti.Vector.field(2, dtype=ti.f32, shape=max_grid_points1)
+        self.move_mass_grid_points2 = ti.Vector.field(2, dtype=ti.f32, shape=max_grid_points2)
+
+        # 记录实际边界网格点数量的字段
+        self.boundary_grid_count1 = ti.field(ti.i32, shape=())
+        self.boundary_grid_count2 = ti.field(ti.i32, shape=())
+        self.move_mass_grid_count1 = ti.field(ti.i32, shape=())
+        self.move_mass_grid_count2 = ti.field(ti.i32, shape=())
 
     def _init_render_fields(self):
         """初始化用于渲染的位置和颜色字段"""
@@ -199,6 +235,74 @@ class MPM_Schwarz:
                 self.render_color2[i] = ti.Vector([1.0, 1.0, 1.0])  # 白色
             else:
                 self.render_color2[i] = ti.Vector([0.929, 0.333, 0.231])  # 红色
+
+    @ti.kernel
+    def _update_boundary_grid_points_domain1(self):
+        """更新Domain1的边界网格点"""
+        boundary_count = 0
+        move_mass_count = 0
+
+        for I in ti.grouped(self.Domain1.grid.is_boundary_grid):
+            grid_pos = self.Domain1.grid.get_grid_pos(I)
+            render_pos = grid_pos * self.domain1_scale[None] + self.domain1_offset[None]
+
+            # 检查is_boundary_grid标记（vector field，检查任意分量是否非零）
+            if self.Domain1.grid.is_boundary_grid[I][0] != 0 or self.Domain1.grid.is_boundary_grid[I][1] != 0:
+                idx = ti.atomic_add(boundary_count, 1)
+                if idx < self.boundary_grid_points1.shape[0]:
+                    self.boundary_grid_points1[idx] = render_pos
+
+        self.boundary_grid_count1[None] = boundary_count
+        self.move_mass_grid_count1[None] = move_mass_count
+
+    @ti.kernel
+    def _update_boundary_grid_points_domain2(self):
+        """更新Domain2的边界网格点"""
+        boundary_count = 0
+        move_mass_count = 0
+
+        for I in ti.grouped(self.Domain2.grid.is_boundary_grid):
+            grid_pos = self.Domain2.grid.get_grid_pos(I)
+            render_pos = grid_pos * self.domain2_scale[None] + self.domain2_offset[None]
+
+            # 检查is_boundary_grid标记（vector field，检查任意分量是否非零）
+            if self.Domain2.grid.is_boundary_grid[I][0] != 0 or self.Domain2.grid.is_boundary_grid[I][1] != 0:
+                idx = ti.atomic_add(boundary_count, 1)
+                if idx < self.boundary_grid_points2.shape[0]:
+                    self.boundary_grid_points2[idx] = render_pos
+
+        self.boundary_grid_count2[None] = boundary_count
+        self.move_mass_grid_count2[None] = move_mass_count
+
+    @ti.kernel
+    def _update_move_mass_grid_points_domain1(self):
+        """更新Domain1的move_mass_field > 0的网格点"""
+        move_mass_count = 0
+
+        for I in ti.grouped(self.Domain1.grid.move_mass_field):
+            if self.Domain1.grid.move_mass_field[I] > 0:
+                grid_pos = self.Domain1.grid.get_grid_pos(I)
+                render_pos = grid_pos * self.domain1_scale[None] + self.domain1_offset[None]
+                idx = ti.atomic_add(move_mass_count, 1)
+                if idx < self.move_mass_grid_points1.shape[0]:
+                    self.move_mass_grid_points1[idx] = render_pos
+
+        self.move_mass_grid_count1[None] = move_mass_count
+
+    @ti.kernel
+    def _update_move_mass_grid_points_domain2(self):
+        """更新Domain2的move_mass_field > 0的网格点"""
+        move_mass_count = 0
+
+        for I in ti.grouped(self.Domain2.grid.move_mass_field):
+            if self.Domain2.grid.move_mass_field[I] > 0:
+                grid_pos = self.Domain2.grid.get_grid_pos(I)
+                render_pos = grid_pos * self.domain2_scale[None] + self.domain2_offset[None]
+                idx = ti.atomic_add(move_mass_count, 1)
+                if idx < self.move_mass_grid_points2.shape[0]:
+                    self.move_mass_grid_points2[idx] = render_pos
+
+        self.move_mass_grid_count2[None] = move_mass_count
 
     def exchange_boundary_conditions(self):
         """
@@ -441,6 +545,22 @@ class MPM_Schwarz:
         self._update_render_positions_domain1()
         self._update_render_positions_domain2()
 
+        # 更新边界网格点（如果启用了边界网格可视化）
+        if self.visualize_boundary_grid:
+            self._update_boundary_grid_points_domain1()
+            self._update_boundary_grid_points_domain2()
+
+            # 只有当域有move_boundary配置时才更新move_mass网格点
+            if hasattr(self.Domain1.grid, 'has_move_boundary') and self.Domain1.grid.has_move_boundary:
+                self._update_move_mass_grid_points_domain1()
+            else:
+                self.move_mass_grid_count1[None] = 0
+
+            if hasattr(self.Domain2.grid, 'has_move_boundary') and self.Domain2.grid.has_move_boundary:
+                self._update_move_mass_grid_points_domain2()
+            else:
+                self.move_mass_grid_count2[None] = 0
+
         # 使用ti.ui.Window的canvas API
         canvas = self.gui.get_canvas()
         canvas.set_background_color((0.067, 0.184, 0.255))
@@ -460,6 +580,22 @@ class MPM_Schwarz:
 
             if self.grid_vertices2 is not None:
                 canvas.lines(self.grid_vertices2, 0.001, color=(0.929, 0.333, 0.231))
+
+        # 绘制边界网格点
+        if self.visualize_boundary_grid and self.visualize_grid:
+            # 绘制is_boundary_grid标记的网格点，不同domain用不同颜色
+            if self.boundary_grid_points1 is not None and self.boundary_grid_count1[None] > 0:
+                canvas.circles(self.boundary_grid_points1, radius=0.002, color=(1.0, 0.6, 0.6))  # 浅红色 - Domain1
+
+            if self.boundary_grid_points2 is not None and self.boundary_grid_count2[None] > 0:
+                canvas.circles(self.boundary_grid_points2, radius=0.002, color=(0.6, 0.6, 1.0))  # 浅蓝色 - Domain2
+
+            # 绘制move_mass_field > 0的网格点
+            if self.move_mass_grid_points1 is not None and self.move_mass_grid_count1[None] > 0:
+                canvas.circles(self.move_mass_grid_points1, radius=0.003, color=(1.0, 0.0, 1.0))  # 洋红色
+
+            if self.move_mass_grid_points2 is not None and self.move_mass_grid_count2[None] > 0:
+                canvas.circles(self.move_mass_grid_points2, radius=0.003, color=(1.0, 0.0, 1.0))  # 洋红色
 
         self.gui.show()
         # 合并两域粒子数据
@@ -485,6 +621,32 @@ class MPM_Schwarz:
         # 捕获帧
         self.recorder.capture(all_pos, all_colors)
     
+    def _create_experiment_directory(self, config_path=None):
+        """创建实验目录并备份配置文件"""
+        import json
+        import os
+        import shutil
+        from datetime import datetime
+
+        # 创建带时间戳的主实验目录
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_output_dir = "experiment_results"
+        experiment_name = f"schwarz_{timestamp}"
+        experiment_dir = os.path.join(base_output_dir, experiment_name)
+        os.makedirs(experiment_dir, exist_ok=True)
+
+        # 备份配置文件
+        if config_path and os.path.exists(config_path):
+            config_backup_path = os.path.join(experiment_dir, "config_backup.json")
+            shutil.copy2(config_path, config_backup_path)
+            print(f"配置文件已备份到: {config_backup_path}")
+
+        # 创建stress_data子目录
+        stress_data_dir = os.path.join(experiment_dir, "stress_data")
+        os.makedirs(stress_data_dir, exist_ok=True)
+
+        return experiment_dir, stress_data_dir
+
     def save_stress_data(self, frame_number):
         """保存两个域的应力数据"""
         import json
@@ -534,33 +696,34 @@ class MPM_Schwarz:
         
         print(f"Domain1: Filtered out {np.sum(~valid_mask1)} particles at origin position")
         print(f"Domain1: Saving data for {len(filtered_positions1)} particles")
-        print(f"Domain2: Filtered out {np.sum(~valid_mask2)} particles at origin position") 
+        print(f"Domain2: Filtered out {np.sum(~valid_mask2)} particles at origin position")
         print(f"Domain2: Saving data for {len(filtered_positions2)} particles")
-        
-        # 创建统一的输出目录结构
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_output_dir = "experiment_results"
-        output_dir = os.path.join(base_output_dir, f"schwarz_{timestamp}")
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # 分别保存两个域的数据
+
+        # 创建或获取实验目录
+        if not hasattr(self, '_experiment_dir') or not hasattr(self, '_stress_data_dir'):
+            self._experiment_dir, self._stress_data_dir = self._create_experiment_directory(self.config_path)
+
+        # 为当前帧创建单独的子目录
+        frame_dir = f"{self._stress_data_dir}/frame_{frame_number}"
+        os.makedirs(frame_dir, exist_ok=True)
+
+        # 分别保存两个域的数据到该帧的子目录
         # Domain1数据
-        np.save(f"{output_dir}/domain1_stress_frame_{frame_number}.npy", filtered_stress_data1)
-        np.save(f"{output_dir}/domain1_positions_frame_{frame_number}.npy", filtered_positions1)
-        np.save(f"{output_dir}/domain1_boundary_flags_frame_{frame_number}.npy", filtered_boundary_flags1)
+        np.save(f"{frame_dir}/domain1_stress.npy", filtered_stress_data1)
+        np.save(f"{frame_dir}/domain1_positions.npy", filtered_positions1)
+        np.save(f"{frame_dir}/domain1_boundary_flags.npy", filtered_boundary_flags1)
 
         # Domain2数据
-        np.save(f"{output_dir}/domain2_stress_frame_{frame_number}.npy", filtered_stress_data2)
-        np.save(f"{output_dir}/domain2_positions_frame_{frame_number}.npy", filtered_positions2)
-        np.save(f"{output_dir}/domain2_boundary_flags_frame_{frame_number}.npy", filtered_boundary_flags2)
+        np.save(f"{frame_dir}/domain2_stress.npy", filtered_stress_data2)
+        np.save(f"{frame_dir}/domain2_positions.npy", filtered_positions2)
+        np.save(f"{frame_dir}/domain2_boundary_flags.npy", filtered_boundary_flags2)
 
-        # 保存actual mass信息
+        # 保存actual mass信息到该帧的子目录
         try:
             # Domain1 actual mass
             actual_masses1 = self.Domain1.solver.get_volume_force_masses()
             if actual_masses1:
-                np.save(f"{output_dir}/domain1_actual_masses_frame_{frame_number}.npy", np.array(actual_masses1))
+                np.save(f"{frame_dir}/domain1_actual_masses.npy", np.array(actual_masses1))
                 print(f"Saved Domain1 actual masses: {actual_masses1}")
         except Exception as e:
             print(f"Warning: Could not save Domain1 actual masses: {e}")
@@ -569,7 +732,7 @@ class MPM_Schwarz:
             # Domain2 actual mass
             actual_masses2 = self.Domain2.solver.get_volume_force_masses()
             if actual_masses2:
-                np.save(f"{output_dir}/domain2_actual_masses_frame_{frame_number}.npy", np.array(actual_masses2))
+                np.save(f"{frame_dir}/domain2_actual_masses.npy", np.array(actual_masses2))
                 print(f"Saved Domain2 actual masses: {actual_masses2}")
         except Exception as e:
             print(f"Warning: Could not save Domain2 actual masses: {e}")
@@ -621,16 +784,17 @@ class MPM_Schwarz:
             }
         }
         
-        with open(f"{output_dir}/stress_stats_frame_{frame_number}.json", 'w') as f:
+        with open(f"{frame_dir}/stress_stats.json", 'w') as f:
             json.dump(stats, f, indent=2)
 
-        print(f"两域应力数据已保存到 {output_dir}/")
+        print(f"两域应力数据已保存到 {self._experiment_dir}/")
+        print(f"stress数据保存在: {self._stress_data_dir}/")
         print(f"Domain1 von Mises应力范围: {stats['domain1']['von_mises_stress']['min']:.3e} - {stats['domain1']['von_mises_stress']['max']:.3e}")
         print(f"Domain1 平均von Mises应力: {stats['domain1']['von_mises_stress']['mean']:.3e}")
         print(f"Domain2 von Mises应力范围: {stats['domain2']['von_mises_stress']['min']:.3e} - {stats['domain2']['von_mises_stress']['max']:.3e}")
         print(f"Domain2 平均von Mises应力: {stats['domain2']['von_mises_stress']['mean']:.3e}")
-        
-        return output_dir
+
+        return self._experiment_dir
 
     def _apply_config_overrides(self, config: Config, overrides: dict = None):
         """
@@ -738,7 +902,7 @@ if __name__ == "__main__":
     ti.init(arch=arch, default_fp=float_type, device_memory_GB=20, log_level=ti.ERROR)
 
     # 创建Schwarz域分解MPM实例
-    mpm = MPM_Schwarz(cfg, no_gui=args.no_gui)
+    mpm = MPM_Schwarz(cfg, no_gui=args.no_gui, config_path=args.config)
 
     frame_count = 0
     target_frames = cfg.get("max_frames", 60)
@@ -749,6 +913,12 @@ if __name__ == "__main__":
         while frame_count < target_frames:
             mpm.step()
             frame_count += 1
+
+            # 间隔保存应力数据
+            if mpm.stress_save_interval > 0 and frame_count % mpm.stress_save_interval == 0:
+                print(f"保存第 {frame_count} 帧的应力数据...")
+                mpm.save_stress_data(frame_count)
+                mpm.saved_stress_frames.append(frame_count)
 
             # 检查速度收敛
             if mpm.check_velocity_convergence(frame_count):
@@ -764,6 +934,12 @@ if __name__ == "__main__":
             mpm.step()
             mpm.render()
             frame_count += 1
+
+            # 间隔保存应力数据
+            if mpm.stress_save_interval > 0 and frame_count % mpm.stress_save_interval == 0:
+                print(f"保存第 {frame_count} 帧的应力数据...")
+                mpm.save_stress_data(frame_count)
+                mpm.saved_stress_frames.append(frame_count)
 
             # 检查速度收敛
             if mpm.check_velocity_convergence(frame_count):
@@ -784,9 +960,15 @@ if __name__ == "__main__":
     # plt.yscale('log')  # Y轴对数化
     # plt.show()
     
-    #
-    print("记录最终帧的应力数据...")
-    mpm.save_stress_data(frame_count)
+    # 在最后一帧记录应力数据（如果还没有保存过）
+    if mpm.stress_save_interval == 0 or frame_count not in mpm.saved_stress_frames:
+        print("记录最终帧的应力数据...")
+        mpm.save_stress_data(frame_count)
+        mpm.saved_stress_frames.append(frame_count)
+
+    # 打印保存的应力数据帧信息
+    if mpm.saved_stress_frames:
+        print(f"共保存了 {len(mpm.saved_stress_frames)} 个帧的应力数据: {mpm.saved_stress_frames}")
 
     if mpm.recorder is None or args.no_gui:
         print("Simulation finished.")

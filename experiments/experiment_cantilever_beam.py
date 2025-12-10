@@ -195,9 +195,41 @@ def run_single_simulation(config_path, use_schwarz=False, output_name=None):
         ]
         print(f"  使用单域求解器")
 
+    # 准备保存输出的文件路径
+    if output_name:
+        log_dir = os.path.dirname(config_path)
+        stdout_log = os.path.join(log_dir, f"{output_name}_stdout.log")
+        stderr_log = os.path.join(log_dir, f"{output_name}_stderr.log")
+        cmd_log = os.path.join(log_dir, f"{output_name}_command.log")
+    else:
+        # 使用配置文件名作为基础
+        config_base = os.path.splitext(os.path.basename(config_path))[0]
+        log_dir = os.path.dirname(config_path)
+        stdout_log = os.path.join(log_dir, f"{config_base}_stdout.log")
+        stderr_log = os.path.join(log_dir, f"{config_base}_stderr.log")
+        cmd_log = os.path.join(log_dir, f"{config_base}_command.log")
+
     try:
+        # 保存运行的命令
+        with open(cmd_log, 'w') as f:
+            f.write(f"Command: {' '.join(cmd)}\n")
+            f.write(f"Working directory: {os.getcwd()}\n")
+            f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+
+        print(f"  命令日志保存到: {cmd_log}")
+
         # 运行模拟
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=None)
+
+        # 保存标准输出
+        with open(stdout_log, 'w') as f:
+            f.write(result.stdout)
+        print(f"  标准输出保存到: {stdout_log}")
+
+        # 保存错误输出
+        with open(stderr_log, 'w') as f:
+            f.write(result.stderr)
+        print(f"  错误输出保存到: {stderr_log}")
 
         if result.returncode == 0:
             print(f"  模拟完成")
@@ -210,9 +242,15 @@ def run_single_simulation(config_path, use_schwarz=False, output_name=None):
 
     except subprocess.TimeoutExpired:
         print(f"  模拟超时（超过2小时）")
+        # 保存超时信息
+        with open(stderr_log, 'w') as f:
+            f.write("SIMULATION TIMEOUT: Exceeded 2 hours\n")
         return False
     except Exception as e:
         print(f"  模拟过程出错: {e}")
+        # 保存异常信息
+        with open(stderr_log, 'w') as f:
+            f.write(f"EXCEPTION: {str(e)}\n")
         return False
 
 def find_rightmost_bottom_particle(positions, beam_params, domain_id=None):
@@ -220,14 +258,9 @@ def find_rightmost_bottom_particle(positions, beam_params, domain_id=None):
 
     if beam_params.get('use_schwarz', False) and domain_id == 1:
         # 双域模式：在Domain1范围内查找最右下角粒子
-        domain1_range = beam_params['domain1_range']
-        x_min, x_max = domain1_range[0]
-        y_min, y_max = domain1_range[1]
+        domain1_positions = positions
 
-        # 过滤出Domain1范围内的粒子
-        mask = ((positions[:, 0] >= x_min) & (positions[:, 0] <= x_max) &
-                (positions[:, 1] >= y_min) & (positions[:, 1] <= y_max))
-        domain1_positions = positions[mask]
+        print(f"  调试信息：输入positions长度: {len(positions)}, domain1_positions长度: {len(domain1_positions)}")
 
         if len(domain1_positions) == 0:
             raise ValueError("在Domain1范围内未找到粒子")
@@ -270,10 +303,16 @@ def load_simulation_results(results_dir=None, use_schwarz=False, domain_id=None)
             print("未找到模拟结果目录")
             return None
 
-        # 选择最新的目录
+        # 选择最新的目录（按创建时间）
         results_dir = max(result_dirs, key=os.path.getctime)
+        print(f"  从 {len(result_dirs)} 个目录中选择最新的: {os.path.basename(results_dir)}")
 
     print(f"从目录加载结果: {results_dir}")
+
+    # 检查目录是否存在
+    if not os.path.exists(results_dir):
+        print(f"错误: 结果目录不存在: {results_dir}")
+        return None
 
     if use_schwarz and domain_id is not None:
         # 双域模式：加载指定域的结果
@@ -286,7 +325,8 @@ def load_simulation_results(results_dir=None, use_schwarz=False, domain_id=None)
         file_prefix = "positions_frame_"
 
     if not position_files:
-        print("未找到位置数据文件")
+        print(f"  错误: 在目录 {results_dir} 中未找到位置数据文件")
+        print(f"  目录内容: {os.listdir(results_dir) if os.path.exists(results_dir) else '目录不存在'}")
         return None
 
     # 使用最后一帧的数据
@@ -298,6 +338,7 @@ def load_simulation_results(results_dir=None, use_schwarz=False, domain_id=None)
         frame_numbers.append(frame_num)
 
     last_frame = max(frame_numbers)
+    print(f"  找到帧数: {sorted(frame_numbers)}, 使用最新帧: {last_frame}")
 
     if use_schwarz and domain_id is not None:
         positions_file = os.path.join(results_dir, f"domain{domain_id}_positions_frame_{last_frame}.npy")
@@ -402,7 +443,8 @@ def run_single_experiment(base_config_path="config/config_2d_test4.json",
         print(f"  双域模式：自由端在Domain1，固定端在Domain2")
 
     # 运行模拟
-    success = run_single_simulation(config_path, use_schwarz=use_schwarz)
+    output_name = f"single_beam_{'schwarz' if use_schwarz else 'single'}"
+    success = run_single_simulation(config_path, use_schwarz=use_schwarz, output_name=output_name)
     if not success:
         print("模拟失败")
         return None
@@ -509,10 +551,8 @@ def run_batch_experiments(base_config_path="config/config_2d_test4.json",
         config, g = create_config_for_gamma(base_config_path, gamma, config_path, use_schwarz=use_schwarz)
 
         # 运行模拟
-        success = run_single_simulation(config_path, use_schwarz=use_schwarz)
-        if not success:
-            print(f"实验 {i+1} 模拟失败，跳过")
-            continue
+        run_single_simulation(config_path, use_schwarz=use_schwarz, output_name=f"gamma_{gamma:.2e}")
+
 
         # 加载结果
         if use_schwarz:
@@ -526,7 +566,7 @@ def run_batch_experiments(base_config_path="config/config_2d_test4.json",
             print(f"实验 {i+1} 无法加载结果，跳过")
             continue
 
-        # 重命名结果目录以便区分
+        # 复制结果目录以便区分（保留原始目录）
         if use_schwarz:
             new_results_dir = os.path.join(output_dir, f"results_schwarz_gamma_{gamma:.2e}")
         else:
@@ -534,7 +574,9 @@ def run_batch_experiments(base_config_path="config/config_2d_test4.json",
 
         if os.path.exists(new_results_dir):
             shutil.rmtree(new_results_dir)
-        shutil.move(sim_results['results_dir'], new_results_dir)
+        shutil.copytree(sim_results['results_dir'], new_results_dir)
+        print(f"  结果已复制到: {new_results_dir}")
+        print(f"  原始结果保留在: {sim_results['results_dir']}")
 
         # 找到最右下角粒子
         if use_schwarz:
@@ -670,9 +712,11 @@ def main():
     elif args.mode == 'batch':
         # 批量实验
         if args.use_schwarz:
-            output_dir = args.output_dir or "experiment_results/cantilever_batch_schwarz"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_dir = args.output_dir or f"experiment_results/cantilever_batch_schwarz_{timestamp}"
         else:
-            output_dir = args.output_dir or "experiment_results/cantilever_batch"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_dir = args.output_dir or f"experiment_results/cantilever_batch_{timestamp}"
 
         result = run_batch_experiments(
             base_config_path=args.config,
