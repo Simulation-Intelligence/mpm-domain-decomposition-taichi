@@ -151,7 +151,7 @@ class Particles:
                 self.set_boundary(method="automatic")
             
             # 所有边界标记完成后，应用boundary_particle_range过滤
-            # self.apply_boundary_particle_range_filter()
+            self.apply_boundary_particle_range_filter()
 
     def _parse_material_params(self, config):
         """解析材料参数表"""

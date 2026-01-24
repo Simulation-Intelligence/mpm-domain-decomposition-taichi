@@ -2,8 +2,8 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 150,
-        "grid_ny": 150,
+        "grid_nx": 200,
+        "grid_ny": 200,
         "domain_width": 1.0,
         "domain_height": 1.0,
         "particles_per_grid": 4,
@@ -23,9 +23,9 @@
             [0.0, 1.0]
         ],
         "move_boundary": {
-            "start_region": [[0.896, 0.900], [0.3, 0.8]],
-            "displacement": [0.001, 0.0],
-            "speed": 1.0
+            "start_region": [[0.895, 0.900], [0.3, 0.8]],
+            "displacement": [0.05, 0.0],
+            "speed": 0.01
         },
         "dt": 0.001,
         "max_iter": 1,
@@ -66,8 +66,8 @@
         "compare_diff": false,
         "bound": 3,
         "boundary_size": 0.0001,
-        "damping":0.5,
-        "particle_damping": 0.9,
+        "damping":0.0,
+        "particle_damping": 0.0,
         "initial_velocity_y": -0.0,
         "shapes": [
             {

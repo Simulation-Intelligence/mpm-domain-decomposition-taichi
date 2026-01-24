@@ -275,23 +275,23 @@ class ImplicitMPM:
 
                 if ti.static(not self.auto_boundary) and self.particles.is_boundary_particle[p] :
                     # 检查当前grid是否在boundary_particle_range内
-                    in_boundary_range = False
-                    # 计算grid的世界坐标位置
-                    pos = ti.Vector([
-                        grid_idx[0] * self.grid.dx_x,
-                        grid_idx[1] * self.grid.dx_y
-                    ])
+                    # in_boundary_range = False
+                    # # 计算grid的世界坐标位置
+                    # pos = ti.Vector([
+                    #     grid_idx[0] * self.grid.dx_x,
+                    #     grid_idx[1] * self.grid.dx_y
+                    # ])
 
-                    # 检查是否在任何一个boundary_particle_range内
-                    for range_idx in ti.static(range(len(self.particles.boundary_particle_ranges))):
-                        range_x = self.particles.boundary_particle_ranges[range_idx][0]
-                        range_y = self.particles.boundary_particle_ranges[range_idx][1]
-                        if (pos[0] >= range_x[0] and pos[0] <= range_x[1] and
-                            pos[1] >= range_y[0] and pos[1] <= range_y[1]):
-                            in_boundary_range = True
+                    # # 检查是否在任何一个boundary_particle_range内
+                    # for range_idx in ti.static(range(len(self.particles.boundary_particle_ranges))):
+                    #     range_x = self.particles.boundary_particle_ranges[range_idx][0]
+                    #     range_y = self.particles.boundary_particle_ranges[range_idx][1]
+                    #     if (pos[0] >= range_x[0] and pos[0] <= range_x[1] and
+                    #         pos[1] >= range_y[0] and pos[1] <= range_y[1]):
+                    #         in_boundary_range = True
 
-                    if in_boundary_range:
-                        self.grid.is_particle_boundary_grid[grid_idx] = 1
+                    # if in_boundary_range:
+                    self.grid.is_particle_boundary_grid[grid_idx] = 1
 
         for I in ti.grouped(self.grid.m):
             if self.grid.m[I] > 0:

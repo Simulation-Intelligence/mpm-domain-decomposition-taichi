@@ -42,7 +42,7 @@
             -0.03875248015873022
         ],
         "damping":0.2,
-        "particle_damping": 0.999,
+        "particle_damping": 1,
         "material_params": [
             {
                 "id": 0,

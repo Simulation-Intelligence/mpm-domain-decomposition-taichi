@@ -29,7 +29,7 @@
         "particles_per_grid": 4,
         "sampling_method": "regular",
         "use_mapping": false,
-        "elasticity_model": "linear",
+        "elasticity_model": "neo_hookean",
         "constrain_x_velocity": false,
         "DBC_range": [
             [
@@ -167,7 +167,7 @@
         "particles_per_grid": 4,
         "sampling_method": "regular",
         "use_mapping": false,
-        "elasticity_model": "linear",
+        "elasticity_model": "neo_hookean",
         "constrain_x_velocity": false,
         "auto_boundary": false,
         "boundary_particle_range": [
@@ -213,7 +213,7 @@
                 ]
             }
         ],
-        "implicit": true,
+        "implicit": false,
         "static_solve": false,
         "use_auto_diff": false,
         "compare_diff": false,

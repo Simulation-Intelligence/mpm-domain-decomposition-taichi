@@ -6,6 +6,7 @@
     "velocity_convergence_threshold": 1e-6,
     "velocity_convergence_check_interval": 10,
     "visualize_grid": true,
+        "visualize_boundary_grid": true,
     "no_gui": false,
     "steps": 1,
     "arch": "cpu",
