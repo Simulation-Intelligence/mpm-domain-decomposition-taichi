@@ -104,7 +104,7 @@ class Newton:
                 print(f"Newton Converged at iteration {it}")
                 print("x_inf_norm:", get_inf_norm(self.x))
                 print(f"Final Energy: {self.f0:.4e}")
-                break
+                return it
 
             # 构建Hessian矩阵 (重用builder)
             # self.H_builder = ti.linalg.SparseMatrixBuilder(self.dim[None], self.dim[None], max_num_triplets=int(self.dim[None]**2), dtype=self.float_type)
@@ -146,7 +146,8 @@ class Newton:
             self.f_his.append(self.f0)
             self.time_his.append(time.time() - start_time)
 
-        # print(f"Final parameters: {self.x.to_numpy()}")
+        # 达到最大迭代次数，返回 max_iter
+        return max_iter
 
 # 示例使用
 if __name__ == "__main__":

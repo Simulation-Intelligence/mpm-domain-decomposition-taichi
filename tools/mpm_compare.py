@@ -22,7 +22,7 @@ class MPM_Compare:
         self.schwarz_mpm.render()
 
     @ti.kernel
-    def compute_grid_v_diff(self) -> ti.f32:
+    def compute_grid_v_diff(self) -> ti.f64:
 
         cnt=0
         residual = 0.0

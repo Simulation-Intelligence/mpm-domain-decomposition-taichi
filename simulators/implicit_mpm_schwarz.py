@@ -2,10 +2,12 @@ from implicit_mpm import *
 from tools.domain_manager import DomainManager
 from tools.boundary_exchanger import BoundaryExchanger
 from tools.particle_state_manager import ParticleStateManager
+from tools.performance_stats import SchwarzPerformanceStats
 
 from Util.Recorder import *
 
 import matplotlib.pyplot as plt
+import time
 
 from Util.Project import project
 
@@ -94,6 +96,10 @@ class MPM_Schwarz:
 
         self.residuals = []
 
+        # 性能统计
+        self.perf_stats = SchwarzPerformanceStats()
+        self.enable_perf_stats = self.main_config.get("enable_perf_stats", True)
+
         # Schwarz收敛参数
         self.schwarz_eta = self.main_config.get("schwarz_eta", 1e-6)  # 收敛容差
 
@@ -107,8 +113,8 @@ class MPM_Schwarz:
             print(f"启用双域速度收敛检测: 阈值={self.velocity_convergence_threshold:.2e}, 检测间隔={self.velocity_convergence_check_interval}帧, 需要连续{self.velocity_convergence_consecutive_required}次")
 
         # 存储上一次Schwarz迭代的grid_v，用于收敛判别
-        self.Domain1_prev_grid_v = ti.Vector.field(self.Domain1.dim, dtype=ti.f32, shape=self.Domain1.grid.v.shape)
-        self.Domain2_prev_grid_v = ti.Vector.field(self.Domain2.dim, dtype=ti.f32, shape=self.Domain2.grid.v.shape)
+        self.Domain1_prev_grid_v = ti.Vector.field(self.Domain1.dim, dtype=ti.f64, shape=self.Domain1.grid.v.shape)
+        self.Domain2_prev_grid_v = ti.Vector.field(self.Domain2.dim, dtype=ti.f64, shape=self.Domain2.grid.v.shape)
 
         # 只在非无GUI模式下初始化GUI
         if not self.no_gui:
@@ -345,7 +351,7 @@ class MPM_Schwarz:
             self.Domain2_prev_grid_v[I] = self.Domain2.grid.v[I]
 
     @ti.kernel
-    def check_schwarz_convergence(self) -> ti.f32:
+    def check_schwarz_convergence(self) -> ti.f64:
         """
         检查Schwarz迭代收敛性：计算overlap区域中当前迭代和上一次迭代的grid_v差的inf-norm
         overlap区域定义为两个domain都有质量（grid.m > 0）的网格点
@@ -451,6 +457,9 @@ class MPM_Schwarz:
             """
             执行一步Schwarz迭代
             """
+            # 开始帧统计
+            if self.enable_perf_stats:
+                self.perf_stats.start_frame()
 
             # 1.P2G: 将粒子的质量和动量传递到网格上
             self.domain_manager.pre_step()
@@ -475,11 +484,27 @@ class MPM_Schwarz:
                     self.save_schwarz_iteration_grid_v()
 
                 timesteps = self.domain_manager.get_timestep_ratio()
-                self.BigTimeDomain.solve()
+
+                # 大域求解（带统计）
+                t_big_start = time.perf_counter()
+                big_newton_iters = self.BigTimeDomain.solve()
+                if big_newton_iters is None:
+                    big_newton_iters = 0
+                t_big_end = time.perf_counter()
+
+                # 小域多步求解（带统计）
+                t_small_start = time.perf_counter()
+                small_newton_total = 0
+                small_substep_iters = []
 
                 for j in range(timesteps):
                     self.boundary_exchanger.interpolate_boundary_velocity((j+1) / timesteps)
-                    self.SmallTimeDomain.solve()
+                    small_iter = self.SmallTimeDomain.solve()
+                    if small_iter is None:
+                        small_iter = 0
+                    small_newton_total += small_iter
+                    small_substep_iters.append(small_iter)
+
                     if j == timesteps - 1:
                         break
                     self.SmallTimeDomain.g2p(self.SmallTimeDomain.dt)
@@ -492,7 +517,10 @@ class MPM_Schwarz:
                     else:
                         self.SmallTimeDomain.solver.save_previous_velocity()
 
+                t_small_end = time.perf_counter()
+
                 # 检查收敛性（从第二次迭代开始）
+                convergence_residual = 1.0  # 默认值
                 if i > 0:
                     convergence_residual = self.check_schwarz_convergence()
                     print(f"  Convergence residual (inf-norm): {convergence_residual:.2e}")
@@ -501,6 +529,17 @@ class MPM_Schwarz:
                     if convergence_residual < self.schwarz_eta:
                         print(f"  Schwarz iterations converged after {i+1} iterations!")
                         converged = True
+
+                # 记录本次 Schwarz 迭代的统计
+                if self.enable_perf_stats:
+                    self.perf_stats.record_schwarz_iteration(
+                        residual=convergence_residual,
+                        big_newton_iters=big_newton_iters,
+                        small_newton_iters=small_newton_total,
+                        small_substep_iters=small_substep_iters,
+                        big_solve_time=t_big_end - t_big_start,
+                        small_solve_time=t_small_end - t_small_start,
+                    )
 
                 # 准备下一次迭代或结束
                 if not converged and i < self.max_schwarz_iter - 1:
@@ -531,6 +570,10 @@ class MPM_Schwarz:
             # self.apply_average_grid_v()
 
             self.residuals.append(residuals)
+
+            # 结束帧统计
+            if self.enable_perf_stats:
+                self.perf_stats.end_frame(converged=converged)
 
             # 3.G2P: 将网格的速度传递回粒子上
             # 4.粒子自由运动
@@ -654,10 +697,10 @@ class MPM_Schwarz:
 
         # 计算两个域的应力
         print("正在计算Domain1的应力...")
-        self.Domain1.solver.compute_stress_strain()
+        self.Domain1.solver.compute_stress_strain_with_averaging()
 
         print("正在计算Domain2的应力...")
-        self.Domain2.solver.compute_stress_strain()
+        self.Domain2.solver.compute_stress_strain_with_averaging()
 
         # 获取两个域的数据
         stress_data1 = self.Domain1.particles.stress.to_numpy()
@@ -928,6 +971,12 @@ if __name__ == "__main__":
             if frame_count % 100 == 0:
                 print(f"Progress: {frame_count}/{target_frames} frames")
         print("Simulation completed.")
+
+        # 保存最终帧的应力数据（如果还没保存过）
+        if frame_count not in mpm.saved_stress_frames:
+            print(f"保存最终帧 {frame_count} 的应力数据...")
+            mpm.save_stress_data(frame_count)
+            mpm.saved_stress_frames.append(frame_count)
     else:
         # GUI模式：使用传统的GUI循环
         while mpm.gui and mpm.gui.running:
@@ -969,6 +1018,34 @@ if __name__ == "__main__":
     # 打印保存的应力数据帧信息
     if mpm.saved_stress_frames:
         print(f"共保存了 {len(mpm.saved_stress_frames)} 个帧的应力数据: {mpm.saved_stress_frames}")
+
+    # 性能统计报告和可视化
+    if mpm.enable_perf_stats and mpm.perf_stats.frame_data:
+        print("\n" + "=" * 70)
+        print("生成性能统计报告...")
+
+        # 生成汇总报告
+        mpm.perf_stats.generate_summary_report()
+
+        # 创建输出目录
+        import os
+        stats_output_dir = "performance_stats"
+        if hasattr(mpm, '_experiment_dir'):
+            stats_output_dir = os.path.join(mpm._experiment_dir, "performance_stats")
+        os.makedirs(stats_output_dir, exist_ok=True)
+
+        # 保存所有图表
+        print(f"\n保存性能统计图表到 {stats_output_dir}...")
+        mpm.perf_stats.save_all_plots(stats_output_dir, show=False)
+
+        # 保存统计数据到 JSON
+        stats_json_path = os.path.join(stats_output_dir, "stats_data.json")
+        mpm.perf_stats.save_to_file(stats_json_path)
+
+        print(f"性能统计完成！结果保存在: {stats_output_dir}")
+
+    # 确保关闭所有 matplotlib 图形
+    plt.close('all')
 
     if mpm.recorder is None or args.no_gui:
         print("Simulation finished.")

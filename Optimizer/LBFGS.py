@@ -168,7 +168,7 @@ class LBFGS:
             print(f"Grad norm: {grad_n}")
             if grad_n < self.eta:
                 print(f"Converged at iteration {k}")
-                break
+                return k
 
             # 初始化搜索方向
             self.q.copy_from(self.grad)
@@ -231,6 +231,9 @@ class LBFGS:
             self.current_idx[None] = (self.current_idx[None] + 1) % self.m
 
             self.time_his.append(time.time() - start_time)
+
+        # 达到最大迭代次数
+        return max_iter
 
 
 # 测试示例（与BFGS相同）

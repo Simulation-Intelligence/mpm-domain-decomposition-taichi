@@ -1,4 +1,5 @@
 import taichi as ti
+import time
 
 import sys
 import os
@@ -14,6 +15,8 @@ from Util.Config import Config
 from Util.Recorder import *
 
 from Util.Project import project
+
+from tools.performance_stats import SingleDomainPerformanceStats
 
 
 
@@ -108,6 +111,9 @@ class ImplicitMPM:
             self.gui= ti.ui.Window("Implicit MPM", res=(800, 800), vsync=False)
         else:
             self.gui = None
+
+        # 性能统计
+        self.perf_stats = SingleDomainPerformanceStats()
 
     def _apply_config_overrides(self, config: Config, overrides: dict = None):
         """
@@ -216,6 +222,9 @@ class ImplicitMPM:
                 print(f"Resized optimizer to dimension: {required_dim}")
 
     def step(self):
+        # 开始统计
+        self.perf_stats.start_frame()
+
         # 检查是否进入最后100帧
         frames_remaining = self.max_frames - self.current_frame
         if frames_remaining <= self.last_frames_count:
@@ -227,16 +236,33 @@ class ImplicitMPM:
             if self.solver.unlimited_iter_for_last_frames:
                 self.solver.set_unlimited_iter_mode(False)
 
+        total_newton_iters = 0
+        total_solve_time = 0.0
+
         for _ in range(self.max_iter):
             self.pre_p2g()
             self.p2g()
             self.post_p2g()
 
-            self.solve()
+            # 记录求解时间和牛顿迭代次数
+            t_solve_start = time.perf_counter()
+            newton_iters = self.solve()
+            t_solve_end = time.perf_counter()
+
+            if newton_iters is None:
+                newton_iters = 0
+            total_newton_iters += newton_iters
+            total_solve_time += t_solve_end - t_solve_start
 
             self.g2p(self.dt)
 
             self.particles.advect(self.dt)
+
+        # 记录统计数据
+        self.perf_stats.record_frame(
+            newton_iters=total_newton_iters,
+            solve_time=total_solve_time
+        )
 
         # 增加帧计数器
         self.current_frame += 1
@@ -339,7 +365,7 @@ class ImplicitMPM:
 
 
     @ti.kernel
-    def g2p(self, dt: ti.f32):
+    def g2p(self, dt: ti.f64):
         for p in self.particles.x:
             base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
 
@@ -733,10 +759,16 @@ class ImplicitMPM:
         print("开始静力学求解...")
         self.step()  # 执行一步求解
         print("静力学求解完成")
-        
+
         # 保存结果
         self.save_stress_data(1, self.config_path)
-        
+
+        # 生成性能统计
+        print("\n" + "="*70)
+        print("生成性能统计...")
+        print("="*70)
+        self.perf_stats.generate_summary_report()
+
         # 渲染最终结果
         self.render()
 
@@ -798,6 +830,28 @@ if __name__ == "__main__":
         # 打印保存的应力数据帧信息
         if mpm.saved_stress_frames:
             print(f"共保存了 {len(mpm.saved_stress_frames)} 个帧的应力数据: {mpm.saved_stress_frames}")
+
+        # 生成性能统计报告和可视化
+        print("\n" + "="*70)
+        print("生成性能统计...")
+        print("="*70)
+        mpm.perf_stats.generate_summary_report()
+
+        # 保存统计图表到实验目录
+        if hasattr(mpm, '_experiment_dir') and mpm._experiment_dir:
+            stats_dir = os.path.join(mpm._experiment_dir, 'performance_stats')
+            os.makedirs(stats_dir, exist_ok=True)
+            mpm.perf_stats.save_all_plots(stats_dir, show=False)
+            mpm.perf_stats.save_to_file(os.path.join(stats_dir, 'stats_data.json'))
+        else:
+            # 如果没有实验目录，创建一个默认的
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            stats_dir = f"experiment_results/single_domain_{timestamp}/performance_stats"
+            os.makedirs(stats_dir, exist_ok=True)
+            mpm.perf_stats.save_all_plots(stats_dir, show=False)
+            mpm.perf_stats.save_to_file(os.path.join(stats_dir, 'stats_data.json'))
+
         if mpm.recorder is None:
             exit()
         print("Playback finished.")

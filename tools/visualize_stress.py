@@ -3,12 +3,20 @@
 应力数据可视化工具
 """
 import numpy as np
+import sys
+import matplotlib
+# 只在保存文件模式或all-frames模式下使用Agg后端（内存优化）
+# 否则使用默认后端以支持交互式显示
+if '--save' in sys.argv or '--all-frames' in sys.argv:
+    matplotlib.use('Agg')  # Non-interactive backend for lower memory overhead
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
 from matplotlib.colors import LinearSegmentedColormap
+from scipy.spatial import cKDTree
 import argparse
 import os
 import glob
+import gc
 
 def create_custom_colormap():
     """创建自定义colormap"""
@@ -53,7 +61,7 @@ def create_discrete_colormap(base_cmap, n_levels=10):
 
 def compute_spatial_averaged_stress(positions, stress_values, averaging_radius):
     """
-    计算每个粒子的空间平均应力值
+    计算每个粒子的空间平均应力值 (优化版: 使用KDTree替代距离矩阵)
 
     Args:
         positions: 粒子位置数组 (N, 2) 或 (N, 3)
@@ -64,7 +72,6 @@ def compute_spatial_averaged_stress(positions, stress_values, averaging_radius):
         averaged_stress: 平均化后的应力值 (N,)
     """
     import time
-    from scipy.spatial.distance import cdist
 
     print(f"开始计算空间平均应力，平均化半径: {averaging_radius:.6f}")
     start_time = time.time()
@@ -72,29 +79,29 @@ def compute_spatial_averaged_stress(positions, stress_values, averaging_radius):
     n_particles = len(positions)
     averaged_stress = np.zeros(n_particles)
 
-    # 计算所有粒子间的距离矩阵
-    distances = cdist(positions, positions)
+    # 使用KDTree进行高效近邻搜索 - O(N log N) 构建, O(k) 查询
+    tree = cKDTree(positions)
 
     # 为每个粒子计算平均应力
     for i in range(n_particles):
-        # 找到在平均化半径内的粒子
-        neighbors = distances[i] <= averaging_radius
+        # 找到在平均化半径内的粒子 (包括自身)
+        neighbor_indices = tree.query_ball_point(positions[i], averaging_radius)
 
         # 计算这些粒子的平均应力
-        if np.sum(neighbors) > 0:
-            averaged_stress[i] = np.mean(stress_values[neighbors])
+        if len(neighbor_indices) > 0:
+            averaged_stress[i] = np.mean(stress_values[neighbor_indices])
         else:
-            # 如果没有邻居，使用自己的值
+            # 如果没有邻居（不应该发生，因为至少包含自身），使用自己的值
             averaged_stress[i] = stress_values[i]
 
     elapsed_time = time.time() - start_time
-    print(f"空间平均计算完成，用时: {elapsed_time:.3f}s")
+    print(f"空间平均计算完成，用时: {elapsed_time:.3f}s (KDTree优化)")
 
     return averaged_stress
 
 def estimate_optimal_averaging_radius(positions, factor=2.0):
     """
-    估算最优的平均化半径
+    估算最优的平均化半径 (优化版: 大数据集使用采样)
 
     Args:
         positions: 粒子位置数组 (N, 2) 或 (N, 3)
@@ -106,10 +113,20 @@ def estimate_optimal_averaging_radius(positions, factor=2.0):
     if len(positions) < 2:
         return 0.01  # 默认值
 
+    MAX_SAMPLE_SIZE = 10000  # 最大采样数，避免O(N²)内存消耗
+
     try:
         from scipy.spatial.distance import pdist
-        # 计算所有粒子间距离
-        distances = pdist(positions)
+
+        # 对大数据集使用采样，避免计算所有N(N-1)/2个距离
+        if len(positions) > MAX_SAMPLE_SIZE:
+            print(f"数据集较大 ({len(positions)} 粒子)，使用采样估计 ({MAX_SAMPLE_SIZE} samples)")
+            sample_indices = np.random.choice(len(positions), MAX_SAMPLE_SIZE, replace=False)
+            sampled_positions = positions[sample_indices]
+            distances = pdist(sampled_positions)
+        else:
+            # 小数据集直接计算
+            distances = pdist(positions)
     except ImportError:
         # 回退方法：随机采样计算
         n_samples = min(1000, len(positions))
@@ -544,22 +561,27 @@ def load_schwarz_stress_data(output_dir, frame_number=None):
     }
 
 def compute_von_mises_stress(stress_data):
-    """计算von Mises应力"""
-    von_mises = []
+    """计算von Mises应力 (完全向量化版本)"""
     dim = stress_data.shape[1]
-    
-    for i in range(stress_data.shape[0]):
-        s = stress_data[i]
-        if dim == 2:
-            # 2D von Mises stress
-            vm = np.sqrt(s[0,0]**2 + s[1,1]**2 - s[0,0]*s[1,1] + 3*s[0,1]**2)
-        else:
-            # 3D von Mises stress
-            vm = np.sqrt(0.5*((s[0,0]-s[1,1])**2 + (s[1,1]-s[2,2])**2 + (s[2,2]-s[0,0])**2) + 
-                        3*(s[0,1]**2 + s[1,2]**2 + s[2,0]**2))
-        von_mises.append(vm)
-    
-    return np.array(von_mises)
+
+    if dim == 2:
+        # 2D von Mises stress - 完全向量化
+        s00 = stress_data[:, 0, 0]
+        s11 = stress_data[:, 1, 1]
+        s01 = stress_data[:, 0, 1]
+        von_mises = np.sqrt(s00**2 + s11**2 - s00*s11 + 3*s01**2)
+    else:
+        # 3D von Mises stress - 完全向量化
+        s00 = stress_data[:, 0, 0]
+        s11 = stress_data[:, 1, 1]
+        s22 = stress_data[:, 2, 2]
+        s01 = stress_data[:, 0, 1]
+        s12 = stress_data[:, 1, 2]
+        s20 = stress_data[:, 2, 0]
+        von_mises = np.sqrt(0.5*((s00-s11)**2 + (s11-s22)**2 + (s22-s00)**2) +
+                           3*(s01**2 + s12**2 + s20**2))
+
+    return von_mises
 
 # Hydrostatic pressure functions removed - focusing only on von Mises stress
 
@@ -653,7 +675,8 @@ def visualize_stress_2d(positions, von_mises, frame_number, save_path=None, use_
         from matplotlib.colors import LogNorm
 
         # von Mises stress (using logarithmic scale)
-        von_mises_positive = np.maximum(von_mises, 1e-10)  # 避免零值
+        von_mises_positive = von_mises.copy()
+        np.clip(von_mises_positive, 1e-10, None, out=von_mises_positive)  # In-place, 避免零值
         vm_vmin = np.min(von_mises_positive)
         vm_vmax = max_stress if max_stress is not None else np.max(von_mises_positive)
         scatter = ax.scatter(positions[:, 0], positions[:, 1], c=von_mises_positive,
@@ -682,6 +705,7 @@ def visualize_stress_2d(positions, von_mises, frame_number, save_path=None, use_
         print(f"Image saved to: {save_path}")
 
     plt.show()
+    plt.close()  # 显式关闭figure以释放内存
 
 
 def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress_cmap=None, max_stress=None, particle_size=None, averaging_radius=None, use_discrete=True, n_levels=10):
@@ -741,12 +765,14 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress
         from matplotlib.colors import LogNorm
 
         # Calculate logarithmic scale range
-        vm_positive = np.maximum(all_von_mises, 1e-10)
+        vm_positive = all_von_mises.copy()
+        np.clip(vm_positive, 1e-10, None, out=vm_positive)  # In-place
         vm_vmin = np.min(vm_positive)
         vm_vmax = max_stress if max_stress is not None else np.max(vm_positive)
-        
+
         # Domain1 von Mises stress (log scale)
-        d1_vm_positive = np.maximum(d1_von_mises, 1e-10)
+        d1_vm_positive = d1_von_mises.copy()
+        np.clip(d1_vm_positive, 1e-10, None, out=d1_vm_positive)  # In-place
         scatter1 = ax1.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1],
                               c=d1_vm_positive, cmap=final_cmap, s=d1_particle_size, alpha=0.8,
                               norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none')
@@ -754,7 +780,8 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress
         cbar1_label = 'von Mises Stress (Log)'
 
         # Domain2 von Mises stress (log scale)
-        d2_vm_positive = np.maximum(d2_von_mises, 1e-10)
+        d2_vm_positive = d2_von_mises.copy()
+        np.clip(d2_vm_positive, 1e-10, None, out=d2_vm_positive)  # In-place
         scatter2 = ax2.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1],
                               c=d2_vm_positive, cmap=final_cmap, s=d2_particle_size, alpha=0.8,
                               norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none')
@@ -794,8 +821,9 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Dual domain stress image saved to: {save_path}")
-    
+
     plt.show()
+    plt.close()  # 显式关闭figure以释放内存
 
 def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=False, stress_cmap=None, max_stress=None, particle_size=None, averaging_radius=None, use_discrete=True, n_levels=10):
     """2D Schwarz双域合并应力可视化（仅显示von Mises应力）"""
@@ -854,13 +882,16 @@ def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=Fals
         from matplotlib.colors import LogNorm
 
         # Calculate logarithmic scale range
-        vm_positive = np.maximum(all_von_mises, 1e-10)
+        vm_positive = all_von_mises.copy()
+        np.clip(vm_positive, 1e-10, None, out=vm_positive)  # In-place
         vm_vmin = np.min(vm_positive)
         vm_vmax = max_stress if max_stress is not None else np.max(vm_positive)
 
         # Combined von Mises stress visualization (log scale)
-        d1_vm_positive = np.maximum(d1_von_mises, 1e-10)
-        d2_vm_positive = np.maximum(d2_von_mises, 1e-10)
+        d1_vm_positive = d1_von_mises.copy()
+        np.clip(d1_vm_positive, 1e-10, None, out=d1_vm_positive)  # In-place
+        d2_vm_positive = d2_von_mises.copy()
+        np.clip(d2_vm_positive, 1e-10, None, out=d2_vm_positive)  # In-place
 
         scatter_d1 = ax.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1],
                                c=d1_vm_positive, cmap=final_cmap, s=d1_particle_size, alpha=0.8,
@@ -900,8 +931,9 @@ def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=Fals
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Dual domain combined stress image saved to: {save_path}")
-    
+
     plt.show()
+    plt.close()  # 显式关闭figure以释放内存
 
 
 def print_schwarz_stress_statistics(data_dict):
@@ -976,7 +1008,7 @@ def main():
                        help='Colormap for stress visualization (default: custom blue-cyan-green-yellow-red colormap, options: viridis, plasma, inferno, magma, coolwarm, RdYlBu, seismic)')
     parser.add_argument('--max-stress', type=float, default=None,
                        help='Manually specify maximum value for stress color range (applies to von Mises stress only)')
-    parser.add_argument('--particle-size', type=float, default=None,
+    parser.add_argument('--particle-size', type=float, default=5,
                        help='Manually specify particle size for visualization (s parameter for scatter plot). If not specified, uses adaptive calculation based on particle spacing.')
     parser.add_argument('--all-frames', action='store_true',
                        help='Visualize all saved stress frames from the simulation (creates multiple plots)')
@@ -1041,6 +1073,10 @@ def main():
 
                 # 可视化当前帧
                 visualize_single_frame(temp_args, averaging_radius)
+
+                # 显式清理内存，防止跨帧累积
+                plt.close('all')  # 关闭所有matplotlib图形
+                gc.collect()      # 强制垃圾回收
 
             print(f"\n完成！共可视化了 {len(available_frames)} 个帧")
             return

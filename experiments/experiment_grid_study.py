@@ -822,9 +822,9 @@ def main():
     parser = argparse.ArgumentParser(description='网格分辨率批处理实验')
     parser.add_argument('--use-schwarz', action='store_true',
                        help='使用Schwarz双域求解器（默认使用单域）')
-    parser.add_argument('--grid-range', nargs=2, type=int, default=[80, 240],
+    parser.add_argument('--grid-range', nargs=2, type=int, default=[90, 240],
                        help='网格大小范围 [开始, 结束] (默认: 64 160)')
-    parser.add_argument('--grid-step', type=int, default=40,
+    parser.add_argument('--grid-step', type=int, default=30,
                        help='网格大小步长 (默认: 16)')
     parser.add_argument('--grid-sizes', nargs='+', type=int, default=None,
                        help='直接指定网格大小列表，覆盖range和step参数')
@@ -832,9 +832,9 @@ def main():
                        help='输出目录（默认自动生成）')
     parser.add_argument('--timeout', type=int, default=None,
                        help='单个模拟超时时间（秒，默认1小时）')
-    parser.add_argument('--y-filter-min', type=float, default=0.3,
+    parser.add_argument('--y-filter-min', type=float, default=0,
                        help='Y坐标过滤最小值（默认: 0.4）')
-    parser.add_argument('--y-filter-max', type=float, default=0.7,
+    parser.add_argument('--y-filter-max', type=float, default=0.1,
                        help='Y坐标过滤最大值（默认: 0.6）')
 
     # 分析模式选项
@@ -847,7 +847,7 @@ def main():
 
     # 确定配置文件路径
     if args.use_schwarz:
-        base_config_path = "config/schwarz_2d_test3_1.json"
+        base_config_path = "config/schwarz_2d_test3.json"
         if not os.path.exists(base_config_path):
             # 备选配置文件
             base_config_path = "config/schwarz_2d_test3.json"

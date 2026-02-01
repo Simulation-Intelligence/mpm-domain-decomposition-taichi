@@ -60,7 +60,7 @@ class BoundaryExchanger:
         self.small_time_domain_boundary_v_next.copy_from(self.small_time_domain.grid.boundary_v)
     
     @ti.kernel
-    def linp(self, dest: ti.template(), a: ti.template(), b: ti.template(), ratio: ti.f32):
+    def linp(self, dest: ti.template(), a: ti.template(), b: ti.template(), ratio: ti.f64):
         """线性插值"""
         for I in ti.grouped(dest):
             dest[I] = a[I] * (1 - ratio) + b[I] * ratio

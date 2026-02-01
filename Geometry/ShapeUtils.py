@@ -80,7 +80,7 @@ class ParticleAdvector:
     """粒子运动积分器"""
     
     @ti.kernel 
-    def advect(self, x_field: ti.template(), v_field: ti.template(), dt: ti.f32):
+    def advect(self, x_field: ti.template(), v_field: ti.template(), dt: ti.f64):
         """粒子位置积分"""
         for p in x_field:
             x_field[p] += dt * v_field[p]

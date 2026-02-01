@@ -1,11 +1,12 @@
 {
-    "max_schwarz_iter": 20,
+    "max_schwarz_iter": 50,
     "schwarz_eta": 1e-8,
     "max_frames": 20000,
     "velocity_convergence_threshold": 1e-6,
     "velocity_convergence_check_interval": 10,
     "use_record": false,
     "visualize_grid": true,
+    "visualize_boundary_grid": true,
     "no_gui": false,
     "steps": 1,
     "stress_save_interval": 1000,
@@ -34,15 +35,21 @@
             0.0
         ],
         "boundary_particle_range": [
-            [0, 0.45],
-            [0.0, 1]
+            [
+                0,
+                0.45
+            ],
+            [
+                0.0,
+                1
+            ]
         ],
         "gravity": [
             0.0,
             -0.03875248015873022
         ],
-        "damping":0.2,
-        "particle_damping": 1,
+        "damping": 0.2,
+        "particle_damping": 0.999,
         "material_params": [
             {
                 "id": 0,
@@ -68,24 +75,23 @@
                             0.9
                         ],
                         [
-                            0.79,
-                            0.81
+                            0.89,
+                            0.91
                         ]
                     ]
                 },
                 "operation": "add",
                 "material_id": 0
             }
-
         ],
         "implicit_solver": "Newton",
         "eta": 1e-4,
-    "max_frames": 200000,
-    "use_record": false,
-    "no_gui": false,
-    "boundary_size": 0.0001
-},
-    "Domain2":   {
+        "max_frames": 200000,
+        "use_record": false,
+        "no_gui": false,
+        "boundary_size": 0.0001
+    },
+    "Domain2": {
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
@@ -111,18 +117,33 @@
         ],
         "DBC_range": [
             [
-                [0, 0.1],
-                [0, 1]
+                [
+                    0,
+                    0.1
+                ],
+                [
+                    0,
+                    1
+                ]
             ]
         ],
         "DBC_boundary_v": [
-            [0.0, 0.0]
+            [
+                0.0,
+                0.0
+            ]
         ],
         "boundary_particle_range": [
-            [0.45, 1.0],
-            [0.0, 1.0]
+            [
+                0.45,
+                1.0
+            ],
+            [
+                0.0,
+                1.0
+            ]
         ],
-        "damping":0.2,
+        "damping": 0.2,
         "particle_damping": 0.999,
         "material_params": [
             {
@@ -140,7 +161,6 @@
         "bound": 2,
         "initial_velocity_y": 0,
         "shapes": [
-
             {
                 "type": "rectangle",
                 "params": {
@@ -150,22 +170,20 @@
                             0.50
                         ],
                         [
-                            0.19,
-                            0.21
+                            0.29,
+                            0.31
                         ]
                     ]
                 },
                 "operation": "add",
                 "material_id": 0
             }
-
-
         ],
         "implicit_solver": "Newton",
         "eta": 1e-4,
-    "max_frames": 200000,
-    "use_record": false,
-    "no_gui": false,
-    "boundary_size": 0.0001
-}
+        "max_frames": 200000,
+        "use_record": false,
+        "no_gui": false,
+        "boundary_size": 0.0001
+    }
 }

@@ -30,7 +30,7 @@
     "elasticity_model": "linear",
     "dt": 0.001,
     "max_iter": 1,
-    "solve_max_iter": 1000,
+    "solve_max_iter": 2,
     "solve_init_iter": 100,
     "gravity": [
         0.0,
@@ -40,7 +40,7 @@
         {
             "id": 0,
             "name": "default",
-            "E": 20000.0,
+            "E": 200000.0,
             "nu": 0.3,
             "rho": 1000
         }
@@ -179,7 +179,7 @@
     "elasticity_model": "linear",
     "dt": 0.001,
     "max_iter": 1,
-    "solve_max_iter": 1000,
+    "solve_max_iter": 2,
     "solve_init_iter": 100,
     "gravity": [
         0.0,
@@ -189,7 +189,7 @@
         {
             "id": 0,
             "name": "default",
-            "E": 20000.0,
+            "E": 200000.0,
             "nu": 0.3,
             "rho": 1000
         }

@@ -1,7 +1,7 @@
 {
     "max_schwarz_iter": 50,
     "schwarz_eta": 1e-7,
-    "max_frames": 40000,
+    "max_frames": 500,
     "velocity_convergence_threshold": 1e-6,
     "velocity_convergence_check_interval": 10,
     "use_record": false,
@@ -9,7 +9,7 @@
     "visualize_boundary_grid": true,
     "no_gui": false,
     "steps": 1,
-    "stress_save_interval": 1000,
+    "stress_save_interval": 500,
     "arch": "cpu",
     "float_type": "f64",
     "use_mass_boundary": true,
@@ -29,7 +29,7 @@
         "particles_per_grid": 4,
         "sampling_method": "regular",
         "use_mapping": false,
-        "elasticity_model": "neo_hookean",
+        "elasticity_model": "linear",
         "constrain_x_velocity": false,
         "DBC_range": [
             [
@@ -60,7 +60,7 @@
         },
         "dt": 0.001,
         "max_iter": 1,
-        "solve_max_iter": 50,
+        "solve_max_iter": 1000,
         "gravity": [
             0.0,
             -0.0
@@ -146,8 +146,8 @@
     ],
         "implicit_solver": "Newton",
         "eta": 1e-4,
-        "max_frames": 50000,
-        "last_frames_count": 5000,
+        "max_frames": 500,
+        "last_frames_count": 500,
         "use_record": false,
         "no_gui": false,
         "stress_save_interval": 500
@@ -156,8 +156,8 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 90,
-        "grid_ny": 60,
+        "grid_nx": 165,
+        "grid_ny": 110,
         "domain_width": 0.6,
         "domain_height": 0.4,
             "offset": [
@@ -167,7 +167,7 @@
         "particles_per_grid": 4,
         "sampling_method": "regular",
         "use_mapping": false,
-        "elasticity_model": "neo_hookean",
+        "elasticity_model": "linear",
         "constrain_x_velocity": false,
         "auto_boundary": false,
         "boundary_particle_range": [
@@ -180,9 +180,9 @@
             [0.0, 1.0]
         ]
     ],
-        "dt": 0.001,
+        "dt": 0.0002,
         "max_iter": 1,
-        "solve_max_iter": 50,
+        "solve_max_iter": 1000,
         "gravity": [
             0.0,
             -0.0
@@ -213,7 +213,7 @@
                 ]
             }
         ],
-        "implicit": false,
+        "implicit": true,
         "static_solve": false,
         "use_auto_diff": false,
         "compare_diff": false,

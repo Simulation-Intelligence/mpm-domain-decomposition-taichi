@@ -375,7 +375,7 @@ def compare_results(analytical_results, simulation_results, output_dir):
 
 def visualize_analytical_results(analytical_results, output_dir, save_image=True):
     """可视化解析解结果"""
-    from tools.visualize_stress import visualize_stress_2d, compute_von_mises_stress, compute_hydrostatic_pressure
+    from tools.visualize_stress import visualize_stress_2d, compute_von_mises_stress
 
     # 从解析解结果中构造粒子位置和应力数据
     x_coords = analytical_results['x_coords']
@@ -398,7 +398,6 @@ def visualize_analytical_results(analytical_results, output_dir, save_image=True
 
     # 计算von Mises应力和静水压力
     von_mises = compute_von_mises_stress(stress_tensor)
-    pressure = compute_hydrostatic_pressure(stress_tensor)
 
     # 保存图像路径
     save_path = None
@@ -406,7 +405,7 @@ def visualize_analytical_results(analytical_results, output_dir, save_image=True
         save_path = os.path.join(output_dir, 'analytical_stress_visualization.png')
 
     # 调用可视化函数
-    visualize_stress_2d(positions, von_mises, pressure,
+    visualize_stress_2d(positions, von_mises,
                        frame_number="Analytical", save_path=save_path)
 
     print(f"\n解析解可视化完成!")

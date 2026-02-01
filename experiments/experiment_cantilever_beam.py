@@ -678,7 +678,7 @@ def main():
                        help='使用双域Schwarz模式（默认为单域模式）')
     parser.add_argument('--gamma', type=float, default=None,
                        help='单次实验的gamma值（默认使用配置文件中的重力）')
-    parser.add_argument('--gamma-range', nargs=2, type=float, default=[0.5, 1e3],
+    parser.add_argument('--gamma-range', nargs=2, type=float, default=[5e-2, 1e3],
                        help='批量实验的gamma范围 [最小值, 最大值]')
     parser.add_argument('--n-points', type=int, default=6,
                        help='批量实验的测试点数')

@@ -435,6 +435,9 @@ class Particles:
 
     def set_boundary_alpha_shape(self):
         """基于Alpha Shape的边界检测"""
+
+        print("使用Alpha Shape进行自动边界检测")
+        print(f"粒子总数: {self.x.shape[0]}")
         # 获取所有粒子位置
         positions = self.x.to_numpy()
         
@@ -564,7 +567,7 @@ class Particles:
         )
 
 
-    def advect(self, dt: ti.f32):
+    def advect(self, dt: ti.f64):
         """粒子运动积分"""
         self.advector.advect(self.x, self.v, dt)
 

@@ -1,0 +1,23 @@
+{
+    "base_config": "config/config_2d_test1.json",
+    "grid_sizes": [
+        40,
+        80,
+        120,
+        160
+    ],
+    "successful_runs": [
+        40,
+        80,
+        120,
+        160
+    ],
+    "failed_runs": [],
+    "result_dirs": {
+        "40": "experiments/test1_batch/grid_40",
+        "80": "experiments/test1_batch/grid_80",
+        "120": "experiments/test1_batch/grid_120",
+        "160": "experiments/test1_batch/grid_160"
+    },
+    "completed_time": "2026-01-31T00:22:50.306421"
+}
