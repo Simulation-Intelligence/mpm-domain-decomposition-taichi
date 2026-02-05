@@ -1,7 +1,7 @@
 {
     "max_schwarz_iter": 50,
-    "schwarz_eta": 1e-8,
-    "max_frames": 20000,
+    "schwarz_eta": 1e-7,
+    "max_frames": 50000,
     "velocity_convergence_threshold": 1e-6,
     "velocity_convergence_check_interval": 10,
     "use_record": false,
@@ -22,9 +22,9 @@
         "grid_ny": 200,
         "domain_width": 1.0,
         "domain_height": 1.0,
-        "particles_per_grid": 9,
+        "particles_per_grid": 4,
         "sampling_method": "regular",
-        "elasticity_model": "neohookean",
+        "elasticity_model": "neo_hookean",
         "use_mapping": true,
         "dt": 0.0002,
         "max_iter": 1,
@@ -37,7 +37,7 @@
         "boundary_particle_range": [
             [
                 0,
-                0.45
+                0.42
             ],
             [
                 0.0,
@@ -48,7 +48,7 @@
             0.0,
             -0.03875248015873022
         ],
-        "damping": 0.2,
+        "damping": 0.5,
         "particle_damping": 0.999,
         "material_params": [
             {
@@ -99,9 +99,9 @@
         "grid_ny": 80,
         "domain_width": 0.6,
         "domain_height": 0.4,
-        "particles_per_grid": 9,
+        "particles_per_grid": 4,
         "sampling_method": "regular",
-        "elasticity_model": "neohookean",
+        "elasticity_model": "neo_hookean",
         "use_mapping": true,
         "dt": 0.0002,
         "max_iter": 1,
@@ -135,7 +135,7 @@
         ],
         "boundary_particle_range": [
             [
-                0.45,
+                0.42,
                 1.0
             ],
             [
@@ -143,7 +143,7 @@
                 1.0
             ]
         ],
-        "damping": 0.2,
+        "damping": 0.5,
         "particle_damping": 0.999,
         "material_params": [
             {

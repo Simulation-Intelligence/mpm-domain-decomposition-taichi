@@ -901,11 +901,19 @@ class SingleDomainPerformanceStats:
 
         # 添加线性拟合
         if len(newton_counts) > 1:
-            z = np.polyfit(newton_counts, solve_times, 1)
-            p = np.poly1d(z)
-            x_line = np.linspace(min(newton_counts), max(newton_counts), 100)
-            ax.plot(x_line, p(x_line), 'r--', linewidth=2,
-                   label=f'Linear fit: {z[0]:.2f}ms/iter')
+            # 检查是否有足够的数据变化来进行拟合
+            if np.std(newton_counts) > 1e-10:  # 有变化
+                try:
+                    z = np.polyfit(newton_counts, solve_times, 1)
+                    p = np.poly1d(z)
+                    x_line = np.linspace(min(newton_counts), max(newton_counts), 100)
+                    ax.plot(x_line, p(x_line), 'r--', linewidth=2,
+                           label=f'Linear fit: {z[0]:.2f}ms/iter')
+                except np.linalg.LinAlgError:
+                    # 拟合失败，跳过
+                    print("Warning: Could not fit Newton iterations vs solve time (insufficient variation)")
+            else:
+                print("Warning: Newton iterations have no variation, skipping linear fit")
 
         ax.set_xlabel('Newton Iterations', fontsize=12)
         ax.set_ylabel('Solve Time (ms)', fontsize=12)
@@ -992,30 +1000,42 @@ class SingleDomainPerformanceStats:
         print(f"Saving plots to {output_dir}...")
 
         # 1. 牛顿迭代次数随帧变化
-        self.plot_newton_iters_over_frames(
-            save_path=os.path.join(output_dir, 'newton_iters_over_frames.png'),
-            show=show
-        )
+        try:
+            self.plot_newton_iters_over_frames(
+                save_path=os.path.join(output_dir, 'newton_iters_over_frames.png'),
+                show=show
+            )
+        except Exception as e:
+            print(f"Warning: Failed to plot newton_iters_over_frames: {e}")
 
         # 2. 牛顿迭代分布
-        self.plot_newton_iter_distribution(
-            save_path=os.path.join(output_dir, 'newton_iter_distribution.png'),
-            show=show
-        )
+        try:
+            self.plot_newton_iter_distribution(
+                save_path=os.path.join(output_dir, 'newton_iter_distribution.png'),
+                show=show
+            )
+        except Exception as e:
+            print(f"Warning: Failed to plot newton_iter_distribution: {e}")
 
         # 3. 时间开销
-        self.plot_time_per_frame(
-            save_path=os.path.join(output_dir, 'time_per_frame.png'),
-            show=show
-        )
+        try:
+            self.plot_time_per_frame(
+                save_path=os.path.join(output_dir, 'time_per_frame.png'),
+                show=show
+            )
+        except Exception as e:
+            print(f"Warning: Failed to plot time_per_frame: {e}")
 
         # 4. 牛顿迭代 vs 时间
-        self.plot_newton_vs_time(
-            save_path=os.path.join(output_dir, 'newton_vs_time.png'),
-            show=show
-        )
+        try:
+            self.plot_newton_vs_time(
+                save_path=os.path.join(output_dir, 'newton_vs_time.png'),
+                show=show
+            )
+        except Exception as e:
+            print(f"Warning: Failed to plot newton_vs_time: {e}")
 
         # 确保所有图形都被关闭
         plt.close('all')
 
-        print(f"All plots saved to {output_dir}")
+        print(f"Plots saved to {output_dir} (some may have been skipped due to errors)")

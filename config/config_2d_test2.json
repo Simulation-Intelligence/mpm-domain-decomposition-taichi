@@ -1,93 +1,117 @@
 {
-        "arch": "cpu",
-        "float_type": "f64",
-        "dim": 2,
-        "grid_nx": 200,
-        "grid_ny": 80,
-        "domain_width": 1.0,
-        "domain_height": 0.4,
-        "particles_per_grid": 4,
-        "sampling_method": "regular",
-        "use_mapping": false,
-        "elasticity_model": "linear",
-        "constrain_x_velocity": false,
-        "DBC_range": [
+    "arch": "cpu",
+    "float_type": "f64",
+    "dim": 2,
+    "grid_nx": 200,
+    "grid_ny": 80,
+    "domain_width": 1.0,
+    "domain_height": 0.4,
+    "particles_per_grid": 4,
+    "sampling_method": "regular",
+    "use_mapping": false,
+    "elasticity_model": "linear",
+    "constrain_x_velocity": false,
+    "DBC_range": [
+        [
             [
-                [0.099, 0.101],
-                [0.2, 0.8]
+                0.099,
+                0.101
+            ],
+            [
+                0.2,
+                0.8
+            ]
+        ]
+    ],
+    "auto_boundary": true,
+    "boundary_particle_range": [
+        [
+            0.0,
+            1.0
+        ],
+        [
+            0.0,
+            1.0
+        ]
+    ],
+    "move_boundary": {
+        "start_region": [
+            [
+                0.895,
+                0.900
+            ],
+            [
+                0.0,
+                0.4
             ]
         ],
-        "auto_boundary": true,
-        "boundary_particle_range": [
-            [0.0, 1.0],
-            [0.0, 1.0]
+        "displacement": [
+            0.05,
+            0.0
         ],
-        "move_boundary": {
-            "start_region": [[0.895, 0.900], [0.0, 0.4]],
-            "displacement": [0.05, 0.0],
-            "speed": 0.01
+        "speed": 0.01
+    },
+    "dt": 0.001,
+    "max_iter": 1,
+    "solve_max_iter": 1000,
+    "gravity": [
+        0.0,
+        -0.0
+    ],
+    "material_params": [
+        {
+            "id": 0,
+            "name": "default",
+            "E": 1e5,
+            "nu": 0.3,
+            "rho": 1e3
         },
-        "dt": 0.001,
-        "max_iter": 1,
-        "solve_max_iter": 1000,
-        "gravity": [
-            0.0,
-            -0.0
-        ],
-        "material_params": [
-            {
-                "id": 0,
-                "name": "default",
-                "E": 1e5,
-                "nu": 0.3,
-                "rho": 1e3
-            },
-            {
-                "id": 1,
-                "name": "soft_material",
-                "E": 1e2,
-                "nu": 0.4,
-                "rho": 1e3,
-                "initial_F": [
+        {
+            "id": 1,
+            "name": "soft_material",
+            "E": 1e2,
+            "nu": 0.4,
+            "rho": 1e3,
+            "initial_F": [
+                [
+                    1.0,
+                    0.0
+                ],
+                [
+                    0.0,
+                    1.0
+                ]
+            ]
+        }
+    ],
+    "implicit": true,
+    "static_solve": false,
+    "use_auto_diff": false,
+    "compare_diff": false,
+    "bound": 3,
+    "boundary_size": 0.0001,
+    "damping": 0.5,
+    "particle_damping": 1,
+    "initial_velocity_y": -0.0,
+    "shapes": [
+        {
+            "type": "rectangle",
+            "params": {
+                "range": [
                     [
-                        1.0,
-                        0.0
+                        0.1,
+                        0.9
                     ],
                     [
-                        0.0,
-                        1.0
+                        0.1,
+                        0.3
                     ]
                 ]
-            }
-        ],
-        "implicit": true,
-        "static_solve": false,
-        "use_auto_diff": false,
-        "compare_diff": false,
-        "bound": 3,
-        "boundary_size": 0.0001,
-        "damping":0.5,
-        "particle_damping": 1,
-        "initial_velocity_y": -0.0,
-        "shapes": [
-            {
-                "type": "rectangle",
-                "params": {
-                    "range": [
-                        [
-                            0.1,
-                            0.9
-                        ],
-                        [
-                            0.1,
-                            0.3
-                        ]
-                    ]
-                },
-                "operation": "add",
-                "material_id": 0
             },
-            {
+            "operation": "add",
+            "material_id": 0
+        },
+        {
             "type": "ellipse",
             "params": {
                 "center": [
@@ -100,8 +124,8 @@
                 ]
             },
             "operation": "subtract"
-        },   
-            {
+        },
+        {
             "type": "ellipse",
             "params": {
                 "center": [
@@ -115,20 +139,29 @@
             },
             "operation": "subtract"
         }
-
-        ],"stress_output_regions": [
+    ],
+    "stress_output_regions": [
         {
             "type": "rectangle",
             "params": {
-                "range": [[0.1, 0.9], [0.1, 0.9]]
+                "range": [
+                    [
+                        0.1,
+                        0.9
+                    ],
+                    [
+                        0.1,
+                        0.9
+                    ]
+                ]
             }
         }
     ],
-        "implicit_solver": "Newton",
-        "eta": 1e-4,
-        "max_frames": 500,
-        "last_frames_count": 5000,
-        "use_record": false,
-        "no_gui": false,
-        "stress_save_interval": 500
-    }
+    "implicit_solver": "Newton",
+    "eta": 1e-4,
+    "max_frames": 500,
+    "last_frames_count": 5000,
+    "use_record": false,
+    "no_gui": false,
+    "stress_save_interval": 500
+}

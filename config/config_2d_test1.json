@@ -7,7 +7,7 @@
     "domain_width": 1.0,
     "domain_height": 1.0,
     "particles_per_grid": 16,
-    "sampling_method": "gauss",
+    "sampling_method": "regular",
     "use_mapping": false,
     "elasticity_model": "linear",
     "constrain_x_velocity": false,
@@ -45,17 +45,17 @@
             "rho": 1e3,
             "initial_F": [
                 [
-                    0.999,
+                    0.99,
                     0.0
                 ],
                 [
                     0.0,
-                    0.999
+                    0.99
                 ]
             ]
         }
     ],
-    "implicit": false,
+    "implicit": true,
     "static_solve": false,
     "use_auto_diff": false,
     "compare_diff": false,
@@ -89,8 +89,8 @@
                     0.5
                 ],
                 "semi_axes": [
-                    0.06,
-                    0.06
+                    0.05,
+                    0.05
                 ]
             },
             "operation": "change",
@@ -116,7 +116,9 @@
     ],
     "implicit_solver": "Newton",
     "eta": 1e-4,
-    "max_frames": 1000,
+    "max_frames": 10000,
+    "velocity_convergence_threshold": 1e-6,
+    "velocity_convergence_check_interval": 10,
     "last_frames_count": 1,
     "use_record": false,
     "no_gui": false,

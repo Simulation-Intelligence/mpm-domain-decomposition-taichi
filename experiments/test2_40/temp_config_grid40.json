@@ -1,0 +1,381 @@
+{
+    "max_schwarz_iter": 50,
+    "schwarz_eta": 1e-07,
+    "max_frames": 5000,
+    "velocity_convergence_threshold": 1e-06,
+    "velocity_convergence_check_interval": 10,
+    "use_record": false,
+    "visualize_grid": true,
+    "visualize_boundary_grid": true,
+    "no_gui": false,
+    "steps": 1,
+    "stress_save_interval": 500,
+    "arch": "cpu",
+    "float_type": "f64",
+    "use_mass_boundary": true,
+    "do_small_advect": false,
+    "Domain1": {
+        "arch": "cpu",
+        "float_type": "f64",
+        "dim": 2,
+        "grid_nx": 100,
+        "grid_ny": 40,
+        "domain_width": 1.0,
+        "domain_height": 0.4,
+        "offset": [
+            0.0,
+            0.3
+        ],
+        "particles_per_grid": 16,
+        "sampling_method": "regular",
+        "use_mapping": false,
+        "elasticity_model": "linear",
+        "constrain_x_velocity": false,
+        "DBC_range": [
+            [
+                [
+                    0.04,
+                    0.06
+                ],
+                [
+                    0,
+                    1
+                ]
+            ]
+        ],
+        "auto_boundary": false,
+        "boundary_particle_range": [
+            [
+                0.0,
+                1.0
+            ],
+            [
+                0.0,
+                1.0
+            ]
+        ],
+        "move_boundary": {
+            "start_region": [
+                [
+                    0.945,
+                    0.955
+                ],
+                [
+                    0.0,
+                    0.4
+                ]
+            ],
+            "displacement": [
+                0.018,
+                0.0
+            ],
+            "speed": 0.01
+        },
+        "dt": 0.0005,
+        "max_iter": 1,
+        "solve_max_iter": 1000,
+        "gravity": [
+            0.0,
+            -0.0
+        ],
+        "material_params": [
+            {
+                "id": 0,
+                "name": "default",
+                "E": 100000.0,
+                "nu": 0.3,
+                "rho": 1000.0
+            }
+        ],
+        "implicit": true,
+        "static_solve": false,
+        "use_auto_diff": false,
+        "compare_diff": false,
+        "bound": 1,
+        "boundary_size": 0.0001,
+        "damping": 0.5,
+        "particle_damping": 0.99,
+        "initial_velocity_y": -0.0,
+        "shapes": [
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            0.05,
+                            0.95
+                        ],
+                        [
+                            0.02,
+                            0.38
+                        ]
+                    ]
+                },
+                "operation": "add",
+                "material_id": 0
+            },
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            0.41,
+                            0.59
+                        ],
+                        [
+                            0.0,
+                            0.4
+                        ]
+                    ]
+                },
+                "operation": "subtract",
+                "material_id": 0
+            }
+        ],
+        "stress_output_regions": [
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            0.0,
+                            1.0
+                        ],
+                        [
+                            0.0,
+                            1.0
+                        ]
+                    ]
+                }
+            }
+        ],
+        "implicit_solver": "Newton",
+        "eta": 0.0001,
+        "max_frames": 5000,
+        "last_frames_count": 5000,
+        "use_record": false,
+        "no_gui": false,
+        "stress_save_interval": 500
+    },
+    "Domain2": {
+        "arch": "cpu",
+        "float_type": "f64",
+        "dim": 2,
+        "grid_nx": 40,
+        "grid_ny": 40,
+        "domain_width": 0.4,
+        "domain_height": 0.4,
+        "offset": [
+            0.3,
+            0.3
+        ],
+        "particles_per_grid": 16,
+        "sampling_method": "regular",
+        "use_mapping": false,
+        "elasticity_model": "linear",
+        "constrain_x_velocity": false,
+        "auto_boundary": false,
+        "boundary_particle_range": [
+            [
+                0.0,
+                1.0
+            ],
+            [
+                0.0,
+                1.0
+            ]
+        ],
+        "dt": 0.0005,
+        "max_iter": 1,
+        "solve_max_iter": 1000,
+        "gravity": [
+            0.0,
+            -0.0
+        ],
+        "material_params": [
+            {
+                "id": 0,
+                "name": "default",
+                "E": 100000.0,
+                "nu": 0.3,
+                "rho": 1000.0
+            }
+        ],
+        "implicit": true,
+        "static_solve": false,
+        "use_auto_diff": false,
+        "compare_diff": false,
+        "bound": 1,
+        "boundary_size": 0.0001,
+        "damping": 0.5,
+        "particle_damping": 0.99,
+        "initial_velocity_y": -0.0,
+        "shapes": [
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            0.065,
+                            0.335
+                        ],
+                        [
+                            0.065,
+                            0.335
+                        ]
+                    ]
+                },
+                "operation": "add",
+                "material_id": 0
+            },
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            0.11,
+                            0.29
+                        ],
+                        [
+                            0.29,
+                            0.4
+                        ]
+                    ]
+                },
+                "operation": "subtract",
+                "material_id": 0
+            },
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            0.11,
+                            0.29
+                        ],
+                        [
+                            0.0,
+                            0.11
+                        ]
+                    ]
+                },
+                "operation": "subtract",
+                "material_id": 0
+            },
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            0.16,
+                            0.24
+                        ],
+                        [
+                            0.245,
+                            0.4
+                        ]
+                    ]
+                },
+                "operation": "subtract",
+                "material_id": 0
+            },
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            0.16,
+                            0.24
+                        ],
+                        [
+                            0.0,
+                            0.155
+                        ]
+                    ]
+                },
+                "operation": "subtract",
+                "material_id": 0
+            },
+            {
+                "type": "ellipse",
+                "params": {
+                    "center": [
+                        0.16,
+                        0.29
+                    ],
+                    "semi_axes": [
+                        0.045,
+                        0.045
+                    ]
+                },
+                "operation": "subtract"
+            },
+            {
+                "type": "ellipse",
+                "params": {
+                    "center": [
+                        0.24,
+                        0.29
+                    ],
+                    "semi_axes": [
+                        0.045,
+                        0.045
+                    ]
+                },
+                "operation": "subtract"
+            },
+            {
+                "type": "ellipse",
+                "params": {
+                    "center": [
+                        0.155,
+                        0.11
+                    ],
+                    "semi_axes": [
+                        0.045,
+                        0.045
+                    ]
+                },
+                "operation": "subtract"
+            },
+            {
+                "type": "ellipse",
+                "params": {
+                    "center": [
+                        0.245,
+                        0.11
+                    ],
+                    "semi_axes": [
+                        0.045,
+                        0.045
+                    ]
+                },
+                "operation": "subtract"
+            }
+        ],
+        "stress_output_regions": [
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            0.0,
+                            1.0
+                        ],
+                        [
+                            0.0,
+                            1.0
+                        ]
+                    ]
+                }
+            }
+        ],
+        "implicit_solver": "Newton",
+        "eta": 0.0001,
+        "max_frames": 5000,
+        "last_frames_count": 5000,
+        "use_record": false,
+        "no_gui": false,
+        "stress_save_interval": 500
+    }
+}

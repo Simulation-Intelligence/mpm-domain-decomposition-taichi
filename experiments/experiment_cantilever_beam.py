@@ -290,7 +290,7 @@ def find_rightmost_bottom_particle(positions, beam_params, domain_id=None):
         return rightmost_bottom
 
 def load_simulation_results(results_dir=None, use_schwarz=False, domain_id=None):
-    """加载模拟结果"""
+    """加载模拟结果（适配新的stress_data/frame_*目录结构）"""
 
     if results_dir is None:
         # 查找最新的结果目录
@@ -314,41 +314,80 @@ def load_simulation_results(results_dir=None, use_schwarz=False, domain_id=None)
         print(f"错误: 结果目录不存在: {results_dir}")
         return None
 
-    if use_schwarz and domain_id is not None:
-        # 双域模式：加载指定域的结果
-        position_files = glob.glob(os.path.join(results_dir, f"domain{domain_id}_positions_frame_*.npy"))
-        file_prefix = f"domain{domain_id}_positions_frame_"
-        print(f"  加载Domain{domain_id}的结果")
+    # 新格式：数据保存在 stress_data/frame_* 目录下
+    stress_data_dir = os.path.join(results_dir, "stress_data")
+
+    if os.path.exists(stress_data_dir):
+        # 新格式：查找 stress_data/frame_* 目录
+        frame_dirs = glob.glob(os.path.join(stress_data_dir, "frame_*"))
+
+        if not frame_dirs:
+            print(f"  错误: 在 {stress_data_dir} 中未找到frame目录")
+            return None
+
+        # 使用最后一帧的数据
+        frame_numbers = [int(os.path.basename(d).replace("frame_", "")) for d in frame_dirs]
+        last_frame = max(frame_numbers)
+        latest_frame_dir = os.path.join(stress_data_dir, f"frame_{last_frame}")
+
+        print(f"  找到 {len(frame_numbers)} 个帧目录, 使用最新帧: {last_frame}")
+
+        # 根据模式加载对应的位置文件
+        if use_schwarz and domain_id is not None:
+            # 双域模式：加载指定域的结果
+            positions_file = os.path.join(latest_frame_dir, f"domain{domain_id}_positions.npy")
+            print(f"  加载Domain{domain_id}的结果")
+        else:
+            # 单域模式：加载普通位置文件
+            positions_file = os.path.join(latest_frame_dir, "positions.npy")
+
+        if not os.path.exists(positions_file):
+            print(f"  错误: 位置文件不存在: {positions_file}")
+            print(f"  frame目录内容: {os.listdir(latest_frame_dir)}")
+            return None
+
+        # 加载位置数据
+        positions = np.load(positions_file)
+        print(f"加载了第 {last_frame} 帧的 {len(positions)} 个粒子位置")
+
     else:
-        # 单域模式：加载普通位置文件
-        position_files = glob.glob(os.path.join(results_dir, "positions_frame_*.npy"))
-        file_prefix = "positions_frame_"
+        # 旧格式：向后兼容，直接从实验结果目录加载
+        print("  使用旧格式加载数据（从实验结果目录直接加载）")
 
-    if not position_files:
-        print(f"  错误: 在目录 {results_dir} 中未找到位置数据文件")
-        print(f"  目录内容: {os.listdir(results_dir) if os.path.exists(results_dir) else '目录不存在'}")
-        return None
+        if use_schwarz and domain_id is not None:
+            # 双域模式：加载指定域的结果
+            position_files = glob.glob(os.path.join(results_dir, f"domain{domain_id}_positions_frame_*.npy"))
+            file_prefix = f"domain{domain_id}_positions_frame_"
+            print(f"  加载Domain{domain_id}的结果")
+        else:
+            # 单域模式：加载普通位置文件
+            position_files = glob.glob(os.path.join(results_dir, "positions_frame_*.npy"))
+            file_prefix = "positions_frame_"
 
-    # 使用最后一帧的数据
-    frame_numbers = []
-    for file in position_files:
-        filename = os.path.basename(file)
-        frame_num_str = filename.replace(file_prefix, "").replace(".npy", "")
-        frame_num = int(frame_num_str)
-        frame_numbers.append(frame_num)
+        if not position_files:
+            print(f"  错误: 在目录 {results_dir} 中未找到位置数据文件")
+            print(f"  目录内容: {os.listdir(results_dir) if os.path.exists(results_dir) else '目录不存在'}")
+            return None
 
-    last_frame = max(frame_numbers)
-    print(f"  找到帧数: {sorted(frame_numbers)}, 使用最新帧: {last_frame}")
+        # 使用最后一帧的数据
+        frame_numbers = []
+        for file in position_files:
+            filename = os.path.basename(file)
+            frame_num_str = filename.replace(file_prefix, "").replace(".npy", "")
+            frame_num = int(frame_num_str)
+            frame_numbers.append(frame_num)
 
-    if use_schwarz and domain_id is not None:
-        positions_file = os.path.join(results_dir, f"domain{domain_id}_positions_frame_{last_frame}.npy")
-    else:
-        positions_file = os.path.join(results_dir, f"positions_frame_{last_frame}.npy")
+        last_frame = max(frame_numbers)
+        print(f"  找到帧数: {sorted(frame_numbers)}, 使用最新帧: {last_frame}")
 
-    # 加载位置数据
-    positions = np.load(positions_file)
+        if use_schwarz and domain_id is not None:
+            positions_file = os.path.join(results_dir, f"domain{domain_id}_positions_frame_{last_frame}.npy")
+        else:
+            positions_file = os.path.join(results_dir, f"positions_frame_{last_frame}.npy")
 
-    print(f"加载了第 {last_frame} 帧的 {len(positions)} 个粒子位置")
+        # 加载位置数据
+        positions = np.load(positions_file)
+        print(f"加载了第 {last_frame} 帧的 {len(positions)} 个粒子位置")
 
     return {
         'positions': positions,
@@ -678,7 +717,7 @@ def main():
                        help='使用双域Schwarz模式（默认为单域模式）')
     parser.add_argument('--gamma', type=float, default=None,
                        help='单次实验的gamma值（默认使用配置文件中的重力）')
-    parser.add_argument('--gamma-range', nargs=2, type=float, default=[5e-2, 1e3],
+    parser.add_argument('--gamma-range', nargs=2, type=float, default=[1e-1, 1e3],
                        help='批量实验的gamma范围 [最小值, 最大值]')
     parser.add_argument('--n-points', type=int, default=6,
                        help='批量实验的测试点数')

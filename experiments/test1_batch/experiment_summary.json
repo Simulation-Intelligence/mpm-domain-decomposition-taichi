@@ -1,23 +1,23 @@
 {
     "base_config": "config/config_2d_test1.json",
     "grid_sizes": [
-        40,
-        80,
-        120,
-        160
+        50,
+        100,
+        150,
+        200
     ],
     "successful_runs": [
-        40,
-        80,
-        120,
-        160
+        50,
+        100,
+        150,
+        200
     ],
     "failed_runs": [],
     "result_dirs": {
-        "40": "experiments/test1_batch/grid_40",
-        "80": "experiments/test1_batch/grid_80",
-        "120": "experiments/test1_batch/grid_120",
-        "160": "experiments/test1_batch/grid_160"
+        "50": "experiments/test1_batch/grid_50",
+        "100": "experiments/test1_batch/grid_100",
+        "150": "experiments/test1_batch/grid_150",
+        "200": "experiments/test1_batch/grid_200"
     },
-    "completed_time": "2026-01-31T00:22:50.306421"
+    "completed_time": "2026-02-02T00:19:15.416485"
 }

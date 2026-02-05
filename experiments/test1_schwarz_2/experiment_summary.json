@@ -1,0 +1,23 @@
+{
+    "base_config": "config/schwarz_2d_test1.json",
+    "grid_sizes": [
+        20,
+        40,
+        60,
+        80
+    ],
+    "successful_runs": [
+        20,
+        40,
+        60,
+        80
+    ],
+    "failed_runs": [],
+    "result_dirs": {
+        "20": "experiments/test_schwarz_2/grid_20",
+        "40": "experiments/test_schwarz_2/grid_40",
+        "60": "experiments/test_schwarz_2/grid_60",
+        "80": "experiments/test_schwarz_2/grid_80"
+    },
+    "completed_time": "2026-02-03T10:22:44.717615"
+}

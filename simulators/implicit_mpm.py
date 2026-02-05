@@ -835,22 +835,29 @@ if __name__ == "__main__":
         print("\n" + "="*70)
         print("生成性能统计...")
         print("="*70)
-        mpm.perf_stats.generate_summary_report()
+        try:
+            mpm.perf_stats.generate_summary_report()
+        except Exception as e:
+            print(f"Warning: Failed to generate summary report: {e}")
 
         # 保存统计图表到实验目录
-        if hasattr(mpm, '_experiment_dir') and mpm._experiment_dir:
-            stats_dir = os.path.join(mpm._experiment_dir, 'performance_stats')
-            os.makedirs(stats_dir, exist_ok=True)
-            mpm.perf_stats.save_all_plots(stats_dir, show=False)
-            mpm.perf_stats.save_to_file(os.path.join(stats_dir, 'stats_data.json'))
-        else:
-            # 如果没有实验目录，创建一个默认的
-            from datetime import datetime
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            stats_dir = f"experiment_results/single_domain_{timestamp}/performance_stats"
-            os.makedirs(stats_dir, exist_ok=True)
-            mpm.perf_stats.save_all_plots(stats_dir, show=False)
-            mpm.perf_stats.save_to_file(os.path.join(stats_dir, 'stats_data.json'))
+        try:
+            if hasattr(mpm, '_experiment_dir') and mpm._experiment_dir:
+                stats_dir = os.path.join(mpm._experiment_dir, 'performance_stats')
+                os.makedirs(stats_dir, exist_ok=True)
+                mpm.perf_stats.save_all_plots(stats_dir, show=False)
+                mpm.perf_stats.save_to_file(os.path.join(stats_dir, 'stats_data.json'))
+            else:
+                # 如果没有实验目录，创建一个默认的
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                stats_dir = f"experiment_results/single_domain_{timestamp}/performance_stats"
+                os.makedirs(stats_dir, exist_ok=True)
+                mpm.perf_stats.save_all_plots(stats_dir, show=False)
+                mpm.perf_stats.save_to_file(os.path.join(stats_dir, 'stats_data.json'))
+        except Exception as e:
+            print(f"Warning: Failed to save performance plots: {e}")
+            print("Simulation data has been saved successfully despite plotting errors.")
 
         if mpm.recorder is None:
             exit()
