@@ -12,6 +12,7 @@ import os
 import subprocess
 import glob
 import shutil
+import gc
 from datetime import datetime
 import argparse
 import matplotlib.pyplot as plt
@@ -240,6 +241,9 @@ def run_batch_grid_study(base_config_path, grid_sizes, use_schwarz=False,
         # 清理临时配置文件
         if os.path.exists(temp_config_path):
             os.remove(temp_config_path)
+
+        # 清理内存
+        gc.collect()
 
     # 保存实验汇总
     results['completed_time'] = datetime.now().isoformat()
@@ -708,6 +712,10 @@ def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_
         plot_file = compare_stress_with_analytical(analytical_results, mpm_results, grid_size, output_dir)
         comparison_plots.append(plot_file)
 
+        # 清理不再需要的分析数据（保留用于汇总图的数据）
+        del analytical_results
+        gc.collect()
+
     # 创建汇总图（所有网格在一张图上）
     if all_mpm_results:
         print(f"\n创建汇总对比图（包含 {len(all_mpm_results)} 个网格大小）...")
@@ -721,6 +729,11 @@ def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_
     print("对比图文件:")
     for plot in comparison_plots:
         print(f"  - {plot}")
+
+    # 清理累积的大型数据
+    del all_mpm_results
+    del all_analytical_results
+    gc.collect()
 
     return comparison_plots
 
@@ -822,7 +835,7 @@ def main():
     parser = argparse.ArgumentParser(description='网格分辨率批处理实验')
     parser.add_argument('--use-schwarz', action='store_true',
                        help='使用Schwarz双域求解器（默认使用单域）')
-    parser.add_argument('--grid-range', nargs=2, type=int, default=[90, 240],
+    parser.add_argument('--grid-range', nargs=2, type=int, default=[60, 150],
                        help='网格大小范围 [开始, 结束] (默认: 64 160)')
     parser.add_argument('--grid-step', type=int, default=30,
                        help='网格大小步长 (默认: 16)')
@@ -895,7 +908,7 @@ def main():
     else:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         grid_range_str = f"grid{min(grid_sizes)}-{max(grid_sizes)}"
-        output_dir = f"experiment_results/grid_study_{solver_name}_{grid_range_str}_{timestamp}"
+        output_dir = f"experiment_results/grid_study_hertz_contact_{solver_name}_{grid_range_str}_{timestamp}"
 
     print(f"配置文件: {base_config_path}")
     print(f"网格大小: {grid_sizes}")

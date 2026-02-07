@@ -1,8 +1,8 @@
 {
     "max_schwarz_iter": 50,
-    "schwarz_eta": 1e-7,
+    "schwarz_eta": 1e-07,
     "max_frames": 5000,
-    "velocity_convergence_threshold": 1e-6,
+    "velocity_convergence_threshold": 1e-06,
     "velocity_convergence_check_interval": 10,
     "use_record": false,
     "visualize_grid": true,
@@ -83,9 +83,9 @@
             {
                 "id": 0,
                 "name": "default",
-                "E": 1e5,
+                "E": 100000.0,
                 "nu": 0.3,
-                "rho": 1e3
+                "rho": 1000.0
             }
         ],
         "implicit": true,
@@ -151,7 +151,7 @@
             }
         ],
         "implicit_solver": "Newton",
-        "eta": 1e-4,
+        "eta": 0.0001,
         "max_frames": 5000,
         "last_frames_count": 5000,
         "use_record": false,
@@ -162,8 +162,8 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 40,
-        "grid_ny": 40,
+        "grid_nx": 80,
+        "grid_ny": 80,
         "domain_width": 0.4,
         "domain_height": 0.4,
         "offset": [
@@ -197,9 +197,9 @@
             {
                 "id": 0,
                 "name": "default",
-                "E": 1e5,
+                "E": 100000.0,
                 "nu": 0.3,
-                "rho": 1e3
+                "rho": 1000.0
             }
         ],
         "implicit": true,
@@ -372,7 +372,7 @@
             }
         ],
         "implicit_solver": "Newton",
-        "eta": 1e-4,
+        "eta": 0.0001,
         "max_frames": 5000,
         "last_frames_count": 5000,
         "use_record": false,

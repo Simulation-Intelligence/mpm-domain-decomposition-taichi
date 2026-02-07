@@ -1,5 +1,6 @@
 import taichi as ti
 import time
+import gc
 
 import sys
 import os
@@ -267,6 +268,9 @@ class ImplicitMPM:
         # 增加帧计数器
         self.current_frame += 1
 
+        # 更新solver的当前帧数（用于渐进重力）
+        self.solver.update_frame(self.current_frame)
+
     def set_max_frames(self, max_frames):
         """设置最大帧数"""
         self.max_frames = max_frames
@@ -481,13 +485,20 @@ class ImplicitMPM:
         self.gui.show()
 
         if self.recorder is None:
+            # 清理临时numpy数组
+            del x_numpy
+            # 每1000帧强制垃圾回收一次
+            if self.current_frame % 1000 == 0:
+                gc.collect()
             return
 
         print("Recording frame: ", len(self.recorder.frame_data) + 1)
-        self.recorder.capture(
-            x_numpy,
-            self.particles.is_boundary_particle.to_numpy().astype(np.uint32)
-        )
+        boundary_flags = self.particles.is_boundary_particle.to_numpy().astype(np.uint32)
+        self.recorder.capture(x_numpy, boundary_flags)
+
+        # 清理临时numpy数组
+        del x_numpy, boundary_flags
+        # gc.collect() 已移至上方每1000帧调用一次
     
     def _is_point_in_single_region(self, point, region_config):
         """检查点是否在单个区域内"""
@@ -607,8 +618,18 @@ class ImplicitMPM:
                 final_strain.append(grid_strain[(grid_i, grid_j)] / total_weight)
         
         print(f"高斯积分点加权完成: {len(particle_positions)} 个粒子 -> {len(final_positions)} 个网格点")
-        
-        return np.array(final_stress), np.array(final_strain), np.array(final_positions)
+
+        result_stress = np.array(final_stress)
+        result_strain = np.array(final_strain)
+        result_positions = np.array(final_positions)
+
+        # 清理中间数据结构
+        del particle_stress, particle_strain, particle_positions
+        del grid_stress, grid_strain, grid_weights
+        del final_positions, final_stress, final_strain
+        gc.collect()
+
+        return result_stress, result_strain, result_positions
 
     def _is_point_in_regions(self, point, regions_config):
         """检查点是否在指定区域内（支持多个区域）"""
@@ -751,6 +772,14 @@ class ImplicitMPM:
         print(f"stress数据保存在: {self._stress_data_dir}/")
         print(f"von Mises应力范围: {stats['von_mises_stress']['min']:.3e} - {stats['von_mises_stress']['max']:.3e}")
         print(f"平均von Mises应力: {stats['von_mises_stress']['mean']:.3e}")
+
+        # 清理大型numpy数组，释放内存
+        del stress_data, positions, boundary_flags
+        del filtered_stress_data, filtered_positions, filtered_boundary_flags
+        del valid_mask, von_mises_stress
+        if 'region_mask' in locals():
+            del region_mask
+        gc.collect()
 
         return self._experiment_dir
 

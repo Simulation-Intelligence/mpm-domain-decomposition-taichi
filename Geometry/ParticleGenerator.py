@@ -297,27 +297,30 @@ class ParticleGenerator:
         
         particles = []
         particle_weights = []
-        
-        # 计算网格间距
-        dx = 1.0 / self.grid_size
-        
-        # 获取高斯积分点的相对位置和权重（在±0.5dx范围内）
-        gauss_positions, gauss_weights = GaussQuadrature.get_2d_grid_points_and_weights(n_1d, dx)
-        
+
+        # 计算网格间距（物理坐标，使用实际的 domain 尺寸）
+        # 对于非正方形域，x和y方向的间距可能不同
+        dx = self.domain_width / self.grid_nx
+        dy = self.domain_height / self.grid_ny
+
+        # 使用平均间距来获取高斯积分点（假设网格接近正方形）
+        avg_spacing = (dx + dy) / 2.0
+        gauss_positions, gauss_weights = GaussQuadrature.get_2d_grid_points_and_weights(n_1d, avg_spacing)
+
         # 遍历所有网格点
-        for i in range(self.grid_size):
-            for j in range(self.grid_size):
-                # 网格中心位置：I * dx，其中I是网格索引
-                grid_center_x = (i+0.5) * dx
-                grid_center_y = (j+0.5) * dx
+        for i in range(self.grid_nx):
+            for j in range(self.grid_ny):
+                # 网格中心位置（物理坐标）
+                grid_center_x = (i + 0.5) * dx
+                grid_center_y = (j + 0.5) * dy
 
                 # 在每个网格中心周围放置高斯积分点
                 for idx, pos in enumerate(gauss_positions):
                     particle_x = grid_center_x + pos[0]
                     particle_y = grid_center_y + pos[1]
-                    
+
                     # 检查粒子是否在指定的形状区域内
-                    if (rect_range[0][0] <= particle_x <= rect_range[0][1] and 
+                    if (rect_range[0][0] <= particle_x <= rect_range[0][1] and
                         rect_range[1][0] <= particle_y <= rect_range[1][1]):
                         particles.append([particle_x, particle_y])
                         particle_weights.append(gauss_weights[idx])

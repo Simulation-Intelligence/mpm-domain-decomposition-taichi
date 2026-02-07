@@ -8,6 +8,7 @@ from Util.Recorder import *
 
 import matplotlib.pyplot as plt
 import time
+import gc
 
 from Util.Project import project
 
@@ -94,10 +95,15 @@ class MPM_Schwarz:
 
         self.use_mass_boundary = self.main_config.get("use_mass_boundary", False)
 
+        # 残差列表（限制大小防止内存泄漏）
         self.residuals = []
+        self.max_residuals_to_keep = 1000  # 只保留最近1000帧的残差
 
-        # 性能统计
-        self.perf_stats = SchwarzPerformanceStats()
+        # 帧计数器（用于渐进重力）
+        self.current_frame = 0
+
+        # 性能统计（限制大小防止内存泄漏）
+        self.perf_stats = SchwarzPerformanceStats(max_frames_to_keep=1000)
         self.enable_perf_stats = self.main_config.get("enable_perf_stats", True)
 
         # Schwarz收敛参数
@@ -457,6 +463,13 @@ class MPM_Schwarz:
             """
             执行一步Schwarz迭代
             """
+            # 更新帧计数器
+            self.current_frame += 1
+
+            # 更新两个域的当前帧数（用于渐进重力）
+            self.Domain1.solver.update_frame(self.current_frame)
+            self.Domain2.solver.update_frame(self.current_frame)
+
             # 开始帧统计
             if self.enable_perf_stats:
                 self.perf_stats.start_frame()
@@ -511,7 +524,7 @@ class MPM_Schwarz:
                     if self.do_small_advect:
                         self.SmallTimeDomain.particles.advect(self.SmallTimeDomain.dt)
                         if j < timesteps - 1:
-                            self.SmallTimeDomain.pre_p2g_sub()
+                            self.SmallTimeDomain.pre_p2g()
                             self.SmallTimeDomain.p2g()
                             self.SmallTimeDomain.post_p2g()
                     else:
@@ -550,7 +563,7 @@ class MPM_Schwarz:
                     self.boundary_exchanger.small_time_domain_boundary_v_next.copy_from(self.SmallTimeDomain.grid.boundary_v)
                     if self.do_small_advect:
                         self.restore_small_time_domain_particles()
-                        self.SmallTimeDomain.pre_p2g_sub()
+                        self.SmallTimeDomain.pre_p2g()
                         self.SmallTimeDomain.p2g()
                         self.SmallTimeDomain.post_p2g()
                     else:
@@ -571,6 +584,10 @@ class MPM_Schwarz:
 
             self.residuals.append(residuals)
 
+            # 限制 residuals 大小，防止内存泄漏
+            if len(self.residuals) > self.max_residuals_to_keep:
+                self.residuals = self.residuals[-self.max_residuals_to_keep:]
+
             # 结束帧统计
             if self.enable_perf_stats:
                 self.perf_stats.end_frame(converged=converged)
@@ -578,6 +595,10 @@ class MPM_Schwarz:
             # 3.G2P: 将网格的速度传递回粒子上
             # 4.粒子自由运动
             self.domain_manager.finalize_step(self.do_small_advect)
+
+            # 每1000帧强制垃圾回收一次，避免频繁调用影响性能
+            if self.current_frame % 1000 == 0:
+                gc.collect()
 
     def render(self):
         # 在无GUI模式下跳过渲染
@@ -649,7 +670,7 @@ class MPM_Schwarz:
             self.render_pos1.to_numpy(),
             self.render_pos2.to_numpy()
         ])
-        
+
         # 生成颜色索引 (0:域1普通, 1:域2普通, 2:边界)
         d1_colors = np.where(
             self.Domain1.particles.is_boundary_particle.to_numpy(),
@@ -660,9 +681,13 @@ class MPM_Schwarz:
             2, 1
         )
         all_colors = np.concatenate([d1_colors, d2_colors]).astype(np.uint32)
-        
+
         # 捕获帧
         self.recorder.capture(all_pos, all_colors)
+
+        # 清理临时numpy数组，避免内存累积
+        del all_pos, d1_colors, d2_colors, all_colors
+        # gc.collect() 已移至 step() 中每1000帧调用一次
     
     def _create_experiment_directory(self, config_path=None):
         """创建实验目录并备份配置文件"""
@@ -836,6 +861,15 @@ class MPM_Schwarz:
         print(f"Domain1 平均von Mises应力: {stats['domain1']['von_mises_stress']['mean']:.3e}")
         print(f"Domain2 von Mises应力范围: {stats['domain2']['von_mises_stress']['min']:.3e} - {stats['domain2']['von_mises_stress']['max']:.3e}")
         print(f"Domain2 平均von Mises应力: {stats['domain2']['von_mises_stress']['mean']:.3e}")
+
+        # 清理大型numpy数组，释放内存
+        del stress_data1, positions1_raw, boundary_flags1
+        del stress_data2, positions2_raw, boundary_flags2
+        del filtered_stress_data1, filtered_positions1, filtered_boundary_flags1
+        del filtered_stress_data2, filtered_positions2, filtered_boundary_flags2
+        del valid_mask1, valid_mask2
+        del von_mises_stress1, von_mises_stress2
+        gc.collect()
 
         return self._experiment_dir
 

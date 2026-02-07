@@ -2,6 +2,7 @@ import taichi as ti
 import numpy as np
 import time
 import matplotlib.pyplot as plt
+import gc
 
 @ti.data_oriented
 class Newton:
@@ -28,7 +29,7 @@ class Newton:
 
         # 创建可重用的SparseMatrixBuilder
         self.H_builder = ti.linalg.SparseMatrixBuilder(dim, dim, max_num_triplets=int(dim**2* 0.1), dtype=self.float_type)
-
+        self.solver = ti.linalg.SparseSolver(solver_type="LDLT",dtype=self.float_type)
         # 历史记录
         self.f_his = []
         self.time_his = []
@@ -45,8 +46,15 @@ class Newton:
         # 重新申请ndarray
         self.b = ti.ndarray(self.float_type, shape=new_dim)
 
+        # 销毁旧的 SparseMatrixBuilder，防止内存泄漏
+        if hasattr(self, 'H_builder'):
+            del self.H_builder
+
         # 重新创建SparseMatrixBuilder
         self.H_builder = ti.linalg.SparseMatrixBuilder(new_dim, new_dim, max_num_triplets=int(new_dim**2* 0.5), dtype=self.float_type)
+
+        # 强制垃圾回收，释放 Taichi GPU 资源
+        gc.collect()
 
         print(f"Newton optimizer resized to dimension: {new_dim}")
         print(f"SparseMatrixBuilder created with shape: ({new_dim}, {new_dim})")
@@ -120,14 +128,17 @@ class Newton:
 
 
             # 求解线性系统
-            solver = ti.linalg.SparseSolver(solver_type="LDLT",dtype=self.float_type)
             try:
-                solver.analyze_pattern(H)
-                solver.factorize(H)
-                self.d = solver.solve(self.b)
+                self.solver.analyze_pattern(H)
+                self.solver.factorize(H)
+                self.d = self.solver.solve(self.b)
             except RuntimeError:
                 self.d = self.b
                 print("Solver failed, resetting to gradient descent")
+
+            # 清理 Taichi 稀疏矩阵对象，防止内存泄漏
+            del H
+            # 注意：gc.collect() 太频繁会影响性能，已移至外层每1000帧调用
 
             # 线搜索
             alpha = self.line_search()

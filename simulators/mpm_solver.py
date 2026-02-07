@@ -51,6 +51,12 @@ class MPMSolver:
         default_gravity = [0.0, 0.0] if self.dim == 2 else [0.0, 0.0, 0.0]
         gravity = config.get("gravity", default_gravity)
         self.gravity = ti.Vector(gravity)
+
+        # 渐进式重力配置
+        self.increasing_gravity = config.get("increasing_gravity", False)
+        self.increasing_steps = config.get("increasing_steps", 0)
+        self.current_frame_field = ti.field(ti.i32, shape=())  # 当前帧数字段
+        self.current_frame_field[None] = 0
         
         # 解析体积力配置
         self._parse_volume_forces(config.get("volume_forces", []))
@@ -98,6 +104,44 @@ class MPMSolver:
 
         # F矩阵备份，用于临时保存和恢复
         self.F_backup = None
+
+        # 预分配F平均化所需的临时网格字段，避免内存泄漏
+        if self.dim == 2:
+            self.F_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.nx, self.grid.ny))
+            self.m_grid = ti.field(self.float_type, shape=(self.grid.nx, self.grid.ny))
+        else:
+            self.F_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.size,)*self.dim)
+            self.m_grid = ti.field(self.float_type, shape=(self.grid.size,)*self.dim)
+
+    @ti.func
+    def get_gravity(self):
+        """
+        获取当前帧的重力值（在kernel中调用）
+
+        返回:
+            当前帧应该使用的重力向量
+        """
+        result = self.gravity
+
+        # 如果启用了渐进重力
+        if ti.static(self.increasing_gravity and self.increasing_steps > 0):
+            current_frame = self.current_frame_field[None]
+
+            # 如果当前帧小于渐进步数，线性插值
+            if current_frame < self.increasing_steps:
+                ratio = ti.cast(current_frame, self.float_type) / ti.cast(self.increasing_steps, self.float_type)
+                result = self.gravity * ratio
+
+        return result
+
+    def update_frame(self, frame_number):
+        """
+        更新当前帧数（在Python侧调用）
+
+        参数:
+            frame_number: 当前帧数
+        """
+        self.current_frame_field[None] = frame_number
 
     def save_F(self):
         """保存当前F矩阵"""
@@ -271,7 +315,7 @@ class MPMSolver:
                     I[0] * self.grid.dx_x + self.grid.offset[0],
                     I[1] * self.grid.dx_y + self.grid.offset[1]
                 ]) + vel * self.dt
-                total_external_force = self.gravity + self.grid.volume_force[I]
+                total_external_force = self.get_gravity() + self.grid.volume_force[I]
                 #阻尼力
                 if not ti.static(self.static_solve):
                     total_external_force += self.get_damping_force(I)
@@ -291,7 +335,7 @@ class MPMSolver:
 
                 # 计算势能
                 pos = I * ti.Vector([self.grid.dx_x, self.grid.dx_y]) + self.grid.offset + vel * self.dt
-                total_external_force = self.gravity + self.grid.volume_force[I]
+                total_external_force = self.get_gravity() + self.grid.volume_force[I]
                 #阻尼力
                 if not ti.static(self.static_solve):
                     total_external_force += self.get_damping_force(I)
@@ -384,7 +428,7 @@ class MPMSolver:
                     grad += self.grid.m[I] * (vel - self.grid.v_prev[I])
 
                 # 计算外部力（重力 + 体积力）
-                total_external_force = self.gravity + self.grid.volume_force[I]
+                total_external_force = self.get_gravity() + self.grid.volume_force[I]
                 # 阻尼力
                 if not ti.static(self.static_solve):
                     total_external_force += self.get_damping_force(I)
@@ -412,7 +456,7 @@ class MPMSolver:
                     grad += self.grid.m[I] * (vel - self.grid.v_prev[I])
 
                 # 计算外部力（重力 + 体积力）
-                total_external_force = self.gravity + self.grid.volume_force[I]
+                total_external_force = self.get_gravity() + self.grid.volume_force[I]
                 # 阻尼力
                 if not ti.static(self.static_solve):
                     total_external_force += self.get_damping_force(I)
@@ -1042,7 +1086,7 @@ class MPMSolver:
         for I in ti.grouped(self.grid.f):
             if self.grid.m[I] > 1e-10:
                 # 添加重力和体积力
-                total_external_force = self.gravity + self.grid.volume_force[I]
+                total_external_force = self.get_gravity() + self.grid.volume_force[I]
                 self.grid.f[I] += total_external_force * self.grid.m[I]
                 
                 # 添加阻尼力（基于当前速度）
@@ -1100,17 +1144,10 @@ class MPMSolver:
 
     def average_F_p2g_g2p(self):
         """通过p2g和g2p操作对F[p]进行平均"""
-        # 创建临时网格字段存储F值
-        if self.dim == 2:
-            F_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.nx, self.grid.ny))
-            m_grid = ti.field(self.float_type, shape=(self.grid.nx, self.grid.ny))
-        else:
-            F_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.size,)*self.dim)
-            m_grid = ti.field(self.float_type, shape=(self.grid.size,)*self.dim)
-        
+        # 重用预分配的网格字段（避免每次调用都创建新fields导致内存泄漏）
         # 执行P2G和G2P
-        self.p2g_F_averaging(F_grid, m_grid)
-        self.g2p_F_averaging(F_grid)
+        self.p2g_F_averaging(self.F_grid, self.m_grid)
+        self.g2p_F_averaging(self.F_grid)
 
     @ti.func
     def compute_stress_strain_neohookean(self, p):

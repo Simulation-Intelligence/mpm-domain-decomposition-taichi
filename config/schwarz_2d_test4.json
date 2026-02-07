@@ -6,6 +6,7 @@
     "velocity_convergence_check_interval": 10,
     "use_record": false,
     "visualize_grid": true,
+    "enable_perf_stats": false,
     "visualize_boundary_grid": true,
     "no_gui": false,
     "steps": 1,
@@ -18,14 +19,14 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 200,
-        "grid_ny": 200,
+        "grid_nx": 100,
+        "grid_ny": 100,
         "domain_width": 1.0,
         "domain_height": 1.0,
-        "particles_per_grid": 4,
-        "sampling_method": "regular",
+        "particles_per_grid": 16,
+        "sampling_method": "gauss",
         "elasticity_model": "neo_hookean",
-        "use_mapping": true,
+        "use_mapping": false,
         "dt": 0.0002,
         "max_iter": 1,
         "solve_max_iter": 20000,
@@ -37,7 +38,7 @@
         "boundary_particle_range": [
             [
                 0,
-                0.42
+                0.2
             ],
             [
                 0.0,
@@ -46,9 +47,11 @@
         ],
         "gravity": [
             0.0,
-            -0.03875248015873022
+            -3.3875248015873022
         ],
-        "damping": 0.5,
+        "increasing_gravity": true,
+        "increasing_steps": 20000,
+        "damping": 0.2,
         "particle_damping": 0.999,
         "material_params": [
             {
@@ -71,12 +74,12 @@
                 "params": {
                     "range": [
                         [
-                            0.4,
+                            0.15,
                             0.9
                         ],
                         [
-                            0.89,
-                            0.91
+                            0.92,
+                            0.96
                         ]
                     ]
                 },
@@ -95,12 +98,12 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 120,
-        "grid_ny": 80,
-        "domain_width": 0.6,
-        "domain_height": 0.4,
-        "particles_per_grid": 4,
-        "sampling_method": "regular",
+        "grid_nx": 30,
+        "grid_ny": 20,
+        "domain_width": 0.3,
+        "domain_height": 0.2,
+        "particles_per_grid": 16,
+        "sampling_method": "gauss",
         "elasticity_model": "neo_hookean",
         "use_mapping": true,
         "dt": 0.0002,
@@ -109,12 +112,14 @@
         "solve_init_iter": 100,
         "offset": [
             0.0,
-            0.6
+            0.8
         ],
         "gravity": [
             0.0,
             -0.03875248015873022
         ],
+        "increasing_gravity": true,
+        "increasing_steps": 20000,
         "DBC_range": [
             [
                 [
@@ -135,7 +140,7 @@
         ],
         "boundary_particle_range": [
             [
-                0.42,
+                0.2,
                 1.0
             ],
             [
@@ -143,7 +148,7 @@
                 1.0
             ]
         ],
-        "damping": 0.5,
+        "damping": 0.2,
         "particle_damping": 0.999,
         "material_params": [
             {
@@ -167,11 +172,11 @@
                     "range": [
                         [
                             0.05,
-                            0.50
+                            0.25
                         ],
                         [
-                            0.29,
-                            0.31
+                            0.12,
+                            0.16
                         ]
                     ]
                 },

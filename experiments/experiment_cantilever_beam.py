@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import subprocess
 import glob
 import shutil
+import gc
 from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -389,11 +390,17 @@ def load_simulation_results(results_dir=None, use_schwarz=False, domain_id=None)
         positions = np.load(positions_file)
         print(f"加载了第 {last_frame} 帧的 {len(positions)} 个粒子位置")
 
-    return {
+    result = {
         'positions': positions,
         'frame': last_frame,
         'results_dir': results_dir
     }
+
+    # 清理临时变量
+    del frame_dirs, frame_numbers
+    gc.collect()
+
+    return result
 
 def calculate_displacement(initial_pos, final_pos, beam_params):
     """计算位移并返回h/w比值"""
@@ -626,17 +633,28 @@ def run_batch_experiments(base_config_path="config/config_2d_test4.json",
         # 计算位移
         displacement_result = calculate_displacement(initial_rightmost_bottom, final_rightmost_bottom, beam_params)
 
-        # 存储结果
+        # 存储结果（只保留标量值，不保存大型数组）
         result_data = {
             'gamma': gamma,
             'gravity': g,
             'h_over_w': displacement_result['h_over_w'],
-            'displacement': displacement_result,
+            'w': displacement_result['w'],
+            'h_displacement': displacement_result['h_displacement'],
+            'initial_pos': displacement_result['initial_pos'].tolist() if hasattr(displacement_result['initial_pos'], 'tolist') else displacement_result['initial_pos'],
+            'final_pos': displacement_result['final_pos'].tolist() if hasattr(displacement_result['final_pos'], 'tolist') else displacement_result['final_pos'],
             'results_dir': new_results_dir
         }
         results.append(result_data)
 
         print(f"  h/w = {displacement_result['h_over_w']:.6f}")
+
+        # 清理内存：删除所有大型临时变量
+        del sim_results
+        del displacement_result
+        del final_rightmost_bottom
+        del config
+        # 强制垃圾回收
+        gc.collect()
 
     print(f"\n批量实验完成! 成功完成 {len(results)}/{n_points} 个实验")
 
@@ -695,7 +713,7 @@ def plot_results(results, output_dir):
     # 保存图片
     plot_file = os.path.join(output_dir, "cantilever_beam_analysis.png")
     plt.savefig(plot_file, dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.close()  # 关闭图形以释放内存
 
     print(f"分析图保存到: {plot_file}")
 
@@ -717,9 +735,9 @@ def main():
                        help='使用双域Schwarz模式（默认为单域模式）')
     parser.add_argument('--gamma', type=float, default=None,
                        help='单次实验的gamma值（默认使用配置文件中的重力）')
-    parser.add_argument('--gamma-range', nargs=2, type=float, default=[1e-1, 1e3],
+    parser.add_argument('--gamma-range', nargs=2, type=float, default=[2.51e+01, 1e3],
                        help='批量实验的gamma范围 [最小值, 最大值]')
-    parser.add_argument('--n-points', type=int, default=6,
+    parser.add_argument('--n-points', type=int, default=3,
                        help='批量实验的测试点数')
     parser.add_argument('--output-dir', default=None,
                        help='输出目录')

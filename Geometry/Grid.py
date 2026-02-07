@@ -101,6 +101,8 @@ class Grid:
         self.boundary_v = ti.Vector.field(self.dim, self.float_type, grid_shape)
         self.is_particle_boundary_grid = ti.field(ti.i32, grid_shape)
 
+        self.is_schwarz_boundary_grid = ti.Vector.field(self.dim, ti.i32, grid_shape)
+
         # X方向速度约束选项
         self.constrain_x_velocity = config.get("constrain_x_velocity", False)
 
@@ -400,6 +402,8 @@ class Grid:
                         # 设置为边界网格
                     self.is_boundary_grid[I] = ti.Vector([1] * self.dim)
                     self.boundary_v[I] = boundary_velocity
+
+            self.is_boundary_grid[I] = ti.max(self.is_boundary_grid[I], self.is_schwarz_boundary_grid[I])
 
 
 

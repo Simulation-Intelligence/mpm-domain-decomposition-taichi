@@ -1,6 +1,7 @@
 import numpy as np
 import time
 import taichi as ti
+import gc
 
 class ParticleRecorder:
     def __init__(self, palette=None, max_frames=300, lines_begin=None, lines_end=None, lines_color=None):
@@ -111,6 +112,10 @@ class ParticleRecorder:
             if not loop and current_idx == 0:
                 print("Playback finished.")
                 break
+
+            # 每1000帧强制垃圾回收一次，释放临时Taichi字段
+            if current_idx % 1000 == 0:
+                gc.collect()
 
             # time.sleep(frame_delay)
 

@@ -2,6 +2,7 @@ import taichi as ti
 import numpy as np
 import time
 import matplotlib.pyplot as plt
+import gc
 
 @ti.data_oriented
 class PCG:
@@ -131,6 +132,10 @@ class PCG:
 
         # 提取对角元素
         H_diag = self._extract_diagonal(H)
+
+        # 清理 Taichi 对象，防止内存泄漏
+        del H, H_builder
+        # 注意：gc.collect() 太频繁会影响性能，已移至外层每1000帧调用
 
         # 构造预条件子的逆
         self._build_diagonal_inverse(H_diag)

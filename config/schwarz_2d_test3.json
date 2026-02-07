@@ -50,14 +50,20 @@
         "compare_diff": false,
         "bound": 1,
         "initial_velocity_y": -1,
-        "damping":0.5,
+        "damping": 0.5,
         "particle_damping": 0.999,
         "boundary_particle_range": [
-        [
-            [0.0, 1.0],
-            [0.0, 0.14]
-        ]
-    ],
+            [
+                [
+                    0.0,
+                    1.0
+                ],
+                [
+                    0.0,
+                    0.14
+                ]
+            ]
+        ],
         "volume_forces": [
             {
                 "type": "rectangle",
@@ -136,8 +142,8 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 90,
-        "grid_ny": 30,
+        "grid_nx": 60,
+        "grid_ny": 20,
         "domain_width": 0.72,
         "domain_height": 0.24,
         "offset": [
@@ -170,14 +176,20 @@
         "bound": 2,
         "use_mesh_boundary": true,
         "initial_velocity_y": -1,
-        "damping":0.5,
+        "damping": 0.5,
         "particle_damping": 0.999,
         "boundary_particle_range": [
-        [
-            [0.0, 1.0],
-            [0.14, 1.0]
-        ]
-    ],
+            [
+                [
+                    0.0,
+                    1.0
+                ],
+                [
+                    0.14,
+                    1.0
+                ]
+            ]
+        ],
         "shapes": [
             {
                 "type": "ellipse",

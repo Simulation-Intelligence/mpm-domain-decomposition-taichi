@@ -116,7 +116,7 @@ class BoundaryExchanger:
                 big_time_domain_set_boundary = big_time_domain_set_boundary and (not is_small_time_domain_boundary or self.big_time_domain.grid.m[I] < m)
 
                 if big_time_domain_set_boundary:
-                    self.big_time_domain.grid.is_boundary_grid[I] = [1] * self.big_time_domain.grid.dim
+                    self.big_time_domain.grid.is_schwarz_boundary_grid[I] = [1] * self.big_time_domain.grid.dim
                     to_boundary_v[I] = to_boundary_v[I] / m
                 else:
                     # 如果没有边界交换覆盖，恢复原始的boundary_v（保留move boundary设置）
@@ -167,7 +167,7 @@ class BoundaryExchanger:
                 small_time_domain_set_boundary = small_time_domain_set_boundary and (not is_big_time_domain_boundary or self.small_time_domain.grid.m[I] < m)
 
                 if small_time_domain_set_boundary:
-                    self.small_time_domain.grid.is_boundary_grid[I] = [1] * self.small_time_domain.grid.dim
+                    self.small_time_domain.grid.is_schwarz_boundary_grid[I] = [1] * self.small_time_domain.grid.dim
                     to_boundary_v[I] = to_boundary_v[I] / m
                 else:
                     # 如果没有边界交换覆盖，恢复原始的boundary_v（保留move boundary设置）

@@ -9,6 +9,7 @@ import json
 import numpy as np
 import sys
 import os
+import gc
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend to avoid segfault with Taichi
 import matplotlib.pyplot as plt
@@ -279,8 +280,8 @@ def extract_domain2_cross_sections(positions2, stresses2, config, use_schwarz=Tr
     # 计算网格间距和截面宽度
     dx = domain_width / grid_nx
     dy = domain_height / grid_ny
-    strip_width_x = 0.5 * dx  # X方向截面宽度（垂直于Y轴）
-    strip_width_y = 0.5 * dy  # Y方向截面宽度（垂直于X轴）
+    strip_width_x = 0.2 * dx  # X方向截面宽度（垂直于Y轴）
+    strip_width_y = 0.2 * dy  # Y方向截面宽度（垂直于X轴）
 
     # 提取沿X轴的截面（Y = center_y，水平线）
     mask_x_axis = np.abs(positions2[:, 1] - center_y) < strip_width_y
@@ -350,8 +351,16 @@ def analyze_and_plot(positions_or_tuple, stresses_or_none, config, output_dir, g
         positions1, stresses1, positions2, stresses2 = positions_or_tuple
         positions, stresses = merge_schwarz_domains(positions1, stresses1, positions2, stresses2, config)
 
+        # 清理原始域数据，只保留合并后的数据
+        del positions1, stresses1
+        gc.collect()
+
         # 提取Domain2的截面数据
         cross_sections = extract_domain2_cross_sections(positions2, stresses2, config, use_schwarz=True)
+
+        # 清理positions2和stresses2，已经提取了截面数据
+        del positions2, stresses2
+        gc.collect()
     else:
         positions = positions_or_tuple
         stresses = stresses_or_none
@@ -717,16 +726,25 @@ def run_batch_experiments(args):
             # 4. 运行单个实验
             exp_results = run_single_experiment(temp_config_path, grid_size, grid_output_dir, use_schwarz=args.schwarz)
 
-            # 5. 记录结果
+            # 5. 记录结果（只保存必要的元数据，不保存大型numpy数组）
             results['successful_runs'].append(grid_size)
             results['result_dirs'][grid_size] = grid_output_dir
-            results['experiment_data'][grid_size] = exp_results
+
+            # 只保存 plot_path，不保存大型数组
+            results['experiment_data'][grid_size] = {
+                'plot_path': exp_results.get('plot_path', '')
+            }
 
             print(f"✓ 实验 {i+1} 成功完成")
 
             # 清理临时配置文件
             if os.path.exists(temp_config_path):
                 os.remove(temp_config_path)
+
+            # 清理内存：删除所有大型临时变量
+            del exp_results
+            del modified_config
+            gc.collect()
 
         except Exception as e:
             print(f"✗ 实验 {i+1} 失败: {e}")
@@ -772,8 +790,8 @@ def main():
     # 批量模式参数
     parser.add_argument('--batch-mode', action='store_true',
                        help='启用批量模式：运行多个不同网格分辨率的实验')
-    parser.add_argument('--grid-start', type=int, default=40,
-                       help='批量模式：起始网格大小 (默认: 40)')
+    parser.add_argument('--grid-start', type=int, default=80,
+                       help='批量模式：起始网格大小 (默认: 80)')
     parser.add_argument('--grid-end', type=int, default=80,
                        help='批量模式：结束网格大小 (默认: 80)')
     parser.add_argument('--grid-step', type=int, default=20,

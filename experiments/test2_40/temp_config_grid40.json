@@ -13,7 +13,7 @@
     "arch": "cpu",
     "float_type": "f64",
     "use_mass_boundary": true,
-    "do_small_advect": false,
+    "do_small_advect": true,
     "Domain1": {
         "arch": "cpu",
         "float_type": "f64",

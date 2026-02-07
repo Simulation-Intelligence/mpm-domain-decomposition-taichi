@@ -5,6 +5,7 @@ Schwarz 域分解方法的性能统计与可视化工具
 
 import time
 import numpy as np
+from copy import deepcopy
 # 使用非交互式后端避免 macOS 上的 matplotlib 错误
 import matplotlib
 matplotlib.use('Agg')
@@ -17,7 +18,14 @@ import os
 class SchwarzPerformanceStats:
     """Schwarz 域分解性能统计收集器"""
 
-    def __init__(self):
+    def __init__(self, max_frames_to_keep=1000):
+        """
+        初始化性能统计
+
+        参数:
+            max_frames_to_keep: 最多保留的帧数（防止内存泄漏）
+        """
+        self.max_frames_to_keep = max_frames_to_keep
         self.reset()
 
     def reset(self):
@@ -85,7 +93,13 @@ class SchwarzPerformanceStats:
         """结束当前帧，保存数据"""
         self.current_frame['total_frame_time'] = time.perf_counter() - self._frame_start_time
         self.current_frame['converged'] = converged
-        self.frame_data.append(self.current_frame.copy())
+        # 使用 deepcopy 确保嵌套列表被完全复制，避免内存泄漏
+        self.frame_data.append(deepcopy(self.current_frame))
+
+        # 限制 frame_data 大小，防止内存泄漏
+        if len(self.frame_data) > self.max_frames_to_keep:
+            # 只保留最近的 max_frames_to_keep 帧
+            self.frame_data = self.frame_data[-self.max_frames_to_keep:]
 
     def record_p2g_time(self, elapsed: float):
         """记录 P2G 时间"""
@@ -721,7 +735,14 @@ class SchwarzPerformanceStats:
 class SingleDomainPerformanceStats:
     """单域 MPM 模拟器性能统计收集器"""
 
-    def __init__(self):
+    def __init__(self, max_frames_to_keep=1000):
+        """
+        初始化性能统计
+
+        参数:
+            max_frames_to_keep: 最多保留的帧数（防止内存泄漏）
+        """
+        self.max_frames_to_keep = max_frames_to_keep
         self.reset()
 
     def reset(self):
@@ -747,6 +768,10 @@ class SingleDomainPerformanceStats:
             'solve_time': solve_time,
             'total_frame_time': total_time,
         })
+
+        # 限制 frame_data 大小，防止内存泄漏
+        if len(self.frame_data) > self.max_frames_to_keep:
+            self.frame_data = self.frame_data[-self.max_frames_to_keep:]
 
     # ============ 数据获取方法 ============
 
