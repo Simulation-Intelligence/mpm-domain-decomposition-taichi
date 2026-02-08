@@ -74,6 +74,7 @@ class BoundaryExchanger:
     @ti.kernel
     def project_to_big_time_domain_boundary(self, from_boundary_v: ti.template(), to_boundary_v: ti.template()):
         """将小时间步长域的速度投影到大时间步长域的边界"""
+        self.big_time_domain.grid.is_schwarz_boundary_grid[I] = [0] * self.big_time_domain.grid.dim  # 重置标志
         for I in ti.grouped(to_boundary_v):
             if self.big_time_domain.grid.is_particle_boundary_grid[I]:
                 m = 0.0
@@ -115,7 +116,6 @@ class BoundaryExchanger:
                 big_time_domain_set_boundary = self.big_time_domain.grid.is_particle_boundary_grid[I] and m > 1e-10
                 big_time_domain_set_boundary = big_time_domain_set_boundary and (not is_small_time_domain_boundary or self.big_time_domain.grid.m[I] < m)
 
-                self.big_time_domain.grid.is_schwarz_boundary_grid[I] = [0] * self.big_time_domain.grid.dim  # 重置标志
                 if big_time_domain_set_boundary:
                     self.big_time_domain.grid.is_schwarz_boundary_grid[I] = [1] * self.big_time_domain.grid.dim
                     to_boundary_v[I] = to_boundary_v[I] / m
@@ -127,6 +127,7 @@ class BoundaryExchanger:
     def project_to_small_time_domain_boundary(self, from_boundary_v: ti.template(), to_boundary_v: ti.template()):
         """将大时间步长域的速度投影到小时间步长域的边界"""
         for I in ti.grouped(to_boundary_v):
+            self.small_time_domain.grid.is_schwarz_boundary_grid[I] = [0] * self.small_time_domain.grid.dim  # 重置标志
             if self.small_time_domain.grid.is_particle_boundary_grid[I]:
                 m = 0.0
                 is_big_time_domain_boundary = False
@@ -166,8 +167,7 @@ class BoundaryExchanger:
 
                 small_time_domain_set_boundary = self.small_time_domain.grid.is_particle_boundary_grid[I] and m > 1e-10
                 small_time_domain_set_boundary = small_time_domain_set_boundary and (not is_big_time_domain_boundary or self.small_time_domain.grid.m[I] < m)
-
-                self.small_time_domain.grid.is_schwarz_boundary_grid[I] = [0] * self.small_time_domain.grid.dim  # 重置标志
+                
                 if small_time_domain_set_boundary:
                     self.small_time_domain.grid.is_schwarz_boundary_grid[I] = [1] * self.small_time_domain.grid.dim
                     to_boundary_v[I] = to_boundary_v[I] / m
