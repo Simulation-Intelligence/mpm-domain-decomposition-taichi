@@ -124,7 +124,7 @@ class MPM_Schwarz:
 
         # 只在非无GUI模式下初始化GUI
         if not self.no_gui:
-            self.gui = ti.ui.Window("Implicit MPM Schwarz", res=(800, 800), vsync=False)
+            self.gui = ti.GUI("Implicit MPM Schwarz", res=(800, 800))
             # 预创建网格线条字段
             self._init_grid_lines()
             # 创建用于渲染的位置字段
@@ -196,6 +196,14 @@ class MPM_Schwarz:
         self.boundary_grid_count2 = ti.field(ti.i32, shape=())
         self.move_mass_grid_count1 = ti.field(ti.i32, shape=())
         self.move_mass_grid_count2 = ti.field(ti.i32, shape=())
+
+    @staticmethod
+    def _vec3_to_hex(colors_np):
+        """Convert (N,3) float color array to (N,) hex integer array for ti.GUI"""
+        r = (colors_np[:, 0] * 255).astype(np.uint32)
+        g = (colors_np[:, 1] * 255).astype(np.uint32)
+        b = (colors_np[:, 2] * 255).astype(np.uint32)
+        return (r << 16) | (g << 8) | b
 
     def _init_render_fields(self):
         """初始化用于渲染的位置和颜色字段"""
@@ -625,41 +633,50 @@ class MPM_Schwarz:
             else:
                 self.move_mass_grid_count2[None] = 0
 
-        # 使用ti.ui.Window的canvas API
-        canvas = self.gui.get_canvas()
-        canvas.set_background_color((0.067, 0.184, 0.255))
+        # 使用ti.GUI的API（避免Vulkan依赖）
+        self.gui.clear(0x112F41)
 
         # 使用预计算的渲染位置字段和颜色字段
         if self.Domain1.particles.x.shape[0] > 0:
-            canvas.circles(self.render_pos1, radius=0.001, per_vertex_color=self.render_color1)
+            pos1 = self.render_pos1.to_numpy()
+            colors1 = self._vec3_to_hex(self.render_color1.to_numpy())
+            self.gui.circles(pos1, radius=2, color=colors1)
 
         if self.Domain2.particles.x.shape[0] > 0:
-            canvas.circles(self.render_pos2, radius=0.001, per_vertex_color=self.render_color2)
+            pos2 = self.render_pos2.to_numpy()
+            colors2 = self._vec3_to_hex(self.render_color2.to_numpy())
+            self.gui.circles(pos2, radius=2, color=colors2)
 
-        #绘制grid网格
+        # 绘制grid网格
         if self.visualize_grid:
-            # 使用预创建的网格线条字段
+            # 使用预创建的网格线条字段（顶点成对排列）
             if self.grid_vertices1 is not None:
-                canvas.lines(self.grid_vertices1, 0.001, color=(0.024, 0.522, 0.529))
+                verts = self.grid_vertices1.to_numpy()
+                self.gui.lines(verts[::2], verts[1::2], radius=1, color=0x068587)
 
             if self.grid_vertices2 is not None:
-                canvas.lines(self.grid_vertices2, 0.001, color=(0.929, 0.333, 0.231))
+                verts = self.grid_vertices2.to_numpy()
+                self.gui.lines(verts[::2], verts[1::2], radius=1, color=0xED553B)
 
         # 绘制边界网格点
         if self.visualize_boundary_grid and self.visualize_grid:
             # 绘制is_boundary_grid标记的网格点，不同domain用不同颜色
             if self.boundary_grid_points1 is not None and self.boundary_grid_count1[None] > 0:
-                canvas.circles(self.boundary_grid_points1, radius=0.002, color=(1.0, 0.6, 0.6))  # 浅红色 - Domain1
+                pts = self.boundary_grid_points1.to_numpy()[:self.boundary_grid_count1[None]]
+                self.gui.circles(pts, radius=3, color=0xFF9999)  # 浅红色 - Domain1
 
             if self.boundary_grid_points2 is not None and self.boundary_grid_count2[None] > 0:
-                canvas.circles(self.boundary_grid_points2, radius=0.002, color=(0.6, 0.6, 1.0))  # 浅蓝色 - Domain2
+                pts = self.boundary_grid_points2.to_numpy()[:self.boundary_grid_count2[None]]
+                self.gui.circles(pts, radius=3, color=0x9999FF)  # 浅蓝色 - Domain2
 
             # 绘制move_mass_field > 0的网格点
             if self.move_mass_grid_points1 is not None and self.move_mass_grid_count1[None] > 0:
-                canvas.circles(self.move_mass_grid_points1, radius=0.003, color=(1.0, 0.0, 1.0))  # 洋红色
+                pts = self.move_mass_grid_points1.to_numpy()[:self.move_mass_grid_count1[None]]
+                self.gui.circles(pts, radius=4, color=0xFF00FF)  # 洋红色
 
             if self.move_mass_grid_points2 is not None and self.move_mass_grid_count2[None] > 0:
-                canvas.circles(self.move_mass_grid_points2, radius=0.003, color=(1.0, 0.0, 1.0))  # 洋红色
+                pts = self.move_mass_grid_points2.to_numpy()[:self.move_mass_grid_count2[None]]
+                self.gui.circles(pts, radius=4, color=0xFF00FF)  # 洋红色
 
         self.gui.show()
         # 合并两域粒子数据
@@ -969,6 +986,7 @@ if __name__ == "__main__":
     cfg = Config(path=args.config)
     float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64
     arch=cfg.get("arch", "cpu")
+    print(f"使用浮点类型: {float_type}, 计算架构: {arch}")
     if arch == "cuda":
         arch = ti.cuda
     elif arch == "vulkan":
@@ -976,7 +994,7 @@ if __name__ == "__main__":
     else:
         arch = ti.cpu
 
-    ti.init(arch=arch, default_fp=float_type, device_memory_GB=20, log_level=ti.ERROR)
+    ti.init(arch=arch, default_fp=float_type, log_level=ti.ERROR,enable_fallback=False  )
 
     # 创建Schwarz域分解MPM实例
     mpm = MPM_Schwarz(cfg, no_gui=args.no_gui, config_path=args.config)

@@ -115,6 +115,7 @@ class BoundaryExchanger:
                 big_time_domain_set_boundary = self.big_time_domain.grid.is_particle_boundary_grid[I] and m > 1e-10
                 big_time_domain_set_boundary = big_time_domain_set_boundary and (not is_small_time_domain_boundary or self.big_time_domain.grid.m[I] < m)
 
+                self.big_time_domain.grid.is_schwarz_boundary_grid[I] = [0] * self.big_time_domain.grid.dim  # 重置标志
                 if big_time_domain_set_boundary:
                     self.big_time_domain.grid.is_schwarz_boundary_grid[I] = [1] * self.big_time_domain.grid.dim
                     to_boundary_v[I] = to_boundary_v[I] / m
@@ -166,6 +167,7 @@ class BoundaryExchanger:
                 small_time_domain_set_boundary = self.small_time_domain.grid.is_particle_boundary_grid[I] and m > 1e-10
                 small_time_domain_set_boundary = small_time_domain_set_boundary and (not is_big_time_domain_boundary or self.small_time_domain.grid.m[I] < m)
 
+                self.small_time_domain.grid.is_schwarz_boundary_grid[I] = [0] * self.small_time_domain.grid.dim  # 重置标志
                 if small_time_domain_set_boundary:
                     self.small_time_domain.grid.is_schwarz_boundary_grid[I] = [1] * self.small_time_domain.grid.dim
                     to_boundary_v[I] = to_boundary_v[I] / m

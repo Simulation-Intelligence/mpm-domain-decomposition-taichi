@@ -74,8 +74,6 @@ class MPMSolver:
         else:
             self.grad_fn=self.compute_energy_grad_manual
         
-        if config.get("compare_diff", True):
-            self.grad_fn=self.compute_energy_grad_diff
 
         solver_type = config.get("implicit_solver", "BFGS")
 
@@ -763,24 +761,6 @@ class MPMSolver:
 
         return self.total_energy[None]  
     
-    def compute_energy_grad_diff(self, v_flat: ti.template(), grad_flat: ti.template()):
-        #比较手动和自动求导的结果
-        @ti.kernel
-        def copy_field(a: ti.template(),b: ti.template()):
-            for I in ti.grouped(a):
-                a[I] = b[I]
-        self.compute_energy_grad_auto(v_flat, grad_flat)
-        copy_field(self.grad_save,grad_flat)
-        self.compute_energy_grad_manual(v_flat, grad_flat)
-
-        for i in range(self.grad_save.shape[0]):
-            if ti.abs(self.grad_save[i]) > 1e-10:
-                diff = (self.grad_save[i]-grad_flat[i])/self.grad_save[i]
-                print(f"grad_auto: {self.grad_save[i]}, grad_manual: {grad_flat[i]}, diff: {diff}")
-
-        copy_field(grad_flat,self.grad_save)
-
-        return self.total_energy[None]
 
     def manual_particle_energy_grad(self, v_flat: ti.template(), grad_flat: ti.template()):
         if self.elasticity_model == "linear":

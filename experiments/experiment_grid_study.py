@@ -835,9 +835,9 @@ def main():
     parser = argparse.ArgumentParser(description='网格分辨率批处理实验')
     parser.add_argument('--use-schwarz', action='store_true',
                        help='使用Schwarz双域求解器（默认使用单域）')
-    parser.add_argument('--grid-range', nargs=2, type=int, default=[60, 150],
+    parser.add_argument('--grid-range', nargs=2, type=int, default=[60, 120],
                        help='网格大小范围 [开始, 结束] (默认: 64 160)')
-    parser.add_argument('--grid-step', type=int, default=30,
+    parser.add_argument('--grid-step', type=int, default=20,
                        help='网格大小步长 (默认: 16)')
     parser.add_argument('--grid-sizes', nargs='+', type=int, default=None,
                        help='直接指定网格大小列表，覆盖range和step参数')
