@@ -644,6 +644,8 @@ class ParticleGenerator:
 
                 # 调用Triangle
                 triangle_path = "/Users/zhaofen2/Desktop/work/SIG/triangle/triangle"
+                if not os.path.exists(triangle_path):
+                    triangle_path = "triangle"  # 假设在PATH中
                 # 对于复杂边界，移除YY参数，让Triangle有更多自由度处理边界
                 cmd = [triangle_path, f"-pYYqa{area_constraint}", "input"]
 

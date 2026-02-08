@@ -109,7 +109,7 @@ class ImplicitMPM:
 
         # 初始化GUI（如果不是no_gui模式）
         if not self.no_gui:
-            self.gui= ti.ui.Window("Implicit MPM", res=(800, 800), vsync=False)
+            self.gui = ti.GUI("Implicit MPM", res=(800, 800))
         else:
             self.gui = None
 
@@ -218,7 +218,7 @@ class ImplicitMPM:
             active_count = self.grid.build_mapping()
             # 调整优化器维度以匹配压缩后的大小
             required_dim = active_count * self.dim
-            if self.solver.optimizer.dim != required_dim:
+            if self.solver.optimizer.dim[None] != required_dim:
                 self.solver.optimizer.resize(required_dim)
                 print(f"Resized optimizer to dimension: {required_dim}")
 
@@ -475,13 +475,9 @@ class ImplicitMPM:
         if self.dim == 3:
             x_numpy= project(x_numpy)
 
-        # 使用ti.ui.Window的canvas API
-        canvas = self.gui.get_canvas()
-        canvas.set_background_color((0.067, 0.184, 0.255))
-
-        # 直接使用原始字段
-        canvas.circles(self.particles.x, radius=0.002, color=(0.4, 0.8, 1.0))
-
+        # 使用ti.GUI的API（避免Vulkan依赖）
+        self.gui.clear(0x112F41)
+        self.gui.circles(x_numpy, radius=3, color=0x66CCFF)
         self.gui.show()
 
         if self.recorder is None:
@@ -822,7 +818,7 @@ if __name__ == "__main__":
     else:
         arch = ti.cpu
 
-    ti.init(arch=arch, default_fp=float_type, device_memory_GB=20, log_level=ti.ERROR)
+    ti.init(arch=arch, default_fp=float_type,  log_level=ti.ERROR)
     mpm = ImplicitMPM(cfg, no_gui=args.no_gui, config_path=args.config)
 
     if mpm.static_solve:

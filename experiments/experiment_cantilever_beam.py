@@ -185,7 +185,7 @@ def run_single_simulation(config_path, use_schwarz=False, output_name=None):
         # 双域模式：使用Schwarz求解器
         cmd = [
             "python", "simulators/implicit_mpm_schwarz.py",
-            "--config", config_path
+            "--config", config_path,"--no-gui"
         ]
         print(f"  使用双域Schwarz求解器")
     else:

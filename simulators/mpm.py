@@ -146,27 +146,21 @@ class MPM3D:
         return projected
 
     def render(self):
-        gui = ti.ui.Window("MPM3D", (800, 800), vsync=False)
-        
-        while gui.running and not gui.get_event(gui.ESCAPE):
+        gui = ti.GUI("MPM3D", res=(800, 800))
+
+        while gui.running:
             for _ in range(self.max_steps):
                 self.step()
-            
-            projected = None
+
             # 坐标变换投影
-            if self.dim ==3:
-                particles_np = self.x.to_numpy()
-                projected = self.project(particles_np)
+            if self.dim == 3:
+                pos = self.project(self.x.to_numpy())
             else:
-                projected = self.x.to_numpy()
-            
-            # 使用ti.ui.Window的canvas API
-            canvas = gui.get_canvas()
-            canvas.set_background_color((0.067, 0.184, 0.255))
+                pos = self.x.to_numpy()
 
-            # 直接使用原始字段
-            canvas.circles(self.x, radius=0.002, color=(0.4, 0.8, 1.0))
-
+            # 使用ti.GUI的API（避免Vulkan依赖）
+            gui.clear(0x112F41)
+            gui.circles(pos, radius=3, color=0x66CCFF)
             gui.show()
 
 # 使用示例
