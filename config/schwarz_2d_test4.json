@@ -47,9 +47,9 @@
         ],
         "gravity": [
             0.0,
-            -3.3875248015873022
+            -7.78e-01
         ],
-        "increasing_gravity": true,
+        "increasing_gravity": false,
         "increasing_steps": 20000,
         "damping": 0.2,
         "particle_damping": 0.999,
@@ -116,9 +116,9 @@
         ],
         "gravity": [
             0.0,
-            -0.03875248015873022
+            -7.78e-01
         ],
-        "increasing_gravity": true,
+        "increasing_gravity": false,
         "increasing_steps": 20000,
         "DBC_range": [
             [
