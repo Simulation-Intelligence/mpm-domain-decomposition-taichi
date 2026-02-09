@@ -78,6 +78,7 @@ class MPMSolver:
         solver_type = config.get("implicit_solver", "BFGS")
 
         self.iter_history = []
+        self.max_iter_history = 10000  # 最多保留 10000 次求解记录，防止无界增长
 
         eta = config.get("eta", 1)
         if solver_type == "BFGS":
@@ -186,6 +187,11 @@ class MPMSolver:
 
         iter=self.optimizer.minimize(max_iter, self.solve_init_iter)
         self.iter_history.append(iter)
+
+        # 限制 iter_history 大小，防止无界增长
+        if len(self.iter_history) > self.max_iter_history:
+            self.iter_history.pop(0)  # FIFO - 删除最旧的记录
+
         self.update_velocity()
         return iter
 

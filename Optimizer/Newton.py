@@ -27,10 +27,7 @@ class Newton:
         self.b = ti.ndarray(self.float_type, shape=dim)
         self.f0 =0.0
 
-        # 创建可重用的SparseMatrixBuilder
-        self.H_builder = ti.linalg.SparseMatrixBuilder(dim, dim, max_num_triplets=int(dim**2* 0.1), dtype=self.float_type)
-        self.solver = ti.linalg.SparseSolver(solver_type="LDLT",dtype=self.float_type)
-        # 历史记录
+         # 历史记录
         self.f_his = []
         self.time_his = []
 
@@ -38,6 +35,44 @@ class Newton:
     def get_dimension(self):
         """返回当前优化器的维度"""
         return self.dim[None]
+
+    # ===== 预定义的 Kernel 方法（避免在循环中重复定义） =====
+
+    @ti.kernel
+    def _get_inf_norm(self, x: ti.template()) -> ti.f64:
+        """计算向量的无穷范数（inf-norm）"""
+        n = 0.0
+        for i in range(self.get_dimension()):
+            ti.atomic_max(n, ti.abs(x[i]))
+        return n
+
+    @ti.kernel
+    def _fill_b(self, b: ti.types.ndarray(), grad: ti.template()):
+        """填充右端项 b = -grad"""
+        for i in range(self.get_dimension()):
+            b[i] = -grad[i]
+
+    @ti.kernel
+    def _update_x(self, a: ti.f64, d: ti.types.ndarray()):
+        """更新参数 x += alpha * d"""
+        for i in range(self.get_dimension()):
+            self.x[i] += a * d[i]
+
+    @ti.kernel
+    def _calc_g0(self, d: ti.types.ndarray()) -> ti.f64:
+        """计算梯度与方向的内积 g0 = grad · d"""
+        g = 0.0
+        for i in range(self.get_dimension()):
+            g += self.grad[i] * d[i]
+        return g
+
+    @ti.kernel
+    def _update_temp(self, a: ti.f64, d: ti.types.ndarray()):
+        """更新临时变量 temp_x = x + alpha * d"""
+        for i in range(self.get_dimension()):
+            self.temp_x[i] = self.x[i] + a * d[i]
+
+    # ===============================================
 
     def resize(self, new_dim):
         """重新申请指定维度的向量和稀疏矩阵"""
@@ -58,30 +93,21 @@ class Newton:
         print(f"SparseMatrixBuilder created with shape: ({new_dim}, {new_dim})")
 
     def line_search(self):
+        """Armijo 线搜索（使用预定义的 kernel，避免重复编译）"""
         alpha = 1.0
-            
-        @ti.kernel
-        def calc_g0(d:ti.types.ndarray()) -> self.float_type:
-            g = 0.0
-            for i in range(self.get_dimension()):
-                g += self.grad[i] * d[i]
-            return g
-        
-        g0 = calc_g0(self.d)
+
+        # 计算初始梯度方向内积（使用预定义的 kernel）
+        g0 = self._calc_g0(self.d)
 
         if g0 >= 0:
             print("Warning: Not a descent direction! g0:", g0)
             raise RuntimeError("Not a descent direction")
 
-        @ti.kernel
-        def update_temp(a: self.float_type,d :ti.types.ndarray()):
-            for i in range(self.get_dimension()):
-                self.temp_x[i] = self.x[i] + a * d[i]
-
+        # 回溯线搜索
         while alpha > 1e-4:
-            update_temp(alpha,self.d)
+            self._update_temp(alpha, self.d)
             f_new = self.energy_fn(self.temp_x)
-            if f_new <= self.f0+ self.alpha  * alpha * g0:
+            if f_new <= self.f0 + self.alpha * alpha * g0:
                 break
             alpha *= self.beta
         return alpha
@@ -93,62 +119,52 @@ class Newton:
             self.f0 = self.energy_fn(self.x)
             self.grad_fn(self.x, self.grad)
 
-            # 检查收敛
-            @ti.kernel
-            def get_inf_norm(x: ti.template()) -> self.float_type:
-                n = 0.0
-                for i in range(self.get_dimension()):
-                    ti.atomic_max(n, ti.abs(x[i]))
-                return n
-
-            g_norm = get_inf_norm(self.grad) / self.grad_normalizer
+            # 检查收敛（使用预定义的 kernel，避免重复编译）
+            g_norm = self._get_inf_norm(self.grad) / self.grad_normalizer
 
             if it % 100 == 0:
                 print(f"Iteration {it}, grad norm: {g_norm:.4e}, Energy: {self.f0:.4e}")
 
             if g_norm < self.eta:
                 print(f"Newton Converged at iteration {it}")
-                print("x_inf_norm:", get_inf_norm(self.x))
+                print("x_inf_norm:", self._get_inf_norm(self.x))
                 print(f"Final Energy: {self.f0:.4e}")
                 return it
 
-            self.H_builder = ti.linalg.SparseMatrixBuilder(
+            H_builder = ti.linalg.SparseMatrixBuilder(
                     self.dim[None], self.dim[None],
                     max_num_triplets=int(self.dim[None]**2 * 0.1),
                     dtype=self.float_type
                 )
 
-            self.hess_fn(self.x, self.H_builder)
-            H = self.H_builder.build()
+            self.hess_fn(self.x, H_builder)
+            H = H_builder.build()
 
-            # 构建右端项
-            @ti.kernel
-            def fill_b(b:ti.types.ndarray(),grad: ti.template()):
-                for i in range(self.get_dimension()):
-                    b[i] = -grad[i]
-            fill_b(self.b,self.grad)
+            # 构建右端项（使用预定义的 kernel，避免重复编译）
+            self._fill_b(self.b, self.grad)
 
-
+            solver = ti.linalg.SparseSolver(solver_type="LDLT", dtype=self.float_type)
             # 求解线性系统
             try:
-                self.solver.analyze_pattern(H)
-                self.solver.factorize(H)
-                self.d = self.solver.solve(self.b)
+                solver.analyze_pattern(H)
+                solver.factorize(H)
+                self.d = solver.solve(self.b)
             except RuntimeError:
                 self.d = self.b
                 print("Solver failed, resetting to gradient descent")
 
-            del H
+            del H, solver, H_builder
+
+            # 每 5 次迭代强制 GC，清理 Taichi 内部累积
+            if it % 5 == 0:
+                gc.collect(generation=0)
+
             # 线搜索
             alpha = self.line_search()
             # print(f"Step size: {alpha:.4e}")
 
-            # 更新参数
-            @ti.kernel
-            def update_x(a: self.float_type, d: ti.types.ndarray()):
-                for i in range(self.get_dimension()):
-                    self.x[i] += a * d[i]
-            update_x(alpha, self.d)
+            # 更新参数（使用预定义的 kernel，避免重复编译）
+            self._update_x(alpha, self.d)
 
             # 记录历史
             self.f_his.append(self.f0)
