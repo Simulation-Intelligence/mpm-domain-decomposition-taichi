@@ -106,6 +106,17 @@ class MPM_Schwarz:
         self.perf_stats = SchwarzPerformanceStats(max_frames_to_keep=1000)
         self.enable_perf_stats = self.main_config.get("enable_perf_stats", True)
 
+        # 内存profiling（用于调试内存泄漏）
+        self.enable_memory_profile = self.main_config.get("profile_memory", False)
+        if self.enable_memory_profile:
+            from tools.memory_profiler import MemoryProfiler, FrameStageProfiler
+            self.mem_profiler = MemoryProfiler(enabled=True, snapshot_top_n=10)
+            self.frame_stage_profiler = FrameStageProfiler(enabled=True)
+            print("内存profiling已启用")
+        else:
+            self.mem_profiler = None
+            self.frame_stage_profiler = None
+
         # Schwarz收敛参数
         self.schwarz_eta = self.main_config.get("schwarz_eta", 1e-6)  # 收敛容差
 
@@ -122,6 +133,9 @@ class MPM_Schwarz:
         self.Domain1_prev_grid_v = ti.Vector.field(self.Domain1.dim, dtype=ti.f64, shape=self.Domain1.grid.v.shape)
         self.Domain2_prev_grid_v = ti.Vector.field(self.Domain2.dim, dtype=ti.f64, shape=self.Domain2.grid.v.shape)
 
+        # Schwarz收敛检查的accumulator字段（避免在kernel中使用局部变量+atomic）
+        self.convergence_max_residual = ti.field(dtype=ti.f64, shape=())
+
         # 只在非无GUI模式下初始化GUI
         if not self.no_gui:
             self.gui = ti.GUI("Implicit MPM Schwarz", res=(800, 800))
@@ -131,6 +145,10 @@ class MPM_Schwarz:
             self._init_render_fields()
         else:
             self.gui = None
+
+        # 初始化完成后的内存检查点
+        if self.mem_profiler:
+            self.mem_profiler.checkpoint("initialization_complete")
 
     def _init_grid_lines(self):
         """初始化网格线条字段，只创建一次"""
@@ -365,12 +383,14 @@ class MPM_Schwarz:
             self.Domain2_prev_grid_v[I] = self.Domain2.grid.v[I]
 
     @ti.kernel
-    def check_schwarz_convergence(self) -> ti.f64:
+    def check_schwarz_convergence_kernel(self):
         """
         检查Schwarz迭代收敛性：计算overlap区域中当前迭代和上一次迭代的grid_v差的inf-norm
         overlap区域定义为两个domain都有质量（grid.m > 0）的网格点
+        使用field accumulator避免内存泄漏
         """
-        max_residual = 0.0
+        # 重置accumulator
+        self.convergence_max_residual[None] = 0.0
 
         # 检查overlap区域的收敛性：遍历Domain1，找到同时在Domain1和Domain2中都有质量的网格点
         for I in ti.grouped(self.Domain1.grid.v):
@@ -390,7 +410,7 @@ class MPM_Schwarz:
                    self.Domain2.grid.m[base] > 0:
                     # 这是真正的overlap区域，计算Domain1的速度收敛性
                     velocity_diff_norm = (self.Domain1.grid.v[I] - self.Domain1_prev_grid_v[I]).norm()
-                    ti.atomic_max(max_residual, velocity_diff_norm)
+                    ti.atomic_max(self.convergence_max_residual[None], velocity_diff_norm)
 
         # 同样检查Domain2中的overlap区域
         for I in ti.grouped(self.Domain2.grid.v):
@@ -410,9 +430,14 @@ class MPM_Schwarz:
                    self.Domain1.grid.m[base] > 0:
                     # 这是真正的overlap区域，计算Domain2的速度收敛性
                     velocity_diff_norm = (self.Domain2.grid.v[I] - self.Domain2_prev_grid_v[I]).norm()
-                    ti.atomic_max(max_residual, velocity_diff_norm)
+                    ti.atomic_max(self.convergence_max_residual[None], velocity_diff_norm)
 
-        return max_residual
+    def check_schwarz_convergence(self) -> float:
+        """
+        检查Schwarz迭代收敛性的wrapper函数
+        """
+        self.check_schwarz_convergence_kernel()
+        return self.convergence_max_residual[None]
 
     @ti.kernel
     def check_grid_v_residual(self) -> ti.f32:
@@ -478,12 +503,24 @@ class MPM_Schwarz:
             self.Domain1.solver.update_frame(self.current_frame)
             self.Domain2.solver.update_frame(self.current_frame)
 
+            # 帧开始内存检查点
+            if self.mem_profiler:
+                self.mem_profiler.checkpoint(f"frame_{self.current_frame}_start")
+
             # 开始帧统计
             if self.enable_perf_stats:
                 self.perf_stats.start_frame()
 
             # 1.P2G: 将粒子的质量和动量传递到网格上
+            if self.frame_stage_profiler:
+                self.frame_stage_profiler.start_stage("P2G")
+
             self.domain_manager.pre_step()
+
+            if self.frame_stage_profiler:
+                self.frame_stage_profiler.end_stage()
+            if self.mem_profiler:
+                self.mem_profiler.checkpoint(f"frame_{self.current_frame}_p2g_complete")
 
             # 记录上一步网格速度
             self.boundary_exchanger.save_grid_velocities()
@@ -496,13 +533,25 @@ class MPM_Schwarz:
             self.boundary_exchanger.save_boundary_velocities()
 
             # 2.迭代求解两个子域 - 使用收敛判别
+            if self.frame_stage_profiler:
+                self.frame_stage_profiler.start_stage("schwarz_iterations")
+
             converged = False
             for i in range(self.max_schwarz_iter):
                 print(f"Schwarz Iteration {i+1}/{self.max_schwarz_iter}")
 
+                # 只在前10帧进行详细的迭代级 profiling，避免 JSON 文件过大
+                enable_detailed_profile = self.mem_profiler and self.current_frame <= 10
+
+                # 迭代开始检查点
+                if enable_detailed_profile:
+                    self.mem_profiler.checkpoint(f"frame_{self.current_frame}_schwarz_iter_{i}_start")
+
                 # 在第一次迭代前保存初始grid_v状态
                 if i == 0:
                     self.save_schwarz_iteration_grid_v()
+                    if enable_detailed_profile:
+                        self.mem_profiler.checkpoint(f"frame_{self.current_frame}_schwarz_iter_{i}_after_save_grid_v")
 
                 timesteps = self.domain_manager.get_timestep_ratio()
 
@@ -512,6 +561,10 @@ class MPM_Schwarz:
                 if big_newton_iters is None:
                     big_newton_iters = 0
                 t_big_end = time.perf_counter()
+
+                # 大域求解后检查点（对所有迭代）
+                if enable_detailed_profile:
+                    self.mem_profiler.checkpoint(f"frame_{self.current_frame}_schwarz_iter_{i}_after_big_solve")
 
                 # 小域多步求解（带统计）
                 t_small_start = time.perf_counter()
@@ -540,6 +593,10 @@ class MPM_Schwarz:
 
                 t_small_end = time.perf_counter()
 
+                # 小域求解后检查点
+                if enable_detailed_profile:
+                    self.mem_profiler.checkpoint(f"frame_{self.current_frame}_schwarz_iter_{i}_after_small_solve")
+
                 # 检查收敛性（从第二次迭代开始）
                 convergence_residual = 1.0  # 默认值
                 if i > 0:
@@ -550,6 +607,10 @@ class MPM_Schwarz:
                     if convergence_residual < self.schwarz_eta:
                         print(f"  Schwarz iterations converged after {i+1} iterations!")
                         converged = True
+
+                    # 收敛性检查后检查点
+                    if enable_detailed_profile:
+                        self.mem_profiler.checkpoint(f"frame_{self.current_frame}_schwarz_iter_{i}_after_convergence_check")
 
                 # 记录本次 Schwarz 迭代的统计
                 if self.enable_perf_stats:
@@ -566,20 +627,35 @@ class MPM_Schwarz:
                 if not converged and i < self.max_schwarz_iter - 1:
                     # 保存当前状态用于下次迭代的收敛判别
                     self.save_schwarz_iteration_grid_v()
+                    if enable_detailed_profile:
+                        self.mem_profiler.checkpoint(f"frame_{self.current_frame}_schwarz_iter_{i}_after_save_for_next")
 
                     self.exchange_boundary_conditions()
                     self.boundary_exchanger.small_time_domain_boundary_v_next.copy_from(self.SmallTimeDomain.grid.boundary_v)
+                    if enable_detailed_profile:
+                        self.mem_profiler.checkpoint(f"frame_{self.current_frame}_schwarz_iter_{i}_after_boundary_exchange")
+
                     if self.do_small_advect:
                         self.restore_small_time_domain_particles()
                         self.SmallTimeDomain.pre_p2g()
                         self.SmallTimeDomain.p2g()
                         self.SmallTimeDomain.post_p2g()
+                        if enable_detailed_profile:
+                            self.mem_profiler.checkpoint(f"frame_{self.current_frame}_schwarz_iter_{i}_after_restore_and_p2g")
                     else:
                         self.SmallTimeDomain.grid.v_prev.copy_from(self.boundary_exchanger.small_time_domain_temp_grid_v)
                         self.SmallTimeDomain.grid.v.copy_from(self.boundary_exchanger.small_time_domain_temp_grid_v)
+                        if enable_detailed_profile:
+                            self.mem_profiler.checkpoint(f"frame_{self.current_frame}_schwarz_iter_{i}_after_grid_copy")
 
                 if not self.do_small_advect:
                     self.restore_small_time_domain_particles()
+                    if enable_detailed_profile:
+                        self.mem_profiler.checkpoint(f"frame_{self.current_frame}_schwarz_iter_{i}_after_final_restore")
+
+                # 迭代结束检查点
+                if enable_detailed_profile:
+                    self.mem_profiler.checkpoint(f"frame_{self.current_frame}_schwarz_iter_{i}_end")
 
                 # 如果收敛了就提前退出
                 if converged:
@@ -587,6 +663,11 @@ class MPM_Schwarz:
 
             if not converged:
                 print(f"Warning: Schwarz iterations did not converge after {self.max_schwarz_iter} iterations")
+
+            if self.frame_stage_profiler:
+                self.frame_stage_profiler.end_stage()
+            if self.mem_profiler:
+                self.mem_profiler.checkpoint(f"frame_{self.current_frame}_schwarz_complete")
 
             # self.apply_average_grid_v()
 
@@ -602,16 +683,54 @@ class MPM_Schwarz:
 
             # 3.G2P: 将网格的速度传递回粒子上
             # 4.粒子自由运动
+            if self.frame_stage_profiler:
+                self.frame_stage_profiler.start_stage("G2P_and_advect")
+
             self.domain_manager.finalize_step(self.do_small_advect)
 
-            # 每1000帧强制垃圾回收一次，避免频繁调用影响性能
-            if self.current_frame % 1000 == 0:
-                gc.collect()
+            if self.frame_stage_profiler:
+                self.frame_stage_profiler.end_stage()
+
+            # 帧结束检查点和记录
+            if self.mem_profiler:
+                stage_data = self.frame_stage_profiler.get_stages() if self.frame_stage_profiler else None
+                self.mem_profiler.record_frame(self.current_frame, stage_data)
+                self.mem_profiler.checkpoint(f"frame_{self.current_frame}_complete")
+                if self.frame_stage_profiler:
+                    self.frame_stage_profiler.reset()
+
+            # 分层垃圾回收策略 - 根据频率和代数平衡性能和内存
+            # Level 1: 轻量级清理 - 每10帧，只清理最新临时对象
+            if self.current_frame % 10 == 0 and self.current_frame % 500 != 0 and self.current_frame % 1000 != 0:
+                if self.mem_profiler:
+                    self.mem_profiler.checkpoint(f"before_light_gc_frame_{self.current_frame}")
+                gc.collect(generation=0)  # 只清理generation 0（最新对象）
+                if self.mem_profiler:
+                    self.mem_profiler.checkpoint(f"after_light_gc_frame_{self.current_frame}")
+
+            # Level 2: 中等清理 - 每50帧
+            elif self.current_frame % 50 == 0 and self.current_frame % 1000 != 0:
+                if self.mem_profiler:
+                    self.mem_profiler.checkpoint(f"before_medium_gc_frame_{self.current_frame}")
+                gc.collect(generation=1)  # 清理generation 0和1
+                if self.mem_profiler:
+                    self.mem_profiler.checkpoint(f"after_medium_gc_frame_{self.current_frame}")
+
+            # Level 3: 完全清理 - 每100帧
+            elif self.current_frame % 100 == 0:
+                if self.mem_profiler:
+                    self.mem_profiler.checkpoint(f"before_full_gc_frame_{self.current_frame}")
+                gc.collect()  # 完全GC，清理所有代
+                if self.mem_profiler:
+                    self.mem_profiler.checkpoint(f"after_full_gc_frame_{self.current_frame}")
 
     def render(self):
         # 在无GUI模式下跳过渲染
         if self.no_gui or self.gui is None:
             return
+
+        if self.mem_profiler:
+            self.mem_profiler.checkpoint(f"render_frame_{self.current_frame}_start")
 
         # 使用kernel更新渲染位置
         self._update_render_positions_domain1()
@@ -681,6 +800,8 @@ class MPM_Schwarz:
         self.gui.show()
         # 合并两域粒子数据
         if self.recorder is None:
+            if self.mem_profiler:
+                self.mem_profiler.checkpoint(f"render_frame_{self.current_frame}_end")
             return
         print("Frame", len(self.recorder.frame_data))
         all_pos = np.concatenate([
@@ -705,6 +826,9 @@ class MPM_Schwarz:
         # 清理临时numpy数组，避免内存累积
         del all_pos, d1_colors, d2_colors, all_colors
         # gc.collect() 已移至 step() 中每1000帧调用一次
+
+        if self.mem_profiler:
+            self.mem_profiler.checkpoint(f"render_frame_{self.current_frame}_end")
     
     def _create_experiment_directory(self, config_path=None):
         """创建实验目录并备份配置文件"""
@@ -1029,6 +1153,13 @@ if __name__ == "__main__":
             print(f"保存最终帧 {frame_count} 的应力数据...")
             mpm.save_stress_data(frame_count)
             mpm.saved_stress_frames.append(frame_count)
+
+        # 生成内存分析报告
+        if mpm.mem_profiler:
+            mpm.mem_profiler.checkpoint("simulation_complete")
+            report_path = os.path.join(mpm._experiment_dir, "memory_profile.json")
+            mpm.mem_profiler.save_report(report_path)
+            mpm.mem_profiler.stop()
     else:
         # GUI模式：使用传统的GUI循环
         while mpm.gui and mpm.gui.running:
@@ -1050,8 +1181,15 @@ if __name__ == "__main__":
             # 自动停止条件
             if frame_count >= mpm.max_frames:
                 break
-    
-    
+
+        # 生成内存分析报告（GUI模式）
+        if mpm.mem_profiler:
+            mpm.mem_profiler.checkpoint("simulation_complete")
+            report_path = os.path.join(mpm._experiment_dir, "memory_profile.json")
+            mpm.mem_profiler.save_report(report_path)
+            mpm.mem_profiler.stop()
+
+
     # #绘制最后1组residuals
     # for i in range(1):
     #     plt.plot(mpm.residuals[-i-1])
@@ -1060,7 +1198,7 @@ if __name__ == "__main__":
     # plt.xscale('log')  # X轴对数化
     # plt.yscale('log')  # Y轴对数化
     # plt.show()
-    
+
     # 在最后一帧记录应力数据（如果还没有保存过）
     if mpm.stress_save_interval == 0 or frame_count not in mpm.saved_stress_frames:
         print("记录最终帧的应力数据...")

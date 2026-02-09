@@ -53,8 +53,6 @@ class Newton:
         # 重新创建SparseMatrixBuilder
         self.H_builder = ti.linalg.SparseMatrixBuilder(new_dim, new_dim, max_num_triplets=int(new_dim**2* 0.5), dtype=self.float_type)
 
-        # 强制垃圾回收，释放 Taichi GPU 资源
-        gc.collect()
 
         print(f"Newton optimizer resized to dimension: {new_dim}")
         print(f"SparseMatrixBuilder created with shape: ({new_dim}, {new_dim})")
@@ -114,8 +112,12 @@ class Newton:
                 print(f"Final Energy: {self.f0:.4e}")
                 return it
 
-            # 构建Hessian矩阵 (重用builder)
-            # self.H_builder = ti.linalg.SparseMatrixBuilder(self.dim[None], self.dim[None], max_num_triplets=int(self.dim[None]**2), dtype=self.float_type)
+            self.H_builder = ti.linalg.SparseMatrixBuilder(
+                    self.dim[None], self.dim[None],
+                    max_num_triplets=int(self.dim[None]**2 * 0.1),
+                    dtype=self.float_type
+                )
+
             self.hess_fn(self.x, self.H_builder)
             H = self.H_builder.build()
 
@@ -136,10 +138,7 @@ class Newton:
                 self.d = self.b
                 print("Solver failed, resetting to gradient descent")
 
-            # 清理 Taichi 稀疏矩阵对象，防止内存泄漏
             del H
-            # 注意：gc.collect() 太频繁会影响性能，已移至外层每1000帧调用
-
             # 线搜索
             alpha = self.line_search()
             # print(f"Step size: {alpha:.4e}")
@@ -150,8 +149,6 @@ class Newton:
                 for i in range(self.get_dimension()):
                     self.x[i] += a * d[i]
             update_x(alpha, self.d)
-
-            
 
             # 记录历史
             self.f_his.append(self.f0)
