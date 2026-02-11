@@ -1,16 +1,19 @@
 {
     "max_schwarz_iter": 50,
-        "velocity_convergence_threshold": 1e-6,
+    "schwarz_eta": 1e-7,
+    "max_frames": 240000,
+    "velocity_convergence_threshold": 1e-10,
     "velocity_convergence_check_interval": 10,
-    "max_frames": 200000,
     "use_record": false,
     "visualize_grid": true,
-        "no_gui": false,
+    "enable_perf_stats": false,
+    "profile_memory": false,
+    "visualize_boundary_grid": true,
+    "no_gui": false,
     "steps": 1,
+    "stress_save_interval": 1000,
     "arch": "cpu",
     "float_type": "f64",
-    "enable_perf_stats": false,
-    "visualize_boundary_grid": true,
     "use_mass_boundary": true,
     "do_small_advect": false,
     "Domain1": {
@@ -27,7 +30,7 @@
         ],
         "particles_per_grid": 7,
         "sampling_method": "regular",
-        "elasticity_model": "linear",
+        "elasticity_model": "neohookean",
         "dt": 1e-4,
         "max_iter": 1,
         "solve_max_iter": 1000,
@@ -43,7 +46,7 @@
         "initial_position_range": [
             [
                 [
-                    0.2,
+                    0.1,
                     0.6
                 ],
                 [
@@ -60,39 +63,38 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 16,
-        "grid_ny": 32,
+        "grid_nx": 32,
+        "grid_ny": 64,
         "domain_width": 0.5,
         "domain_height": 1.0,
         "offset": [
             0.3,
             0.0
         ],
-        "particles_per_grid": 16,
+        "particles_per_grid": 7,
         "sampling_method": "regular",
-        "constrain_x_velocity": true,
-        "elasticity_model": "linear",
-        "dt": 1e-4,
+        "elasticity_model": "neohookean",
+        "dt": 1e-3,
         "max_iter": 1,
         "solve_max_iter": 1000,
         "solve_init_iter": 100,
-        "E": 1e6,
+        "E": 1e5,
         "nu": 0.3,
         "implicit": true,
         "use_auto_diff": false,
         "compare_diff": false,
-        "bound": 2,
+        "bound": 3,
         "p_rho": 1e3,
         "initial_velocity_y": -2.0,
         "initial_position_range": [
             [
                 [
                     0.2,
-                    0.45
+                    0.4
                 ],
                 [
-                    0.3,
-                    0.7
+                    0.4,
+                    0.8
                 ]
             ]
         ],

@@ -135,6 +135,7 @@ class MPM_Schwarz:
 
         # Schwarz收敛检查的accumulator字段（避免在kernel中使用局部变量+atomic）
         self.convergence_max_residual = ti.field(dtype=ti.f64, shape=())
+        self.convergence_max_velocity = ti.field(dtype=ti.f64, shape=())
 
         # 只在非无GUI模式下初始化GUI
         if not self.no_gui:
@@ -385,12 +386,14 @@ class MPM_Schwarz:
     @ti.kernel
     def check_schwarz_convergence_kernel(self):
         """
-        检查Schwarz迭代收敛性：计算overlap区域中当前迭代和上一次迭代的grid_v差的inf-norm
+        检查Schwarz迭代收敛性：计算overlap区域中当前迭代和上一次迭代的grid_v差的相对误差
         overlap区域定义为两个domain都有质量（grid.m > 0）的网格点
+        相对误差定义为: max(|v_current - v_previous|) / max(|v_current|)
         使用field accumulator避免内存泄漏
         """
         # 重置accumulator
         self.convergence_max_residual[None] = 0.0
+        self.convergence_max_velocity[None] = 0.0
 
         # 检查overlap区域的收敛性：遍历Domain1，找到同时在Domain1和Domain2中都有质量的网格点
         for I in ti.grouped(self.Domain1.grid.v):
@@ -412,6 +415,10 @@ class MPM_Schwarz:
                     velocity_diff_norm = (self.Domain1.grid.v[I] - self.Domain1_prev_grid_v[I]).norm()
                     ti.atomic_max(self.convergence_max_residual[None], velocity_diff_norm)
 
+                    # 计算当前速度的模长
+                    velocity_magnitude = self.Domain1.grid.v[I].norm()
+                    ti.atomic_max(self.convergence_max_velocity[None], velocity_magnitude)
+
         # 同样检查Domain2中的overlap区域
         for I in ti.grouped(self.Domain2.grid.v):
             if self.Domain2.grid.m[I] > 0:
@@ -432,12 +439,33 @@ class MPM_Schwarz:
                     velocity_diff_norm = (self.Domain2.grid.v[I] - self.Domain2_prev_grid_v[I]).norm()
                     ti.atomic_max(self.convergence_max_residual[None], velocity_diff_norm)
 
+                    # 计算当前速度的模长
+                    velocity_magnitude = self.Domain2.grid.v[I].norm()
+                    ti.atomic_max(self.convergence_max_velocity[None], velocity_magnitude)
+
     def check_schwarz_convergence(self) -> float:
         """
         检查Schwarz迭代收敛性的wrapper函数
+        返回相对残差: max_velocity_diff / max_velocity
+        当max_velocity接近零时，返回绝对残差
         """
         self.check_schwarz_convergence_kernel()
-        return self.convergence_max_residual[None]
+
+        # 定义小的epsilon用于零速度判定
+        velocity_epsilon = 1e-14
+
+        max_velocity = self.convergence_max_velocity[None]
+        max_residual = self.convergence_max_residual[None]
+
+        # 计算相对残差，带零速度保护
+        if max_velocity < velocity_epsilon:
+            # 速度接近零，使用绝对残差
+            relative_residual = max_residual
+        else:
+            # 计算相对残差
+            relative_residual = max_residual / max_velocity
+
+        return relative_residual
 
     @ti.kernel
     def check_grid_v_residual(self) -> ti.f32:
@@ -601,7 +629,9 @@ class MPM_Schwarz:
                 convergence_residual = 1.0  # 默认值
                 if i > 0:
                     convergence_residual = self.check_schwarz_convergence()
-                    print(f"  Convergence residual (inf-norm): {convergence_residual:.2e}")
+                    max_v = self.convergence_max_velocity[None]
+                    max_diff = self.convergence_max_residual[None]
+                    print(f"  Convergence: relative={convergence_residual:.2e}, max_v={max_v:.2e}, max_diff={max_diff:.2e}")
                     residuals.append(convergence_residual)
 
                     if convergence_residual < self.schwarz_eta:
@@ -1123,6 +1153,11 @@ if __name__ == "__main__":
     # 创建Schwarz域分解MPM实例
     mpm = MPM_Schwarz(cfg, no_gui=args.no_gui, config_path=args.config)
 
+    #保存初始状态的应力数据
+    print("保存初始状态的应力数据...")
+    mpm.save_stress_data(frame_number=0)
+    mpm.saved_stress_frames.append(0)
+    
     frame_count = 0
     target_frames = cfg.get("max_frames", 60)
 
@@ -1190,14 +1225,6 @@ if __name__ == "__main__":
             mpm.mem_profiler.stop()
 
 
-    # #绘制最后1组residuals
-    # for i in range(1):
-    #     plt.plot(mpm.residuals[-i-1])
-    # plt.ylabel('Residual')
-    # plt.xlabel('Iteration')
-    # plt.xscale('log')  # X轴对数化
-    # plt.yscale('log')  # Y轴对数化
-    # plt.show()
 
     # 在最后一帧记录应力数据（如果还没有保存过）
     if mpm.stress_save_interval == 0 or frame_count not in mpm.saved_stress_frames:

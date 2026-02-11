@@ -50,11 +50,19 @@ class MPMSolver:
 
         default_gravity = [0.0, 0.0] if self.dim == 2 else [0.0, 0.0, 0.0]
         gravity = config.get("gravity", default_gravity)
-        self.gravity = ti.Vector(gravity)
 
-        # 渐进式重力配置
-        self.increasing_gravity = config.get("increasing_gravity", False)
-        self.increasing_steps = config.get("increasing_steps", 0)
+        # 使用 ti.Vector.field 以支持运行时修改
+        self.gravity = ti.Vector.field(self.dim, dtype=self.float_type, shape=())
+        self.gravity[None] = gravity
+
+        # 重力调度配置
+        self.gravity_schedule = config.get("gravity_schedule", None)
+        if self.gravity_schedule is not None:
+            # 解析 gravity_schedule: [{"frame": 0, "gravity": [0, 0]}, ...]
+            # 按帧数排序
+            self.gravity_schedule = sorted(self.gravity_schedule, key=lambda x: x["frame"])
+            print(f"使用重力调度: {len(self.gravity_schedule)} 个关键帧")
+
         self.current_frame_field = ti.field(ti.i32, shape=())  # 当前帧数字段
         self.current_frame_field[None] = 0
         
@@ -120,18 +128,9 @@ class MPMSolver:
         返回:
             当前帧应该使用的重力向量
         """
-        result = self.gravity
-
-        # 如果启用了渐进重力
-        if ti.static(self.increasing_gravity and self.increasing_steps > 0):
-            current_frame = self.current_frame_field[None]
-
-            # 如果当前帧小于渐进步数，线性插值
-            if current_frame < self.increasing_steps:
-                ratio = ti.cast(current_frame, self.float_type) / ti.cast(self.increasing_steps, self.float_type)
-                result = self.gravity * ratio
-
-        return result
+        # 返回 gravity field 的值
+        # 实际的重力值会在 update_frame() 中根据调度更新
+        return self.gravity[None]
 
     def update_frame(self, frame_number):
         """
@@ -141,6 +140,16 @@ class MPMSolver:
             frame_number: 当前帧数
         """
         self.current_frame_field[None] = frame_number
+
+        # 如果配置了 gravity_schedule，根据当前帧数更新重力
+        if self.gravity_schedule is not None:
+            # 检查是否有任何调度条目匹配当前帧
+            for schedule in self.gravity_schedule:
+                if schedule["frame"] == frame_number:
+                    # 切换到新的重力值
+                    target_gravity = schedule["gravity"]
+                    self.gravity[None] = target_gravity
+                    print(f"帧 {frame_number}: 重力更新为 {target_gravity}")
 
     def save_F(self):
         """保存当前F矩阵"""

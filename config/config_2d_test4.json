@@ -1,76 +1,87 @@
 {
-"arch": "cpu",
-        "float_type": "f64",
-        "dim": 2,
-        "grid_nx": 200,
-        "grid_ny": 200,
-        "domain_width": 1.0,
-        "domain_height": 1.0,
-        "particles_per_grid": 9,
-        "sampling_method": "regular",
-        "elasticity_model": "neohookean",
-        "use_mapping": true,
-        "dt": 0.01,
-        "max_iter": 1,
-        "solve_max_iter": 2,
-        "solve_init_iter": 100,
-        "offset": [
-            0.0,
-            0.0
-        ],
-        "DBC_range": [
+    "arch": "cpu",
+    "float_type": "f64",
+    "dim": 2,
+    "grid_nx": 100,
+    "grid_ny": 100,
+    "domain_width": 1.0,
+    "domain_height": 1.0,
+    "particles_per_grid": 16,
+    "sampling_method": "gauss",
+    "elasticity_model": "neohookean",
+    "use_mapping": false,
+    "dt": 0.0002,
+    "max_iter": 1,
+    "solve_max_iter": 100,
+    "solve_init_iter": 100,
+    "offset": [
+        0.0,
+        0.0
+    ],
+    "DBC_range": [
+        [
             [
-                [0, 0.1],
-                [0, 1]
+                0,
+                0.05
+            ],
+            [
+                0,
+                1
             ]
+        ]
+    ],
+    "boundary_particle_range": [
+        [
+            0,
+            1
         ],
-        "boundary_particle_range": [
-            [0, 1],
-            [0.0, 1]
-        ],
-        "gravity": [
+        [
             0.0,
-            -0.03875248015873022
-        ],
-        "damping":0.5,
-        "particle_damping": 0.999,
-        "material_params": [
-            {
-                "id": 0,
-                "name": "default",
-                "E": 1e5,
-                "nu": 0.4,
-                "rho": 1e3
-            }
-        ],
-        "implicit": true,
-        "static_solve": false,
-        "use_auto_diff": false,
-        "compare_diff": false,
-        "bound": 2,
-        "initial_velocity_y": 0,
-        "shapes": [
-            {
-                "type": "rectangle",
-                "params": {
-                    "range": [
-                        [
-                            0.05,
-                            0.9
-                        ],
-                        [
-                            0.79,
-                            0.81
-                        ]
+            1
+        ]
+    ],
+    "gravity": [
+        0.0,
+        -2.58e-04
+    ],
+    "damping": 0.5,
+    "particle_damping": 0.999,
+    "material_params": [
+        {
+            "id": 0,
+            "name": "default",
+            "E": 1e5,
+            "nu": 0.4,
+            "rho": 1e3
+        }
+    ],
+    "implicit": true,
+    "static_solve": false,
+    "use_auto_diff": false,
+    "compare_diff": false,
+    "bound": 2,
+    "initial_velocity_y": 0,
+    "shapes": [
+        {
+            "type": "rectangle",
+            "params": {
+                "range": [
+                    [
+                        0.01,
+                        0.9
+                    ],
+                    [
+                        0.92,
+                        0.96
                     ]
-                },
-                "operation": "add",
-                "material_id": 0
-            }
-
-        ],
-        "implicit_solver": "Newton",
-        "eta": 1e-4,
+                ]
+            },
+            "operation": "add",
+            "material_id": 0
+        }
+    ],
+    "implicit_solver": "Newton",
+    "eta": 1e-5,
     "max_frames": 200000,
     "use_record": false,
     "no_gui": false,

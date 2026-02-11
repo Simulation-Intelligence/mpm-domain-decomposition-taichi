@@ -828,7 +828,9 @@ if __name__ == "__main__":
         print("开始动态隐式MPM模拟...")
         # 原有的动态求解模式
         i = 0
-
+        # 保存第 0 帧的应力数据（初始状态）
+        print("保存初始状态的应力数据...")
+        mpm.save_stress_data(0)
         max_frames = mpm.max_frames
         while (i < max_frames) and ((mpm.gui is not None and mpm.gui.running) or mpm.no_gui):
            mpm.step()
