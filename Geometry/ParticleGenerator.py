@@ -922,7 +922,7 @@ class ParticleGenerator:
         target_particle_spacing = 1.0 / (particles_per_unit_area ** 0.5)
 
         # 基于粒子间距确定统一的边界段长度
-        target_segment_length = target_particle_spacing * 0.5  # 边界段长度为粒子间距的一半
+        target_segment_length = target_particle_spacing * 1  # 边界段长度为粒子间距
 
         print(f"网格配置: {self.grid_nx}×{self.grid_ny}, 域尺寸: {self.domain_width}×{self.domain_height}")
         print(f"每网格粒子数: {self.particles_per_grid}")
