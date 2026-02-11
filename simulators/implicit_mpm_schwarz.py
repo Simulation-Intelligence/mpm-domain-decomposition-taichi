@@ -1181,7 +1181,11 @@ if __name__ == "__main__":
             # 自动停止条件
             if frame_count >= mpm.max_frames:
                 break
-
+        # 保存最终帧的应力数据（如果还没保存过）
+        if frame_count not in mpm.saved_stress_frames:
+            print(f"保存最终帧 {frame_count} 的应力数据...")
+            mpm.save_stress_data(frame_count)
+            mpm.saved_stress_frames.append(frame_count)
         # 生成内存分析报告（GUI模式）
         if mpm.mem_profiler:
             mpm.mem_profiler.checkpoint("simulation_complete")

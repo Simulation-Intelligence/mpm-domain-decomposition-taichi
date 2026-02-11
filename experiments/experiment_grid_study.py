@@ -41,6 +41,68 @@ def save_config(config, config_path):
     with open(config_path, 'w') as f:
         json.dump(config, f, indent=4)
 
+def load_result_config_for_filter(result_dir):
+    """加载用于过滤计算的结果配置文件"""
+    config_paths = [
+        os.path.join(result_dir, "config.json"),
+        os.path.join(result_dir, "config_backup.json"),
+    ]
+
+    for config_path in config_paths:
+        if not os.path.exists(config_path):
+            continue
+        try:
+            config = load_config(config_path)
+            print(f"过滤配置文件: {config_path}")
+            return config
+        except Exception as e:
+            print(f"警告: 读取配置文件失败 {config_path}: {e}")
+
+    print("警告: 未找到可用于Domain2过滤的配置文件（config.json/config_backup.json）")
+    return None
+
+def compute_domain2_y_threshold(config):
+    """根据Domain2的bound/grid_ny/domain_height计算全局坐标y阈值"""
+    domain2 = config.get("Domain2")
+    if domain2 is None:
+        raise ValueError("配置中缺少Domain2")
+
+    required_keys = ["bound", "grid_ny", "domain_height"]
+    missing_keys = [k for k in required_keys if k not in domain2]
+    if missing_keys:
+        raise ValueError(f"Domain2缺少必要字段: {missing_keys}")
+
+    bound = int(domain2["bound"])
+    grid_ny = int(domain2["grid_ny"])
+    domain_height = float(domain2["domain_height"])
+    if grid_ny <= 0:
+        raise ValueError(f"Domain2.grid_ny必须大于0，当前值: {grid_ny}")
+
+    offset = domain2.get("offset", [0.0, 0.0])
+    offset_y = 0.0
+    if isinstance(offset, (list, tuple)) and len(offset) >= 2:
+        offset_y = float(offset[1])
+
+    dy = domain_height / grid_ny
+    layers = bound + 1
+    local_y_threshold_max = dy * layers
+    local_y_threshold_min = dy * (layers - 2)
+    y_threshold_max = offset_y + local_y_threshold_max
+    y_threshold_min = offset_y + local_y_threshold_min
+
+    return {
+        "bound": bound,
+        "grid_ny": grid_ny,
+        "domain_height": domain_height,
+        "offset_y": offset_y,
+        "dy": dy,
+        "layers": layers,
+        "local_y_threshold_max": local_y_threshold_max,
+        "local_y_threshold_min": local_y_threshold_min,
+        "y_threshold_max": y_threshold_max,
+        "y_threshold_min": y_threshold_min,
+    }
+
 def modify_config_grid_size(config, grid_size, use_schwarz=False):
     """
     修改配置文件的网格分辨率
@@ -167,7 +229,7 @@ def backup_result_dir(source_dir, grid_size, output_base_dir, use_schwarz=False)
 
 def run_batch_grid_study(base_config_path, grid_sizes, use_schwarz=False,
                         output_dir="experiment_results/grid_study", timeout=3600,
-                        y_filter_min=0.0, y_filter_max=0.01):
+                        y_filter_min=0.0, y_filter_max=0.01, use_domain2_bound_filter=False):
     """
     运行批量网格研究
 
@@ -177,6 +239,7 @@ def run_batch_grid_study(base_config_path, grid_sizes, use_schwarz=False,
         use_schwarz: 是否使用Schwarz双域求解器
         output_dir: 输出目录
         timeout: 单个模拟的超时时间
+        use_domain2_bound_filter: 是否启用Domain2 bound网格层Y过滤（仅Schwarz）
 
     返回:
         dict: 实验结果汇总
@@ -265,7 +328,9 @@ def run_batch_grid_study(base_config_path, grid_sizes, use_schwarz=False,
     if results['successful_runs']:
         print(f"\n{'='*80}")
         print("开始应力分析和解析解对比...")
-        analyze_stress_convergence(results, base_config_path, output_dir, use_schwarz, y_filter_min, y_filter_max)
+        analyze_stress_convergence(results, base_config_path, output_dir, use_schwarz,
+                                  y_filter_min, y_filter_max, use_all_particles=False, n_bins=None,
+                                  use_domain2_bound_filter=use_domain2_bound_filter)
 
     return results
 
@@ -283,7 +348,7 @@ def extract_hertz_parameters_from_config(config, actual_mass=None):
 
     # 材料参数
     material = domain_config['material_params'][0]
-    E = material['E'] / 2 # 按要求E除以2
+    E = material['E'] # 按要求E除以2
     nu = material['nu']
     rho = material['rho']
 
@@ -323,7 +388,7 @@ def extract_hertz_parameters_from_config(config, actual_mass=None):
 
     # 计算等效接触压力：体力 × 质量 / 载荷宽度
     total_force = force_magnitude * mass_to_use
-    applied_pressure = total_force / load_width
+    applied_pressure = total_force / load_width 
 
     # 计算分析区域
     if 'Domain1' in config:
@@ -397,8 +462,18 @@ def calculate_hertz_analytical_solution(config_path, actual_mass=None, y_filter_
         'contact_width': contact_width
     }
 
-def load_mpm_stress_results(result_dir, use_schwarz=False, y_filter_min=None, y_filter_max=None):
-    """加载MPM模拟的应力结果"""
+def load_mpm_stress_results(result_dir, use_schwarz=False, y_filter_min=None, y_filter_max=None,
+                            use_all_particles=False, use_domain2_bound_filter=False):
+    """加载MPM模拟的应力结果
+
+    参数:
+        result_dir: 结果目录路径
+        use_schwarz: 是否使用Schwarz双域结果
+        y_filter_min: Y坐标过滤最小值
+        y_filter_max: Y坐标过滤最大值
+        use_all_particles: 是否使用Y范围内的所有粒子（而非只用边界粒子）
+        use_domain2_bound_filter: 是否启用Domain2 bound网格层Y过滤（仅Schwarz）
+    """
     print(f"加载结果目录: {result_dir}")
 
     # 首先检查新的文件结构 stress_data/frame_X/
@@ -478,49 +553,115 @@ def load_mpm_stress_results(result_dir, use_schwarz=False, y_filter_min=None, y_
     print(f"Loaded {len(positions)} particles from frame {frame_num}")
 
     try:
-        # 过滤边界粒子
+        # 获取粒子范围信息
         y_min = positions[:, 1].min()
         y_max = positions[:, 1].max()
-        boundary_mask = boundary_flags == 1  # 边界粒子标志为1
 
-        # 按Y高度过滤（同时支持max和min）
-        if y_filter_min is not None or y_filter_max is not None:
-            if y_filter_min is not None and y_filter_max is not None:
-                y_filter_mask = (positions[:, 1] >= y_filter_min) & (positions[:, 1] <= y_filter_max)
-                print(f"应用Y坐标过滤: {y_filter_min} <= y <= {y_filter_max}")
-            elif y_filter_min is not None:
-                y_filter_mask = positions[:, 1] >= y_filter_min
-                print(f"应用Y坐标过滤: y >= {y_filter_min}")
-            else:  # y_filter_max is not None
-                y_filter_mask = positions[:, 1] <= y_filter_max
-                print(f"应用Y坐标过滤: y <= {y_filter_max}")
-            boundary_mask = boundary_mask & y_filter_mask
+        particle_mask = None
+        use_legacy_y_filter = True
 
-        boundary_positions = positions[boundary_mask]
-        boundary_stress = stress_data[boundary_mask]
+        # 新模式：按Domain2边界层数计算Y阈值（仅Schwarz）
+        if use_domain2_bound_filter:
+            if use_schwarz:
+                result_config = load_result_config_for_filter(result_dir)
+                if result_config is not None:
+                    try:
+                        filter_info = compute_domain2_y_threshold(result_config)
+                        y_threshold_max = filter_info["y_threshold_max"]
+                        y_threshold_min = filter_info["y_threshold_min"]
+                        y_filter_mask = (positions[:, 1] >= y_threshold_min) & (positions[:, 1] <= y_threshold_max)
+
+                        print("启用Domain2 bound网格层Y过滤模式（覆盖y_filter_min/y_filter_max）")
+                        print(
+                            f"Domain2参数: bound={filter_info['bound']}, grid_ny={filter_info['grid_ny']}, "
+                            f"domain_height={filter_info['domain_height']}, offset_y={filter_info['offset_y']}"
+                        )
+                        print(
+                            f"计算公式: y <= offset_y + (bound + 1) * (domain_height / grid_ny) = "
+                            f"{filter_info['offset_y']:.6f} + ({filter_info['bound']} + 1) * "
+                            f"({filter_info['domain_height']:.6f} / {filter_info['grid_ny']}) = {y_threshold_max:.6f}"
+                        )
+
+                        if use_all_particles:
+                            particle_mask = y_filter_mask
+                            print(f"应用Domain2层数过滤（所有粒子）: y <= {y_threshold_max}, y >= {y_threshold_min}")
+                        else:
+                            boundary_mask = boundary_flags == 1
+                            particle_mask = boundary_mask & y_filter_mask
+                            print(f"应用Domain2层数过滤（边界粒子）: y <= {y_threshold_max}, y >= {y_threshold_min}")
+                        use_legacy_y_filter = False
+                    except Exception as e:
+                        print(f"警告: Domain2层数过滤计算失败，回退到Y坐标范围过滤: {e}")
+                else:
+                    print("警告: 无法读取结果配置，回退到Y坐标范围过滤")
+            else:
+                print("信息: use_domain2_bound_filter仅支持Schwarz双域，当前使用单域，将回退到Y坐标范围过滤")
+
+        # 兼容旧模式：按y_filter_min/y_filter_max过滤
+        if use_legacy_y_filter:
+            if use_all_particles:
+                # 使用Y范围内的所有粒子
+                if y_filter_min is not None or y_filter_max is not None:
+                    if y_filter_min is not None and y_filter_max is not None:
+                        particle_mask = (positions[:, 1] >= y_filter_min) & (positions[:, 1] <= y_filter_max)
+                        print(f"应用Y坐标过滤（所有粒子）: {y_filter_min} <= y <= {y_filter_max}")
+                    elif y_filter_min is not None:
+                        particle_mask = positions[:, 1] >= y_filter_min
+                        print(f"应用Y坐标过滤（所有粒子）: y >= {y_filter_min}")
+                    else:  # y_filter_max is not None
+                        particle_mask = positions[:, 1] <= y_filter_max
+                        print(f"应用Y坐标过滤（所有粒子）: y <= {y_filter_max}")
+                else:
+                    particle_mask = np.ones(len(positions), dtype=bool)
+                    print("使用所有粒子（无Y坐标过滤）")
+            else:
+                # 只使用边界粒子
+                boundary_mask = boundary_flags == 1
+
+                # 按Y高度过滤
+                if y_filter_min is not None or y_filter_max is not None:
+                    if y_filter_min is not None and y_filter_max is not None:
+                        y_filter_mask = (positions[:, 1] >= y_filter_min) & (positions[:, 1] <= y_filter_max)
+                        print(f"应用Y坐标过滤（边界粒子）: {y_filter_min} <= y <= {y_filter_max}")
+                    elif y_filter_min is not None:
+                        y_filter_mask = positions[:, 1] >= y_filter_min
+                        print(f"应用Y坐标过滤（边界粒子）: y >= {y_filter_min}")
+                    else:  # y_filter_max is not None
+                        y_filter_mask = positions[:, 1] <= y_filter_max
+                        print(f"应用Y坐标过滤（边界粒子）: y <= {y_filter_max}")
+                    particle_mask = boundary_mask & y_filter_mask
+                else:
+                    particle_mask = boundary_mask
+
+        selected_positions = positions[particle_mask]
+        selected_stress = stress_data[particle_mask]
 
         solver_type = "Domain2" if use_schwarz else "Single-domain"
         print(f"{solver_type} 粒子y坐标范围: {y_min:.4f} - {y_max:.4f}")
 
-        if y_filter_min is not None or y_filter_max is not None:
-            boundary_y_min = boundary_positions[:, 1].min() if len(boundary_positions) > 0 else 0
-            boundary_y_max = boundary_positions[:, 1].max() if len(boundary_positions) > 0 else 0
-            print(f"Found {len(boundary_positions)} filtered boundary particles (y: {boundary_y_min:.4f}-{boundary_y_max:.4f}, total: {len(positions)})")
+        if len(selected_positions) > 0:
+            selected_y_min = selected_positions[:, 1].min()
+            selected_y_max = selected_positions[:, 1].max()
+            particle_type = "all particles" if use_all_particles else "boundary particles"
+            print(f"Found {len(selected_positions)} filtered {particle_type} (y: {selected_y_min:.4f}-{selected_y_max:.4f}, total: {len(positions)})")
         else:
-            print(f"Found {len(boundary_positions)} boundary particles (total: {len(positions)})")
+            particle_type = "all particles" if use_all_particles else "boundary particles"
+            print(f"Warning: No {particle_type} found after filtering, skipping")
+            return None
 
-        # 直接使用所有边界粒子，按x坐标排序
-        sort_indices = np.argsort(boundary_positions[:, 0])
-        sorted_positions = boundary_positions[sort_indices]
-        sorted_stress = boundary_stress[sort_indices]
+        # 按x坐标排序
+        sort_indices = np.argsort(selected_positions[:, 0])
+        sorted_positions = selected_positions[sort_indices]
+        sorted_stress = selected_stress[sort_indices]
 
-        print(f"Using all {len(sorted_positions)} boundary particles directly")
+        print(f"Using {len(sorted_positions)} particles ({'all' if use_all_particles else 'boundary only'})")
 
         return {
             'positions': sorted_positions,
             'stress': sorted_stress,
             'y_range': [y_min, y_max],
-            'boundary_particle_count': len(boundary_positions),
+            'particle_count': len(selected_positions),
+            'use_all_particles': use_all_particles,
             'results_dir': result_dir
         }
 
@@ -528,8 +669,69 @@ def load_mpm_stress_results(result_dir, use_schwarz=False, y_filter_min=None, y_
         print(f"Error loading MPM results: {e}")
         return None
 
-def compare_stress_with_analytical(analytical_results, mpm_results, grid_size, output_dir):
-    """对比MPM结果和解析解"""
+def bin_average_stress(positions, stress, n_bins=50, x_range=None):
+    """将粒子按X方向分bin并计算每个bin内的平均应力
+
+    参数:
+        positions: 粒子位置数组 (N, 2)
+        stress: 应力张量数组 (N, 2, 2)
+        n_bins: bin的数量
+        x_range: X坐标范围 [x_min, x_max]，如果为None则自动确定
+
+    返回:
+        bin_centers: bin中心的X坐标
+        bin_avg_stress: 每个bin的平均应力张量
+        bin_counts: 每个bin中的粒子数量
+    """
+    x_coords = positions[:, 0]
+
+    # 确定X范围
+    if x_range is None:
+        x_min, x_max = x_coords.min(), x_coords.max()
+    else:
+        x_min, x_max = x_range
+
+    # 创建bins
+    bin_edges = np.linspace(x_min, x_max, n_bins + 1)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+    # 为每个粒子分配bin索引
+    bin_indices = np.digitize(x_coords, bin_edges) - 1
+    # 修正边界情况
+    bin_indices = np.clip(bin_indices, 0, n_bins - 1)
+
+    # 计算每个bin的平均应力
+    bin_avg_stress = []
+    bin_counts = []
+
+    for i in range(n_bins):
+        mask = bin_indices == i
+        count = np.sum(mask)
+        bin_counts.append(count)
+
+        if count > 0:
+            # 计算该bin内的平均应力
+            avg_stress = np.mean(stress[mask], axis=0)
+            bin_avg_stress.append(avg_stress)
+        else:
+            # 如果bin为空，使用零应力
+            bin_avg_stress.append(np.zeros_like(stress[0]))
+
+    bin_avg_stress = np.array(bin_avg_stress)
+    bin_counts = np.array(bin_counts)
+
+    return bin_centers, bin_avg_stress, bin_counts
+
+def compare_stress_with_analytical(analytical_results, mpm_results, grid_size, output_dir, n_bins=None):
+    """对比MPM结果和解析解
+
+    参数:
+        analytical_results: 解析解结果
+        mpm_results: MPM模拟结果
+        grid_size: 网格大小
+        output_dir: 输出目录
+        n_bins: bin数量，如果不为None则使用bin平均，否则直接绘制所有粒子
+    """
     from analytical_solutions.test3 import calculate_contact_width
 
     params = analytical_results['params']
@@ -544,26 +746,56 @@ def compare_stress_with_analytical(analytical_results, mpm_results, grid_size, o
     center_x = params['center'][0]
 
     # 只在接触区域内显示
-    contact_indices = (x_coords >= center_x - contact_width*1.2) & (x_coords <= center_x + contact_width*1.2)
+    contact_indices = (x_coords >= center_x - contact_width*2) & (x_coords <= center_x + contact_width*2)
     x_analytical = x_coords[contact_indices]
     pressure_analytical = -stress_yy[contact_indices]/1000
 
     # MPM结果
-    mpm_x = mpm_results['positions'][:, 0]
-    mpm_stress_yy = mpm_results['stress'][:, 1, 1]  # σ_yy分量
-    mpm_pressure = -mpm_stress_yy/1000  # 转换为正的压力值
+    mpm_positions = mpm_results['positions']
+    mpm_stress = mpm_results['stress']
 
     # 只显示接触区域内的MPM数据
-    mpm_contact_indices = (mpm_x >= center_x - contact_width*1.2) & (mpm_x <= center_x + contact_width*1.2)
-    x_mpm_contact = mpm_x[mpm_contact_indices]
-    pressure_mpm_contact = mpm_pressure[mpm_contact_indices]
+    mpm_x = mpm_positions[:, 0]
+    mpm_contact_indices = (mpm_x >= center_x - contact_width*2) & (mpm_x <= center_x + contact_width*2)
+    mpm_positions_contact = mpm_positions[mpm_contact_indices]
+    mpm_stress_contact = mpm_stress[mpm_contact_indices]
 
     # 绘制结果
     ax.plot(x_analytical, pressure_analytical, 'r-', linewidth=2, label='Analytical (Hertz)', alpha=0.8)
 
-    # MPM标签
-    mpm_label = f'MPM (Grid {grid_size})'
-    ax.scatter(x_mpm_contact, pressure_mpm_contact, c='blue', s=20, alpha=0.6, label=mpm_label)
+    # 根据是否使用bin平均来选择绘图方式
+    if n_bins is not None and n_bins > 0:
+        # 使用bin平均
+        bin_centers, bin_avg_stress, bin_counts = bin_average_stress(
+            mpm_positions_contact,
+            mpm_stress_contact,
+            n_bins=n_bins,
+            x_range=[center_x - contact_width*2, center_x + contact_width*2]
+        )
+
+        # 提取σ_yy分量并转换为压力
+        bin_avg_pressure = -bin_avg_stress[:, 1, 1] / 1000  # kPa
+
+        # 只绘制有粒子的bin
+        valid_bins = bin_counts > 0
+
+        particle_type = "all particles" if mpm_results.get('use_all_particles', False) else "boundary only"
+        mpm_label = f'MPM (Grid {grid_size}, {n_bins} bins, {particle_type})'
+        ax.plot(bin_centers[valid_bins], bin_avg_pressure[valid_bins],
+                'b-o', linewidth=1.5, markersize=4, alpha=0.7, label=mpm_label)
+
+        # 添加误差带（可选，显示每个bin内的粒子数）
+        # 可以通过颜色深浅或标记大小来表示bin内的粒子密度
+
+    else:
+        # 直接绘制所有粒子（原始方式）
+        mpm_stress_yy = mpm_stress_contact[:, 1, 1]
+        mpm_pressure = -mpm_stress_yy / 1000
+        x_mpm_contact = mpm_positions_contact[:, 0]
+
+        particle_type = "all particles" if mpm_results.get('use_all_particles', False) else "boundary only"
+        mpm_label = f'MPM (Grid {grid_size}, {particle_type})'
+        ax.scatter(x_mpm_contact, mpm_pressure, c='blue', s=20, alpha=0.6, label=mpm_label)
 
     # 标记接触边界
     ax.axvline(x=center_x - contact_width, color='red', linestyle='--', alpha=0.7,
@@ -575,7 +807,7 @@ def compare_stress_with_analytical(analytical_results, mpm_results, grid_size, o
     ax.set_title(f'Ellipse Contact: MPM vs Analytical Solution (Grid {grid_size})')
     ax.grid(True, alpha=0.3)
     ax.legend()
-    ax.set_xlim(center_x - contact_width*1.2, center_x + contact_width*1.2)
+    ax.set_xlim(center_x - contact_width*2, center_x + contact_width*2)
 
     plt.tight_layout()
 
@@ -587,8 +819,15 @@ def compare_stress_with_analytical(analytical_results, mpm_results, grid_size, o
     print(f"应力对比图保存到: {plot_file}")
     return plot_file
 
-def create_summary_plot(analytical_results, all_mpm_results, output_dir):
-    """创建汇总图，将所有网格大小的结果绘制在一张图上"""
+def create_summary_plot(analytical_results, all_mpm_results, output_dir, n_bins=None):
+    """创建汇总图，将所有网格大小的结果绘制在一张图上
+
+    参数:
+        analytical_results: 解析解结果
+        all_mpm_results: 所有网格的MPM结果字典 {grid_size: mpm_results}
+        output_dir: 输出目录
+        n_bins: bin数量，如果不为None则使用bin平均
+    """
     from analytical_solutions.test3 import calculate_contact_width
 
     params = analytical_results['params']
@@ -603,7 +842,7 @@ def create_summary_plot(analytical_results, all_mpm_results, output_dir):
     center_x = params['center'][0]
 
     # 只在接触区域内显示
-    contact_indices = (x_coords >= center_x - contact_width*1.2) & (x_coords <= center_x + contact_width*1.2)
+    contact_indices = (x_coords >= center_x - contact_width*2) & (x_coords <= center_x + contact_width*2)
     x_analytical = x_coords[contact_indices]
     pressure_analytical = -stress_yy[contact_indices]/1000
 
@@ -619,22 +858,44 @@ def create_summary_plot(analytical_results, all_mpm_results, output_dir):
             continue
 
         # MPM结果
-        mpm_x = mpm_results['positions'][:, 0]
-        mpm_stress_yy = mpm_results['stress'][:, 1, 1]  # σ_yy分量
-        mpm_pressure = -mpm_stress_yy/1000  # 转换为正的压力值
+        mpm_positions = mpm_results['positions']
+        mpm_stress = mpm_results['stress']
+        mpm_x = mpm_positions[:, 0]
 
         # 只显示接触区域内的MPM数据
-        mpm_contact_indices = (mpm_x >= center_x - contact_width*1.2) & (mpm_x <= center_x + contact_width*1.2)
-        x_mpm_contact = mpm_x[mpm_contact_indices]
-        pressure_mpm_contact = mpm_pressure[mpm_contact_indices]
+        mpm_contact_indices = (mpm_x >= center_x - contact_width*2) & (mpm_x <= center_x + contact_width*2)
+        mpm_positions_contact = mpm_positions[mpm_contact_indices]
+        mpm_stress_contact = mpm_stress[mpm_contact_indices]
 
-        # 使用不同颜色和标记
+        # 使用不同颜色
         color = colors[i % len(colors)]
 
-        # 标签
-        label = f'MPM (Grid {grid_size})'
-        ax.scatter(x_mpm_contact, pressure_mpm_contact, c=color, s=15, alpha=0.7,
-                  label=label, zorder=5)
+        if n_bins is not None and n_bins > 0:
+            # 使用bin平均
+            bin_centers, bin_avg_stress, bin_counts = bin_average_stress(
+                mpm_positions_contact,
+                mpm_stress_contact,
+                n_bins=n_bins,
+                x_range=[center_x - contact_width*2, center_x + contact_width*2]
+            )
+
+            # 提取σ_yy分量并转换为压力
+            bin_avg_pressure = -bin_avg_stress[:, 1, 1] / 1000  # kPa
+            valid_bins = bin_counts > 0
+
+            label = f'MPM (Grid {grid_size})'
+            ax.plot(bin_centers[valid_bins], bin_avg_pressure[valid_bins],
+                   '-o', color=color, linewidth=1.5, markersize=3, alpha=0.7,
+                   label=label, zorder=5)
+        else:
+            # 直接绘制所有粒子
+            mpm_stress_yy = mpm_stress_contact[:, 1, 1]
+            mpm_pressure = -mpm_stress_yy / 1000
+            x_mpm_contact = mpm_positions_contact[:, 0]
+
+            label = f'MPM (Grid {grid_size})'
+            ax.scatter(x_mpm_contact, mpm_pressure, c=color, s=15, alpha=0.7,
+                      label=label, zorder=5)
 
     # 标记接触边界
     ax.axvline(x=center_x - contact_width, color='red', linestyle='--', alpha=0.7,
@@ -646,7 +907,7 @@ def create_summary_plot(analytical_results, all_mpm_results, output_dir):
     ax.set_title('Ellipse Contact: Grid Convergence Study\nMPM vs Analytical Solution (All Grid Sizes)', fontsize=14)
     ax.grid(True, alpha=0.3)
     ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.set_xlim(center_x - contact_width*1.2, center_x + contact_width*1.2)
+    ax.set_xlim(center_x - contact_width*2, center_x + contact_width*2)
 
     plt.tight_layout()
 
@@ -659,10 +920,33 @@ def create_summary_plot(analytical_results, all_mpm_results, output_dir):
 
     return summary_plot_file
 
-def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_schwarz=False, y_filter_min=0.0, y_filter_max=0.01):
-    """分析不同网格分辨率下的应力收敛性"""
+def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_schwarz=False,
+                              y_filter_min=0.0, y_filter_max=0.01, use_all_particles=False, n_bins=None,
+                              use_domain2_bound_filter=False):
+    """分析不同网格分辨率下的应力收敛性
+
+    参数:
+        batch_results: 批处理结果
+        base_config_path: 基础配置文件路径
+        output_dir: 输出目录
+        use_schwarz: 是否使用Schwarz双域
+        y_filter_min: Y坐标过滤最小值
+        y_filter_max: Y坐标过滤最大值
+        use_all_particles: 是否使用所有粒子（而非只用边界粒子）
+        n_bins: bin数量，如果不为None则使用bin平均
+        use_domain2_bound_filter: 是否启用Domain2 bound网格层Y过滤（仅Schwarz）
+    """
     print("开始应力收敛性分析...")
-    print(f"Y坐标过滤范围: {y_filter_min} <= y <= {y_filter_max}")
+    if use_domain2_bound_filter and use_schwarz:
+        print("Y坐标过滤模式: Domain2 bound网格层Y过滤（覆盖y_filter_min/y_filter_max）")
+    elif use_domain2_bound_filter and not use_schwarz:
+        print("Y坐标过滤模式: 请求Domain2过滤，但当前为单域，回退到Y坐标范围过滤")
+        print(f"Y坐标过滤范围: {y_filter_min} <= y <= {y_filter_max}")
+    else:
+        print(f"Y坐标过滤范围: {y_filter_min} <= y <= {y_filter_max}")
+    print(f"粒子选择模式: {'所有粒子' if use_all_particles else '仅边界粒子'}")
+    if n_bins is not None and n_bins > 0:
+        print(f"使用bin平均，bin数量: {n_bins}")
 
     comparison_plots = []
     all_mpm_results = {}  # 存储所有网格的MPM结果用于汇总图
@@ -679,7 +963,9 @@ def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_
 
         # 加载MPM结果
         mpm_results = load_mpm_stress_results(result_dir, use_schwarz=use_schwarz,
-                                             y_filter_min=y_filter_min, y_filter_max=y_filter_max)
+                                             y_filter_min=y_filter_min, y_filter_max=y_filter_max,
+                                             use_all_particles=use_all_particles,
+                                             use_domain2_bound_filter=use_domain2_bound_filter)
 
         if mpm_results is None:
             print(f"无法加载网格 {grid_size} 的结果")
@@ -709,7 +995,7 @@ def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_
         all_mpm_results[grid_size] = mpm_results
 
         # 对比和绘图（单个网格）
-        plot_file = compare_stress_with_analytical(analytical_results, mpm_results, grid_size, output_dir)
+        plot_file = compare_stress_with_analytical(analytical_results, mpm_results, grid_size, output_dir, n_bins=n_bins)
         comparison_plots.append(plot_file)
 
         # 清理不再需要的分析数据（保留用于汇总图的数据）
@@ -722,7 +1008,7 @@ def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_
         # 使用第一个网格的解析解作为参考（因为实际质量不同，每个网格的解析解也不同）
         first_grid = list(all_analytical_results.keys())[0]
         reference_analytical = all_analytical_results[first_grid]
-        summary_plot = create_summary_plot(reference_analytical, all_mpm_results, output_dir)
+        summary_plot = create_summary_plot(reference_analytical, all_mpm_results, output_dir, n_bins=n_bins)
         comparison_plots.append(summary_plot)
 
     print(f"\n应力分析完成! 生成了 {len(comparison_plots)} 个对比图")
@@ -801,8 +1087,22 @@ def load_existing_results(experiment_dir, base_config_path):
     print(f"成功加载 {len(batch_results['successful_runs'])} 个网格结果: {batch_results['successful_runs']}")
     return batch_results
 
-def run_analysis_only(experiment_dir, base_config_path, output_dir=None, use_schwarz=False, y_filter_min=0.0, y_filter_max=0.01):
-    """仅运行应力分析，不进行新的模拟"""
+def run_analysis_only(experiment_dir, base_config_path, output_dir=None, use_schwarz=False,
+                     y_filter_min=0.0, y_filter_max=0.01, use_all_particles=False, n_bins=None,
+                     use_domain2_bound_filter=False):
+    """仅运行应力分析，不进行新的模拟
+
+    参数:
+        experiment_dir: 实验结果目录
+        base_config_path: 基础配置文件路径
+        output_dir: 输出目录
+        use_schwarz: 是否使用Schwarz双域
+        y_filter_min: Y坐标过滤最小值
+        y_filter_max: Y坐标过滤最大值
+        use_all_particles: 是否使用所有粒子（而非只用边界粒子）
+        n_bins: bin数量，如果不为None则使用bin平均
+        use_domain2_bound_filter: 是否启用Domain2 bound网格层Y过滤（仅Schwarz）
+    """
     print("=" * 80)
     print("运行应力分析模式（不进行新模拟）")
     print(f"实验目录: {experiment_dir}")
@@ -824,7 +1124,9 @@ def run_analysis_only(experiment_dir, base_config_path, output_dir=None, use_sch
 
     # 运行应力分析
     comparison_plots = analyze_stress_convergence(
-        batch_results, base_config_path, output_dir, use_schwarz, y_filter_min, y_filter_max
+        batch_results, base_config_path, output_dir, use_schwarz,
+        y_filter_min, y_filter_max, use_all_particles, n_bins,
+        use_domain2_bound_filter=use_domain2_bound_filter
     )
 
     print(f"\n应力分析完成! 输出目录: {output_dir}")
@@ -835,7 +1137,7 @@ def main():
     parser = argparse.ArgumentParser(description='网格分辨率批处理实验')
     parser.add_argument('--use-schwarz', action='store_true',
                        help='使用Schwarz双域求解器（默认使用单域）')
-    parser.add_argument('--grid-range', nargs=2, type=int, default=[60, 120],
+    parser.add_argument('--grid-range', nargs=2, type=int, default=[60, 140],
                        help='网格大小范围 [开始, 结束] (默认: 64 160)')
     parser.add_argument('--grid-step', type=int, default=20,
                        help='网格大小步长 (默认: 16)')
@@ -846,9 +1148,17 @@ def main():
     parser.add_argument('--timeout', type=int, default=None,
                        help='单个模拟超时时间（秒，默认1小时）')
     parser.add_argument('--y-filter-min', type=float, default=0,
-                       help='Y坐标过滤最小值（默认: 0.4）')
-    parser.add_argument('--y-filter-max', type=float, default=0.1,
-                       help='Y坐标过滤最大值（默认: 0.6）')
+                       help='Y坐标过滤最小值（默认: 0）')
+    parser.add_argument('--y-filter-max', type=float, default=0.02,
+                       help='Y坐标过滤最大值（默认: 0.1）')
+    parser.add_argument('--use-domain2-bound-filter', action='store_true',
+                       help='启用Domain2基于bound/grid_ny/domain_height的Y过滤（仅Schwarz，覆盖y-filter参数）')
+
+    # 粒子选择和平均化选项
+    parser.add_argument('--use-all-particles', action='store_true',
+                       help='使用Y范围内的所有粒子，而非只用边界粒子')
+    parser.add_argument('--n-bins', type=int, default=None,
+                       help='bin数量，如果指定则按X方向分bin并计算平均应力（默认: None，直接绘制所有粒子）')
 
     # 分析模式选项
     parser.add_argument('--analyze-only', type=str, default=None,
@@ -887,7 +1197,10 @@ def main():
                 output_dir=args.analysis_output_dir,
                 use_schwarz=args.use_schwarz,
                 y_filter_min=args.y_filter_min,
-                y_filter_max=args.y_filter_max
+                y_filter_max=args.y_filter_max,
+                use_all_particles=args.use_all_particles,
+                n_bins=args.n_bins,
+                use_domain2_bound_filter=args.use_domain2_bound_filter
             )
             print(f"分析完成，生成了 {len(results)} 个对比图")
             return
@@ -923,7 +1236,8 @@ def main():
         output_dir=output_dir,
         timeout=args.timeout,
         y_filter_min=args.y_filter_min,
-        y_filter_max=args.y_filter_max
+        y_filter_max=args.y_filter_max,
+        use_domain2_bound_filter=args.use_domain2_bound_filter
     )
 
     return results
