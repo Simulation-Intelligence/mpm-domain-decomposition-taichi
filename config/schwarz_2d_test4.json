@@ -20,12 +20,12 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 100,
-        "grid_ny": 100,
+        "grid_nx": 200,
+        "grid_ny": 200,
         "domain_width": 1.0,
         "domain_height": 1.0,
         "particles_per_grid": 16,
-        "sampling_method": "gauss",
+        "sampling_method": "regular",
         "elasticity_model": "neohookean",
         "use_mapping": false,
         "dt": 0.0002,
@@ -39,7 +39,7 @@
         "boundary_particle_range": [
             [
                 0,
-                0.2
+                0.42
             ],
             [
                 0.0,
@@ -159,11 +159,11 @@
                 "params": {
                     "range": [
                         [
-                            0.15,
+                            0.39,
                             0.9
                         ],
                         [
-                            0.92,
+                            0.94,
                             0.96
                         ]
                     ]
@@ -183,12 +183,12 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 30,
-        "grid_ny": 30,
-        "domain_width": 0.3,
-        "domain_height": 0.3,
+        "grid_nx": 100,
+        "grid_ny": 100,
+        "domain_width": 0.5,
+        "domain_height": 0.5,
         "particles_per_grid": 16,
-        "sampling_method": "gauss",
+        "sampling_method": "regular",
         "elasticity_model": "neohookean",
         "use_mapping": false,
         "dt": 0.0002,
@@ -197,7 +197,7 @@
         "solve_init_iter": 100,
         "offset": [
             0.0,
-            0.7
+            0.5
         ],
         "gravity": [
             0.0,
@@ -309,7 +309,7 @@
         ],
         "boundary_particle_range": [
             [
-                0.2,
+                0.42,
                 1.0
             ],
             [
@@ -318,7 +318,7 @@
             ]
         ],
         "damping": 0.2,
-        "particle_damping": 0.999,
+        "particle_damping": 0.99,
         "material_params": [
             {
                 "id": 0,
@@ -341,11 +341,11 @@
                     "range": [
                         [
                             0.01,
-                            0.25
+                            0.45
                         ],
                         [
-                            0.22,
-                            0.26
+                            0.44,
+                            0.46
                         ]
                     ]
                 },
