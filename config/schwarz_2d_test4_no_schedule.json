@@ -48,9 +48,9 @@
         ],
         "gravity": [
             0.0,
-            -6.46e-05
+            -6.46e-03
         ],
-        "damping": 0.0,
+        "damping": 0.2,
         "particle_damping": 0.995,
         "material_params": [
             {
@@ -115,7 +115,7 @@
         ],
         "gravity": [
             0.0,
-            -6.46e-05
+            -6.46e-03
         ],
         "DBC_range": [
             [
@@ -145,7 +145,7 @@
                 1.0
             ]
         ],
-        "damping": 0.0,
+        "damping": 0.2,
         "particle_damping": 0.995,
         "material_params": [
             {

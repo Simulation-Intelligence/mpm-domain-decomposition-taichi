@@ -235,7 +235,7 @@ def run_single_simulation(config_path, use_schwarz=False, output_name=None):
         # 双域模式：使用Schwarz求解器
         cmd = [
             "python", "simulators/implicit_mpm_schwarz.py",
-            "--config", config_path,"--no-gui"
+            "--config", config_path
         ]
         print(f"  使用双域Schwarz求解器")
     else:
@@ -1101,9 +1101,9 @@ def main():
                        help='使用双域Schwarz模式（默认为单域模式）')
     parser.add_argument('--gamma', type=float, default=None,
                        help='单次实验的gamma值（默认使用配置文件中的重力）')
-    parser.add_argument('--gamma-range', nargs=2, type=float, default=[1e-2, 1e4],
+    parser.add_argument('--gamma-range', nargs=2, type=float, default=[4.33e+01 ,  1.00e+03],
                        help='批量实验的gamma范围 [最小值, 最大值]')
-    parser.add_argument('--n-points', type=int, default=12,
+    parser.add_argument('--n-points', type=int, default=4,
                        help='批量实验的测试点数')
     parser.add_argument('--output-dir', default=None,
                        help='输出目录')

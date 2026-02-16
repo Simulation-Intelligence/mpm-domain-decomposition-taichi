@@ -321,7 +321,7 @@ class ImplicitMPM:
                     #         in_boundary_range = True
 
                     # if in_boundary_range:
-                    self.grid.is_particle_boundary_grid[grid_idx] = 1
+                        self.grid.is_particle_boundary_grid[grid_idx] = 1
 
         for I in ti.grouped(self.grid.m):
             if self.grid.m[I] > 0:
