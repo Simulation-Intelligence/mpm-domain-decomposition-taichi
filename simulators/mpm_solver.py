@@ -1,4 +1,5 @@
 import taichi as ti
+import numpy as np
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -1205,3 +1206,66 @@ class MPMSolver:
 
         # 恢复原始F矩阵
         self.restore_F()
+
+    def get_grid_stress_from_F_grid_numpy(self):
+        """基于当前F_grid/m_grid计算并返回网格Cauchy应力（numpy格式）"""
+        F_grid = self.F_grid.to_numpy()
+        m_grid = self.m_grid.to_numpy()
+
+        # 默认使用material_id=0参数
+        mat0 = self.particles.material_params.get(0, {})
+        mu = float(mat0.get("mu", getattr(self.particles, "mu_1", self.mu)))
+        lam = float(mat0.get("lambda", getattr(self.particles, "lam_1", self.lam)))
+
+        stress_grid = np.zeros_like(F_grid)
+        valid_mask = m_grid > 1e-10
+        invalid_j_count = 0
+
+        if np.any(valid_mask):
+            F_valid = F_grid[valid_mask]  # (N, dim, dim)
+            I = np.eye(self.dim, dtype=F_valid.dtype)
+
+            if self.elasticity_model == "linear":
+                eps = 0.5 * (F_valid + np.transpose(F_valid, (0, 2, 1))) - I
+                eps_trace = np.trace(eps, axis1=1, axis2=2)
+                sigma_valid = 2.0 * mu * eps + lam * eps_trace[:, None, None] * I
+                stress_grid[valid_mask] = sigma_valid
+            else:
+                det_F = np.linalg.det(F_valid)
+                positive_j_mask = det_F > 0.0
+                invalid_j_count = int(np.count_nonzero(~positive_j_mask))
+
+                sigma_valid = np.zeros_like(F_valid)
+                if np.any(positive_j_mask):
+                    F_pos = F_valid[positive_j_mask]
+                    det_pos = det_F[positive_j_mask]
+                    B = np.matmul(F_pos, np.transpose(F_pos, (0, 2, 1)))
+                    sigma_pos = mu * B + (lam * np.log(det_pos) - mu)[:, None, None] * I
+                    sigma_valid[positive_j_mask] = sigma_pos
+
+                stress_grid[valid_mask] = sigma_valid
+
+        offset = self.grid.offset
+        offset_meta = [float(offset[d]) for d in range(self.dim)]
+
+        meta = {
+            "dim": int(self.dim),
+            "nx": int(self.grid.nx),
+            "ny": int(self.grid.ny),
+            "offset": offset_meta,
+            "dx_x": float(self.grid.dx_x),
+            "dx_y": float(self.grid.dx_y),
+            "material_id_used": 0,
+            "mu": float(mu),
+            "lambda": float(lam),
+            "elasticity_model": self.elasticity_model,
+            "valid_mass_threshold": 1e-10,
+            "valid_grid_count": int(np.count_nonzero(valid_mask)),
+            "invalid_j_count": int(invalid_j_count),
+        }
+
+        if self.dim == 3:
+            meta["nz"] = int(self.grid.nz)
+            meta["dx_z"] = float(self.grid.dx_z)
+
+        return stress_grid, m_grid, meta

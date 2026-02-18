@@ -957,6 +957,30 @@ class MPM_Schwarz:
         np.save(f"{frame_dir}/domain2_positions.npy", filtered_positions2)
         np.save(f"{frame_dir}/domain2_boundary_flags.npy", filtered_boundary_flags2)
 
+        # 保存两个域的网格应力（基于各自F_grid）和网格质量
+        d1_grid_stress, d1_grid_mass, d1_grid_meta = self.Domain1.solver.get_grid_stress_from_F_grid_numpy()
+        np.save(f"{frame_dir}/domain1_grid_stress.npy", d1_grid_stress)
+        np.save(f"{frame_dir}/domain1_grid_mass.npy", d1_grid_mass)
+        with open(f"{frame_dir}/domain1_grid_stress_meta.json", 'w') as f:
+            json.dump(d1_grid_meta, f, indent=2)
+
+        d2_grid_stress, d2_grid_mass, d2_grid_meta = self.Domain2.solver.get_grid_stress_from_F_grid_numpy()
+        np.save(f"{frame_dir}/domain2_grid_stress.npy", d2_grid_stress)
+        np.save(f"{frame_dir}/domain2_grid_mass.npy", d2_grid_mass)
+        with open(f"{frame_dir}/domain2_grid_stress_meta.json", 'w') as f:
+            json.dump(d2_grid_meta, f, indent=2)
+
+        print(
+            f"Domain1网格应力已保存: shape={d1_grid_stress.shape}, "
+            f"有效网格数={d1_grid_meta['valid_grid_count']}, "
+            f"invalid_J网格数={d1_grid_meta['invalid_j_count']}"
+        )
+        print(
+            f"Domain2网格应力已保存: shape={d2_grid_stress.shape}, "
+            f"有效网格数={d2_grid_meta['valid_grid_count']}, "
+            f"invalid_J网格数={d2_grid_meta['invalid_j_count']}"
+        )
+
         # 保存actual mass信息到该帧的子目录
         try:
             # Domain1 actual mass
@@ -1040,6 +1064,8 @@ class MPM_Schwarz:
         del filtered_stress_data2, filtered_positions2, filtered_boundary_flags2
         del valid_mask1, valid_mask2
         del von_mises_stress1, von_mises_stress2
+        del d1_grid_stress, d1_grid_mass, d1_grid_meta
+        del d2_grid_stress, d2_grid_mass, d2_grid_meta
         gc.collect()
 
         return self._experiment_dir

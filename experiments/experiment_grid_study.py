@@ -61,6 +61,10 @@ def load_result_config_for_filter(result_dir):
     print("警告: 未找到可用于Domain2过滤的配置文件（config.json/config_backup.json）")
     return None
 
+def load_result_config_for_grid_plot(result_dir):
+    """加载用于grid stress绘图的结果配置文件"""
+    return load_result_config_for_filter(result_dir)
+
 def compute_domain2_y_threshold(config):
     """根据Domain2的bound/grid_ny/domain_height计算全局坐标y阈值"""
     domain2 = config.get("Domain2")
@@ -229,7 +233,8 @@ def backup_result_dir(source_dir, grid_size, output_base_dir, use_schwarz=False)
 
 def run_batch_grid_study(base_config_path, grid_sizes, use_schwarz=False,
                         output_dir="experiment_results/grid_study", timeout=3600,
-                        y_filter_min=0.0, y_filter_max=0.01, use_domain2_bound_filter=False):
+                        y_filter_min=0.0, y_filter_max=0.01, use_domain2_bound_filter=False,
+                        enable_grid_stress_plot=True):
     """
     运行批量网格研究
 
@@ -240,6 +245,7 @@ def run_batch_grid_study(base_config_path, grid_sizes, use_schwarz=False,
         output_dir: 输出目录
         timeout: 单个模拟的超时时间
         use_domain2_bound_filter: 是否启用Domain2 bound网格层Y过滤（仅Schwarz）
+        enable_grid_stress_plot: 是否启用grid stress行分布绘图
 
     返回:
         dict: 实验结果汇总
@@ -330,7 +336,8 @@ def run_batch_grid_study(base_config_path, grid_sizes, use_schwarz=False,
         print("开始应力分析和解析解对比...")
         analyze_stress_convergence(results, base_config_path, output_dir, use_schwarz,
                                   y_filter_min, y_filter_max, use_all_particles=False, n_bins=None,
-                                  use_domain2_bound_filter=use_domain2_bound_filter)
+                                  use_domain2_bound_filter=use_domain2_bound_filter,
+                                  enable_grid_stress_plot=enable_grid_stress_plot)
 
     return results
 
@@ -348,7 +355,7 @@ def extract_hertz_parameters_from_config(config, actual_mass=None):
 
     # 材料参数
     material = domain_config['material_params'][0]
-    E = material['E'] # 按要求E除以2
+    E = material['E']
     nu = material['nu']
     rho = material['rho']
 
@@ -461,6 +468,39 @@ def calculate_hertz_analytical_solution(config_path, actual_mass=None, y_filter_
         'params': params,
         'contact_width': contact_width
     }
+
+def load_analytical_results_for_result_dir(result_dir, base_config_path):
+    """为指定结果目录加载Hertz解析解，优先使用结果目录配置"""
+    candidate_configs = [
+        os.path.join(result_dir, "config.json"),
+        os.path.join(result_dir, "config_backup.json"),
+        base_config_path,
+    ]
+
+    analytical_results = None
+    last_error = None
+    for cfg_path in candidate_configs:
+        if not os.path.exists(cfg_path):
+            continue
+        try:
+            if cfg_path == base_config_path:
+                print(f"  使用基础配置计算解析解: {cfg_path}")
+            else:
+                print(f"  使用结果配置计算解析解: {cfg_path}")
+            analytical_results = calculate_hertz_analytical_solution(cfg_path, actual_mass=None)
+            break
+        except Exception as e:
+            last_error = e
+            print(f"  警告: 解析解计算失败({cfg_path}): {e}")
+
+    if analytical_results is None:
+        if last_error is not None:
+            raise RuntimeError(f"解析解计算失败，最后错误: {last_error}")
+        raise FileNotFoundError(
+            f"未找到可用配置文件，尝试路径: {candidate_configs}"
+        )
+
+    return analytical_results
 
 def load_mpm_stress_results(result_dir, use_schwarz=False, y_filter_min=None, y_filter_max=None,
                             use_all_particles=False, use_domain2_bound_filter=False):
@@ -668,6 +708,161 @@ def load_mpm_stress_results(result_dir, use_schwarz=False, y_filter_min=None, y_
     except Exception as e:
         print(f"Error loading MPM results: {e}")
         return None
+
+def load_grid_stress_line_from_result(result_dir, use_schwarz=False, domain_name='Domain2'):
+    """从结果目录加载grid stress在y=bound行的数据（压力: -sigma_yy/1000, kPa）"""
+    stress_data_dir = os.path.join(result_dir, "stress_data")
+    if not os.path.exists(stress_data_dir):
+        print(f"警告: 未找到stress_data目录，跳过grid stress绘图: {stress_data_dir}")
+        return None
+
+    frame_dirs = []
+    for d in os.listdir(stress_data_dir):
+        frame_path = os.path.join(stress_data_dir, d)
+        if d.startswith("frame_") and os.path.isdir(frame_path):
+            try:
+                frame_num = int(d.split("_")[1])
+                frame_dirs.append((frame_num, frame_path))
+            except (IndexError, ValueError):
+                continue
+
+    if not frame_dirs:
+        print(f"警告: 未找到frame_*目录，跳过grid stress绘图: {stress_data_dir}")
+        return None
+
+    frame_num, frame_path = max(frame_dirs, key=lambda x: x[0])
+
+    if use_schwarz:
+        domain_prefix = domain_name.lower()
+        stress_candidates = [
+            f"{domain_prefix}_grid_stress_reconstructed.npy",
+            f"{domain_prefix}_grid_stress.npy",
+        ]
+        mass_candidates = [
+            f"{domain_prefix}_grid_mass_reconstructed.npy",
+            f"{domain_prefix}_grid_mass.npy",
+        ]
+    else:
+        stress_candidates = [
+            "grid_stress_reconstructed.npy",
+            "grid_stress.npy",
+        ]
+        mass_candidates = [
+            "grid_mass_reconstructed.npy",
+            "grid_mass.npy",
+        ]
+
+    stress_file = None
+    for filename in stress_candidates:
+        candidate = os.path.join(frame_path, filename)
+        if os.path.exists(candidate):
+            stress_file = candidate
+            break
+    if stress_file is None:
+        print(f"警告: 未找到grid stress文件，跳过: {frame_path} (候选: {stress_candidates})")
+        return None
+
+    mass_file = None
+    for filename in mass_candidates:
+        candidate = os.path.join(frame_path, filename)
+        if os.path.exists(candidate):
+            mass_file = candidate
+            break
+    if mass_file is None:
+        print(f"警告: 未找到grid mass文件，将不使用有效网格掩码: {frame_path}")
+
+    result_config = load_result_config_for_grid_plot(result_dir)
+    if result_config is None:
+        print(f"警告: 无法读取配置，跳过grid stress绘图: {result_dir}")
+        return None
+
+    if use_schwarz:
+        domain_cfg = result_config.get(domain_name)
+        if domain_cfg is None:
+            print(f"警告: 配置缺少{domain_name}，跳过grid stress绘图")
+            return None
+    else:
+        domain_cfg = result_config
+
+    try:
+        bound = int(domain_cfg["bound"]) +1
+        grid_nx = int(domain_cfg["grid_nx"])
+        domain_width = float(domain_cfg["domain_width"])
+    except KeyError as e:
+        print(f"警告: 配置缺少必要字段{e}，跳过grid stress绘图")
+        return None
+    except (TypeError, ValueError) as e:
+        print(f"警告: 配置字段格式错误，跳过grid stress绘图: {e}")
+        return None
+
+    if grid_nx <= 0:
+        print(f"警告: grid_nx必须大于0，跳过grid stress绘图: {grid_nx}")
+        return None
+
+    offset = domain_cfg.get("offset", [0.0, 0.0])
+    offset_x = 0.0
+    if isinstance(offset, (list, tuple)) and len(offset) >= 1:
+        offset_x = float(offset[0])
+
+    try:
+        grid_stress = np.load(stress_file)
+    except Exception as e:
+        print(f"警告: 读取grid stress失败，跳过: {stress_file}, error={e}")
+        return None
+
+    if grid_stress.ndim != 4 or grid_stress.shape[2:] != (2, 2):
+        print(f"警告: 当前仅支持2D grid stress (nx, ny, 2, 2)，实际shape={grid_stress.shape}，跳过")
+        return None
+
+    nx, ny = grid_stress.shape[0], grid_stress.shape[1]
+    if bound < 0 or bound >= ny:
+        print(f"警告: bound={bound}超出grid y范围[0, {ny - 1}]，跳过")
+        return None
+
+    if grid_nx != nx:
+        print(f"警告: 配置grid_nx={grid_nx}与stress文件nx={nx}不一致，x坐标仍按配置grid_nx计算")
+
+    j = bound
+    sigma_row = grid_stress[:, j, :, :]
+    pressure_row = -sigma_row[:, 1, 1] / 1000.0
+
+    dx_x = domain_width / grid_nx
+    x_coords = offset_x + np.arange(nx) * dx_x
+
+    valid_mask = None
+    valid_count = len(x_coords)
+    if mass_file is not None:
+        try:
+            grid_mass = np.load(mass_file)
+            if grid_mass.ndim != 2:
+                print(f"警告: 当前仅支持2D grid mass (nx, ny)，实际shape={grid_mass.shape}，忽略质量掩码")
+            elif grid_mass.shape != (nx, ny):
+                print(f"警告: grid mass shape不匹配{grid_mass.shape}，忽略质量掩码")
+            else:
+                valid_mask = grid_mass[:, j] > 1e-10
+                valid_count = int(np.count_nonzero(valid_mask))
+        except Exception as e:
+            print(f"警告: 读取grid mass失败，忽略质量掩码: {mass_file}, error={e}")
+
+    if valid_mask is None:
+        x_used = x_coords
+        pressure_used = pressure_row
+    else:
+        x_used = x_coords[valid_mask]
+        pressure_used = pressure_row[valid_mask]
+
+    mode_label = "Schwarz-Domain2" if use_schwarz else "Single-domain"
+    return {
+        "x": x_used,
+        "pressure": pressure_used,
+        "bound": bound,
+        "frame_num": frame_num,
+        "mode_label": mode_label,
+        "stress_file": stress_file,
+        "mass_file": mass_file,
+        "valid_count": valid_count,
+        "total_count": len(x_coords),
+    }
 
 def bin_average_stress(positions, stress, n_bins=50, x_range=None):
     """将粒子按X方向分bin并计算每个bin内的平均应力
@@ -920,9 +1115,110 @@ def create_summary_plot(analytical_results, all_mpm_results, output_dir, n_bins=
 
     return summary_plot_file
 
+def plot_grid_stress_line_single(grid_line_data, grid_size, output_dir, analytical_results=None):
+    """绘制单个网格的grid stress行分布图"""
+    x = grid_line_data["x"]
+    pressure = grid_line_data["pressure"]
+    bound = grid_line_data["bound"]
+    frame_num = grid_line_data["frame_num"]
+    mode_label = grid_line_data["mode_label"]
+
+    if len(x) == 0:
+        print(f"警告: 网格{grid_size}的有效grid点为0，跳过单图绘制")
+        return None
+
+    _, ax = plt.subplots(1, 1, figsize=(12, 8))
+    ax.plot(x, pressure, "b-", linewidth=1.5, alpha=0.85, label=f"Grid {grid_size}")
+    ax.scatter(x, pressure, s=8, c="blue", alpha=0.5)
+
+    if analytical_results is not None:
+        x_analytical = analytical_results["x_coords"]
+        pressure_analytical = -analytical_results["stress_yy"] / 1000.0
+        x_min, x_max = float(np.min(x)), float(np.max(x))
+        x_mask = (x_analytical >= x_min) & (x_analytical <= x_max)
+        if np.any(x_mask):
+            ax.plot(
+                x_analytical[x_mask],
+                pressure_analytical[x_mask],
+                "r-",
+                linewidth=2.0,
+                alpha=0.9,
+                label="Analytical (Hertz)"
+            )
+
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("Pressure (kPa)")
+    ax.set_title(f"{mode_label}: Grid Stress Line (Grid {grid_size}, y_index={bound}, frame={frame_num})")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    plt.tight_layout()
+
+    plot_file = os.path.join(output_dir, f"grid_stress_line_grid{grid_size}.png")
+    plt.savefig(plot_file, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    print(f"Grid stress单图保存到: {plot_file}")
+    return plot_file
+
+def plot_grid_stress_line_summary(all_grid_line_results, output_dir, analytical_results=None):
+    """绘制所有网格的grid stress行分布汇总图"""
+    if not all_grid_line_results:
+        print("警告: 无可用grid stress行数据，跳过汇总图")
+        return None
+
+    _, ax = plt.subplots(1, 1, figsize=(14, 10))
+    colors = ['blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan', 'magenta']
+
+    for i, (grid_size, grid_line_data) in enumerate(all_grid_line_results.items()):
+        x = grid_line_data["x"]
+        pressure = grid_line_data["pressure"]
+        bound = grid_line_data["bound"]
+        frame_num = grid_line_data["frame_num"]
+
+        if len(x) == 0:
+            continue
+
+        color = colors[i % len(colors)]
+        label = f"Grid {grid_size} (y_index={bound}, frame={frame_num})"
+        ax.plot(x, pressure, "-", color=color, linewidth=1.4, alpha=0.8, label=label)
+
+    if analytical_results is not None:
+        x_analytical = analytical_results["x_coords"]
+        pressure_analytical = -analytical_results["stress_yy"] / 1000.0
+        ax.plot(
+            x_analytical,
+            pressure_analytical,
+            "r-",
+            linewidth=2.2,
+            alpha=0.9,
+            label="Analytical (Hertz)"
+        )
+        # 与粒子-解析解对比图一致：限制到接触区附近宽度
+        params = analytical_results.get("params", {})
+        center = params.get("center", [0.0, 0.0])
+        contact_width = analytical_results.get("contact_width", None)
+        if isinstance(center, (list, tuple)) and len(center) > 0 and contact_width is not None:
+            center_x = float(center[0])
+            contact_width = float(contact_width)
+            ax.set_xlim(center_x - 3.0 * contact_width, center_x + 3.0 * contact_width)
+
+    ax.set_xlabel("x (m)", fontsize=12)
+    ax.set_ylabel("Pressure (kPa)", fontsize=12)
+    ax.set_title("Grid Stress Line Summary (All Grid Sizes)", fontsize=14)
+    ax.grid(True, alpha=0.3)
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+
+    plot_file = os.path.join(output_dir, "grid_stress_line_summary_all_grids.png")
+    plt.savefig(plot_file, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    print(f"Grid stress汇总图保存到: {plot_file}")
+    return plot_file
+
 def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_schwarz=False,
                               y_filter_min=0.0, y_filter_max=0.01, use_all_particles=False, n_bins=None,
-                              use_domain2_bound_filter=False):
+                              use_domain2_bound_filter=False, enable_grid_stress_plot=True):
     """分析不同网格分辨率下的应力收敛性
 
     参数:
@@ -935,6 +1231,7 @@ def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_
         use_all_particles: 是否使用所有粒子（而非只用边界粒子）
         n_bins: bin数量，如果不为None则使用bin平均
         use_domain2_bound_filter: 是否启用Domain2 bound网格层Y过滤（仅Schwarz）
+        enable_grid_stress_plot: 是否启用grid stress行分布绘图
     """
     print("开始应力收敛性分析...")
     if use_domain2_bound_filter and use_schwarz:
@@ -945,12 +1242,14 @@ def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_
     else:
         print(f"Y坐标过滤范围: {y_filter_min} <= y <= {y_filter_max}")
     print(f"粒子选择模式: {'所有粒子' if use_all_particles else '仅边界粒子'}")
+    print(f"Grid stress绘图: {'启用' if enable_grid_stress_plot else '关闭'}")
     if n_bins is not None and n_bins > 0:
         print(f"使用bin平均，bin数量: {n_bins}")
 
     comparison_plots = []
     all_mpm_results = {}  # 存储所有网格的MPM结果用于汇总图
     all_analytical_results = {}  # 存储每个网格对应的解析解
+    all_grid_line_results = {}  # 存储所有网格的grid stress行结果用于汇总图
     grid_sizes = batch_results['successful_runs']
 
     for grid_size in grid_sizes:
@@ -960,6 +1259,27 @@ def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_
 
         result_dir = batch_results['result_dirs'][grid_size]
         print(f"\n分析网格 {grid_size}: {result_dir}")
+
+        # 先计算解析解（供grid stress图和粒子对比图复用）
+        analytical_results = None
+        try:
+            analytical_results = load_analytical_results_for_result_dir(result_dir, base_config_path)
+            all_analytical_results[grid_size] = analytical_results
+        except Exception as e:
+            print(f"  警告: 解析解计算失败，将跳过该网格的解析解叠加: {e}")
+
+        # 先尝试绘制grid stress行分布（独立于粒子筛选结果）
+        if enable_grid_stress_plot:
+            grid_line_data = load_grid_stress_line_from_result(
+                result_dir, use_schwarz=use_schwarz, domain_name='Domain2'
+            )
+            if grid_line_data is not None:
+                grid_line_plot = plot_grid_stress_line_single(
+                    grid_line_data, grid_size, output_dir, analytical_results=analytical_results
+                )
+                if grid_line_plot is not None:
+                    comparison_plots.append(grid_line_plot)
+                    all_grid_line_results[grid_size] = grid_line_data
 
         # 加载MPM结果
         mpm_results = load_mpm_stress_results(result_dir, use_schwarz=use_schwarz,
@@ -971,25 +1291,9 @@ def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_
             print(f"无法加载网格 {grid_size} 的结果")
             continue
 
-        # 直接使用理论质量计算解析解
-        try:
-            config_path = os.path.join(result_dir, "config.json")
-            if not os.path.exists(config_path):
-                print(f"  警告: 未找到配置文件 {config_path}，使用基础配置")
-                # 使用基础配置和理论质量作为fallback
-                analytical_results = calculate_hertz_analytical_solution(base_config_path, actual_mass=None)
-            else:
-                # 不再获取实际质量，直接使用理论质量
-                print(f"  使用理论质量计算解析解")
-                analytical_results = calculate_hertz_analytical_solution(config_path, actual_mass=None)
-
-            all_analytical_results[grid_size] = analytical_results
-
-        except Exception as e:
-            print(f"  警告: 计算解析解失败: {e}")
-            # 使用基础配置和理论质量作为fallback
-            analytical_results = calculate_hertz_analytical_solution(base_config_path, actual_mass=None)
-            all_analytical_results[grid_size] = analytical_results
+        if analytical_results is None:
+            print(f"  警告: 网格 {grid_size} 缺少可用解析解，跳过粒子-解析解对比图")
+            continue
 
         # 存储MPM结果用于汇总图
         all_mpm_results[grid_size] = mpm_results
@@ -1005,11 +1309,23 @@ def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_
     # 创建汇总图（所有网格在一张图上）
     if all_mpm_results:
         print(f"\n创建汇总对比图（包含 {len(all_mpm_results)} 个网格大小）...")
-        # 使用第一个网格的解析解作为参考（因为实际质量不同，每个网格的解析解也不同）
-        first_grid = list(all_analytical_results.keys())[0]
+        first_grid = list(all_mpm_results.keys())[0]
         reference_analytical = all_analytical_results[first_grid]
         summary_plot = create_summary_plot(reference_analytical, all_mpm_results, output_dir, n_bins=n_bins)
         comparison_plots.append(summary_plot)
+
+    # 创建grid stress汇总图（所有网格在一张图上）
+    if enable_grid_stress_plot and all_grid_line_results:
+        print(f"\n创建grid stress汇总图（包含 {len(all_grid_line_results)} 个网格大小）...")
+        first_grid = list(all_grid_line_results.keys())[0]
+        reference_analytical = all_analytical_results.get(first_grid)
+        grid_summary_plot = plot_grid_stress_line_summary(
+            all_grid_line_results, output_dir, analytical_results=reference_analytical
+        )
+        if grid_summary_plot is not None:
+            comparison_plots.append(grid_summary_plot)
+    elif enable_grid_stress_plot:
+        print("\n未生成grid stress汇总图：未找到可用的grid stress行数据")
 
     print(f"\n应力分析完成! 生成了 {len(comparison_plots)} 个对比图")
     print("对比图文件:")
@@ -1019,6 +1335,7 @@ def analyze_stress_convergence(batch_results, base_config_path, output_dir, use_
     # 清理累积的大型数据
     del all_mpm_results
     del all_analytical_results
+    del all_grid_line_results
     gc.collect()
 
     return comparison_plots
@@ -1089,7 +1406,7 @@ def load_existing_results(experiment_dir, base_config_path):
 
 def run_analysis_only(experiment_dir, base_config_path, output_dir=None, use_schwarz=False,
                      y_filter_min=0.0, y_filter_max=0.01, use_all_particles=False, n_bins=None,
-                     use_domain2_bound_filter=False):
+                     use_domain2_bound_filter=False, enable_grid_stress_plot=True):
     """仅运行应力分析，不进行新的模拟
 
     参数:
@@ -1102,6 +1419,7 @@ def run_analysis_only(experiment_dir, base_config_path, output_dir=None, use_sch
         use_all_particles: 是否使用所有粒子（而非只用边界粒子）
         n_bins: bin数量，如果不为None则使用bin平均
         use_domain2_bound_filter: 是否启用Domain2 bound网格层Y过滤（仅Schwarz）
+        enable_grid_stress_plot: 是否启用grid stress行分布绘图
     """
     print("=" * 80)
     print("运行应力分析模式（不进行新模拟）")
@@ -1126,7 +1444,8 @@ def run_analysis_only(experiment_dir, base_config_path, output_dir=None, use_sch
     comparison_plots = analyze_stress_convergence(
         batch_results, base_config_path, output_dir, use_schwarz,
         y_filter_min, y_filter_max, use_all_particles, n_bins,
-        use_domain2_bound_filter=use_domain2_bound_filter
+        use_domain2_bound_filter=use_domain2_bound_filter,
+        enable_grid_stress_plot=enable_grid_stress_plot
     )
 
     print(f"\n应力分析完成! 输出目录: {output_dir}")
@@ -1137,7 +1456,7 @@ def main():
     parser = argparse.ArgumentParser(description='网格分辨率批处理实验')
     parser.add_argument('--use-schwarz', action='store_true',
                        help='使用Schwarz双域求解器（默认使用单域）')
-    parser.add_argument('--grid-range', nargs=2, type=int, default=[60, 140],
+    parser.add_argument('--grid-range', nargs=2, type=int, default=[120, 120],
                        help='网格大小范围 [开始, 结束] (默认: 64 160)')
     parser.add_argument('--grid-step', type=int, default=20,
                        help='网格大小步长 (默认: 16)')
@@ -1149,10 +1468,15 @@ def main():
                        help='单个模拟超时时间（秒，默认1小时）')
     parser.add_argument('--y-filter-min', type=float, default=0,
                        help='Y坐标过滤最小值（默认: 0）')
-    parser.add_argument('--y-filter-max', type=float, default=0.02,
+    parser.add_argument('--y-filter-max', type=float, default=0.05,
                        help='Y坐标过滤最大值（默认: 0.1）')
     parser.add_argument('--use-domain2-bound-filter', action='store_true',
                        help='启用Domain2基于bound/grid_ny/domain_height的Y过滤（仅Schwarz，覆盖y-filter参数）')
+    parser.add_argument('--enable-grid-stress-plot', dest='enable_grid_stress_plot', action='store_true',
+                       help='启用grid stress行分布绘图（默认启用）')
+    parser.add_argument('--disable-grid-stress-plot', dest='enable_grid_stress_plot', action='store_false',
+                       help='关闭grid stress行分布绘图')
+    parser.set_defaults(enable_grid_stress_plot=True)
 
     # 粒子选择和平均化选项
     parser.add_argument('--use-all-particles', action='store_true',
@@ -1200,7 +1524,8 @@ def main():
                 y_filter_max=args.y_filter_max,
                 use_all_particles=args.use_all_particles,
                 n_bins=args.n_bins,
-                use_domain2_bound_filter=args.use_domain2_bound_filter
+                use_domain2_bound_filter=args.use_domain2_bound_filter,
+                enable_grid_stress_plot=args.enable_grid_stress_plot
             )
             print(f"分析完成，生成了 {len(results)} 个对比图")
             return
@@ -1237,7 +1562,8 @@ def main():
         timeout=args.timeout,
         y_filter_min=args.y_filter_min,
         y_filter_max=args.y_filter_max,
-        use_domain2_bound_filter=args.use_domain2_bound_filter
+        use_domain2_bound_filter=args.use_domain2_bound_filter,
+        enable_grid_stress_plot=args.enable_grid_stress_plot
     )
 
     return results
