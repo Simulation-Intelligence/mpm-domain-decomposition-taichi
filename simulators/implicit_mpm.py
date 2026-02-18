@@ -723,6 +723,19 @@ class ImplicitMPM:
         np.save(f"{frame_dir}/positions.npy", filtered_positions)
         np.save(f"{frame_dir}/boundary_flags.npy", filtered_boundary_flags)
 
+        # 保存网格应力（基于F_grid）及网格质量
+        grid_stress, grid_mass, grid_meta = self.solver.get_grid_stress_from_F_grid_numpy()
+        np.save(f"{frame_dir}/grid_stress.npy", grid_stress)
+        np.save(f"{frame_dir}/grid_mass.npy", grid_mass)
+        with open(f"{frame_dir}/grid_stress_meta.json", 'w') as f:
+            json.dump(grid_meta, f, indent=2)
+
+        print(
+            f"网格应力已保存: shape={grid_stress.shape}, "
+            f"有效网格数={grid_meta['valid_grid_count']}, "
+            f"invalid_J网格数={grid_meta['invalid_j_count']}"
+        )
+
         # 保存actual mass信息到该帧的子目录
         try:
             actual_masses = self.solver.get_volume_force_masses()
@@ -773,6 +786,7 @@ class ImplicitMPM:
         del stress_data, positions, boundary_flags
         del filtered_stress_data, filtered_positions, filtered_boundary_flags
         del valid_mask, von_mises_stress
+        del grid_stress, grid_mass, grid_meta
         if 'region_mask' in locals():
             del region_mask
         gc.collect()
