@@ -18,7 +18,7 @@ import os
 class SchwarzPerformanceStats:
     """Schwarz 域分解性能统计收集器"""
 
-    def __init__(self, max_frames_to_keep=1000):
+    def __init__(self, max_frames_to_keep=300000):
         """
         初始化性能统计
 
@@ -735,7 +735,7 @@ class SchwarzPerformanceStats:
 class SingleDomainPerformanceStats:
     """单域 MPM 模拟器性能统计收集器"""
 
-    def __init__(self, max_frames_to_keep=1000):
+    def __init__(self, max_frames_to_keep=300000):
         """
         初始化性能统计
 
