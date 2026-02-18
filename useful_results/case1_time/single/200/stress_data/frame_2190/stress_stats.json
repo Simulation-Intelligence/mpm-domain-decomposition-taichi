@@ -1,0 +1,30 @@
+{
+  "frame": 2190,
+  "n_particles": 409600,
+  "n_particles_total": 409600,
+  "n_particles_filtered": 0,
+  "dimension": 2,
+  "stress_output_regions": [
+    {
+      "type": "rectangle",
+      "params": {
+        "range": [
+          [
+            0.0,
+            1.0
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    }
+  ],
+  "von_mises_stress": {
+    "min": 0.009492178159574009,
+    "max": 743.924386276647,
+    "mean": 57.26729519919265,
+    "std": 101.92746228755897
+  }
+}

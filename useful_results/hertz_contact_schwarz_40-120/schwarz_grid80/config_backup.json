@@ -1,0 +1,230 @@
+{
+    "max_schwarz_iter": 50,
+    "schwarz_eta": 0.0001,
+    "max_frames": 50000,
+    "velocity_convergence_threshold": 1e-06,
+    "velocity_convergence_check_interval": 10,
+    "use_record": false,
+    "visualize_grid": true,
+    "visualize_boundary_grid": true,
+    "no_gui": false,
+    "steps": 1,
+    "arch": "cpu",
+    "float_type": "f64",
+    "use_mass_boundary": true,
+    "do_small_advect": false,
+    "Domain1": {
+        "arch": "cpu",
+        "float_type": "f64",
+        "dim": 2,
+        "grid_nx": 64,
+        "grid_ny": 31,
+        "domain_width": 1.0,
+        "domain_height": 0.484375,
+        "offset": [
+            0.0,
+            0.0
+        ],
+        "particles_per_grid": 16,
+        "sampling_method": "mesh",
+        "elasticity_model": "linear",
+        "dt": 0.0002,
+        "max_iter": 1,
+        "solve_max_iter": 100,
+        "solve_init_iter": 100,
+        "gravity": [
+            0.0,
+            -0.0
+        ],
+        "material_params": [
+            {
+                "id": 0,
+                "name": "default",
+                "E": 200000.0,
+                "nu": 0.3,
+                "rho": 1000
+            }
+        ],
+        "implicit": true,
+        "use_auto_diff": false,
+        "compare_diff": false,
+        "bound": 1,
+        "initial_velocity_y": -0.1,
+        "damping": 0.5,
+        "particle_damping": 0.999,
+        "boundary_particle_range": [
+            [
+                [
+                    0.0,
+                    1.0
+                ],
+                [
+                    0.0,
+                    0.11
+                ]
+            ]
+        ],
+        "volume_forces": [
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            0,
+                            1
+                        ],
+                        [
+                            0.44,
+                            0.45
+                        ]
+                    ]
+                },
+                "force": [
+                    0.0,
+                    -100.0
+                ]
+            }
+        ],
+        "shapes": [
+            {
+                "type": "ellipse",
+                "params": {
+                    "center": [
+                        0.5,
+                        0.45
+                    ],
+                    "semi_axes": [
+                        0.4,
+                        0.4
+                    ]
+                },
+                "operation": "add",
+                "material_id": 0
+            },
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            0,
+                            1
+                        ],
+                        [
+                            0.45,
+                            1
+                        ]
+                    ]
+                },
+                "operation": "subtract"
+            },
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            0,
+                            1
+                        ],
+                        [
+                            0,
+                            0.08
+                        ]
+                    ]
+                },
+                "operation": "subtract"
+            }
+        ],
+        "implicit_solver": "Newton",
+        "boundary_size": 0.0001,
+        "eta": 0.0001
+    },
+    "Domain2": {
+        "arch": "cpu",
+        "float_type": "f64",
+        "dim": 2,
+        "grid_nx": 80,
+        "grid_ny": 20,
+        "domain_width": 0.6,
+        "domain_height": 0.15,
+        "offset": [
+            0.2,
+            0
+        ],
+        "particles_per_grid": 16,
+        "sampling_method": "mesh",
+        "elasticity_model": "linear",
+        "dt": 0.0002,
+        "max_iter": 1,
+        "solve_max_iter": 100,
+        "solve_init_iter": 100,
+        "gravity": [
+            0.0,
+            -0.0
+        ],
+        "material_params": [
+            {
+                "id": 0,
+                "name": "default",
+                "E": 200000.0,
+                "nu": 0.3,
+                "rho": 1000
+            }
+        ],
+        "implicit": true,
+        "use_auto_diff": false,
+        "compare_diff": false,
+        "bound": 2,
+        "use_mesh_boundary": true,
+        "initial_velocity_y": -0.1,
+        "damping": 0.5,
+        "particle_damping": 0.999,
+        "boundary_particle_range": [
+            [
+                [
+                    0.0,
+                    1.0
+                ],
+                [
+                    0.1,
+                    1.0
+                ]
+            ]
+        ],
+        "shapes": [
+            {
+                "type": "ellipse",
+                "params": {
+                    "center": [
+                        0.3,
+                        0.45
+                    ],
+                    "semi_axes": [
+                        0.4,
+                        0.4
+                    ]
+                },
+                "operation": "add",
+                "material_id": 0
+            },
+            {
+                "type": "rectangle",
+                "params": {
+                    "range": [
+                        [
+                            -10,
+                            10
+                        ],
+                        [
+                            0.12,
+                            10
+                        ]
+                    ]
+                },
+                "operation": "subtract"
+            }
+        ],
+        "implicit_solver": "Newton",
+        "boundary_size": 0.0001,
+        "eta": 0.0001
+    }
+}

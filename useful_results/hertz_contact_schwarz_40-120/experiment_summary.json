@@ -1,0 +1,27 @@
+{
+    "base_config": "config/schwarz_2d_test3.json",
+    "use_schwarz": true,
+    "grid_sizes": [
+        40,
+        60,
+        80,
+        100,
+        120
+    ],
+    "successful_runs": [
+        40,
+        60,
+        80,
+        100,
+        120
+    ],
+    "failed_runs": [],
+    "result_dirs": {
+        "40": "experiment_results/grid_study_hertz_contact_schwarz_grid40-80_20260212_113903/schwarz_grid40",
+        "60": "experiment_results/grid_study_hertz_contact_schwarz_grid40-80_20260212_113903/schwarz_grid60",
+        "80": "experiment_results/grid_study_hertz_contact_schwarz_grid40-80_20260212_113903/schwarz_grid80",
+        "100": "experiment_results/grid_study_hertz_contact_schwarz_grid40-80_20260212_113903/schwarz_grid100",
+        "120": "experiment_results/grid_study_hertz_contact_schwarz_grid40-80_20260212_113903/schwarz_grid120"
+    },
+    "completed_time": "2026-02-13T17:44:12.704598"
+}

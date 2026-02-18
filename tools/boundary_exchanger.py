@@ -108,13 +108,10 @@ class BoundaryExchanger:
                         weight = 1.0
                         for d in ti.static(range(self.small_time_domain.grid.dim)):
                             weight *= w[offset[d]][d]
-                        if self.small_time_domain.grid.is_particle_boundary_grid[grid_idx]:
-                            is_small_time_domain_boundary = True
                         m += weight * self.small_time_domain.grid.m[grid_idx]
                         to_boundary_v[I] += weight * from_boundary_v[grid_idx] * self.small_time_domain.grid.m[grid_idx]
 
                 big_time_domain_set_boundary = self.big_time_domain.grid.is_particle_boundary_grid[I] and m > 1e-10
-                big_time_domain_set_boundary = big_time_domain_set_boundary
 
                 if big_time_domain_set_boundary:
                     self.big_time_domain.grid.is_schwarz_boundary_grid[I] = [1] * self.big_time_domain.grid.dim
@@ -160,7 +157,7 @@ class BoundaryExchanger:
                         weight = 1.0
                         for d in ti.static(range(self.big_time_domain.grid.dim)):
                             weight *= w[offset[d]][d]
-                        if self.big_time_domain.grid.is_particle_boundary_grid[grid_idx]:
+                        if self.big_time_domain.grid.is_particle_boundary_grid[grid_idx] :
                             is_big_time_domain_boundary = True
                         m += weight * self.big_time_domain.grid.m[grid_idx]
                         to_boundary_v[I] += weight * from_boundary_v[grid_idx] * self.big_time_domain.grid.m[grid_idx]

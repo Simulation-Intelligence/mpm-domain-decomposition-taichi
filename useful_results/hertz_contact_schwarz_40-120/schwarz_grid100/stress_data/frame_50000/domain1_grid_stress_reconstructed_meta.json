@@ -1,0 +1,32 @@
+{
+  "mode": "schwarz",
+  "domain": "domain1",
+  "frame": 50000,
+  "dim": 2,
+  "nx": 64,
+  "ny": 31,
+  "nz": null,
+  "domain_width": 1.0,
+  "domain_height": 0.484375,
+  "domain_depth": null,
+  "dx_x": 0.015625,
+  "dx_y": 0.015625,
+  "dx_z": null,
+  "offset": [
+    0.0,
+    0.0
+  ],
+  "material_id_used": 0,
+  "rho": 1000.0,
+  "particles_per_grid": 16,
+  "p_vol": 1.52587890625e-05,
+  "p_mass": 0.0152587890625,
+  "particle_weight_assumed": 1.0,
+  "mass_threshold": 1e-10,
+  "n_particles_input": 25084,
+  "valid_grid_count": 1249,
+  "source_stress_file": "/home/zhaofeng/mpm-domain-decomposition-taichi/experiment_results/grid_study_hertz_contact_schwarz_grid40-80_20260212_113903/schwarz_grid100/stress_data/frame_50000/domain1_stress.npy",
+  "source_positions_file": "/home/zhaofeng/mpm-domain-decomposition-taichi/experiment_results/grid_study_hertz_contact_schwarz_grid40-80_20260212_113903/schwarz_grid100/stress_data/frame_50000/domain1_positions.npy",
+  "config_file": "/home/zhaofeng/mpm-domain-decomposition-taichi/experiment_results/grid_study_hertz_contact_schwarz_grid40-80_20260212_113903/schwarz_grid100/config.json",
+  "notes": "reconstructed from saved particle stress; may differ from runtime full-particle p2g if saved data was filtered or per-particle metadata is unavailable"
+}
