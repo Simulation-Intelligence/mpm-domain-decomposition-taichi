@@ -107,6 +107,10 @@ class ImplicitMPM:
             max_frames=self.max_frames
         )
 
+        # 计算渲染缩放系数（基于本域最大边长，使几何体在屏幕上正确缩放）
+        _max_side = max(self.grid.domain_width, self.grid.domain_height)
+        self.render_scale = 1.0 / _max_side
+
         # 初始化GUI（如果不是no_gui模式）
         if not self.no_gui:
             self.gui = ti.GUI("Implicit MPM", res=(800, 800))
@@ -470,7 +474,7 @@ class ImplicitMPM:
         if self.no_gui or self.gui is None:
             return
 
-        x_numpy = self.particles.x.to_numpy()
+        x_numpy = self.particles.x.to_numpy() * self.render_scale
 
         if self.dim == 3:
             x_numpy= project(x_numpy)

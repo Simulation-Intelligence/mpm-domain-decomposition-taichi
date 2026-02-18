@@ -137,6 +137,10 @@ class MPM_Schwarz:
         self.convergence_max_residual = ti.field(dtype=ti.f64, shape=())
         self.convergence_max_velocity = ti.field(dtype=ti.f64, shape=())
 
+        # 计算渲染缩放系数（基于Domain1的最大边长，使几何体在屏幕上正确缩放）
+        _d1_max_side = max(self.Domain1.grid.domain_width, self.Domain1.grid.domain_height)
+        self.render_scale = 1.0 / _d1_max_side
+
         # 只在非无GUI模式下初始化GUI
         if not self.no_gui:
             self.gui = ti.GUI("Implicit MPM Schwarz", res=(800, 800))
@@ -171,8 +175,8 @@ class MPM_Schwarz:
         # 创建Domain1网格线条字段
         if len(lines_begin1) > 0 and len(lines_end1) > 0:
             vertices1 = np.empty((len(lines_begin1) * 2, 2), dtype=np.float32)
-            vertices1[0::2] = lines_begin1  # 偶数位置放begin点
-            vertices1[1::2] = lines_end1    # 奇数位置放end点
+            vertices1[0::2] = lines_begin1 * self.render_scale  # 偶数位置放begin点
+            vertices1[1::2] = lines_end1 * self.render_scale    # 奇数位置放end点
 
             self.grid_vertices1 = ti.Vector.field(2, dtype=ti.f32, shape=len(vertices1))
             self.grid_vertices1.from_numpy(vertices1)
@@ -182,8 +186,8 @@ class MPM_Schwarz:
         # 创建Domain2网格线条字段
         if len(lines_begin2) > 0 and len(lines_end2) > 0:
             vertices2 = np.empty((len(lines_begin2) * 2, 2), dtype=np.float32)
-            vertices2[0::2] = lines_begin2  # 偶数位置放begin点
-            vertices2[1::2] = lines_end2    # 奇数位置放end点
+            vertices2[0::2] = lines_begin2 * self.render_scale  # 偶数位置放begin点
+            vertices2[1::2] = lines_end2 * self.render_scale    # 奇数位置放end点
 
             self.grid_vertices2 = ti.Vector.field(2, dtype=ti.f32, shape=len(vertices2))
             self.grid_vertices2.from_numpy(vertices2)
@@ -242,19 +246,21 @@ class MPM_Schwarz:
         self.domain2_offset = ti.Vector.field(2, dtype=ti.f32, shape=())
         self.domain1_scale = ti.field(dtype=ti.f32, shape=())
         self.domain2_scale = ti.field(dtype=ti.f32, shape=())
+        self.render_scale_field = ti.field(dtype=ti.f32, shape=())
 
         # 初始化offset和scale
         self.domain1_offset[None] = ti.Vector([self.Domain1.offset[0], self.Domain1.offset[1]])
         self.domain2_offset[None] = ti.Vector([self.Domain2.offset[0], self.Domain2.offset[1]])
         self.domain1_scale[None] = self.Domain1.scale
         self.domain2_scale[None] = self.Domain2.scale
+        self.render_scale_field[None] = self.render_scale
 
     @ti.kernel
     def _update_render_positions_domain1(self):
         """更新Domain1的渲染位置和颜色"""
         for i in range(self.Domain1.particles.x.shape[0]):
-            # 计算变换后的位置：x * scale + offset
-            self.render_pos1[i] = self.Domain1.particles.x[i] * self.domain1_scale[None] + self.domain1_offset[None]
+            # 计算变换后的位置：(x * scale + offset) * render_scale
+            self.render_pos1[i] = (self.Domain1.particles.x[i] * self.domain1_scale[None] + self.domain1_offset[None]) * self.render_scale_field[None]
 
             # 设置颜色：边界粒子为白色，普通粒子为Domain1颜色（青色）
             if self.Domain1.particles.is_boundary_particle[i]:
@@ -266,8 +272,8 @@ class MPM_Schwarz:
     def _update_render_positions_domain2(self):
         """更新Domain2的渲染位置和颜色"""
         for i in range(self.Domain2.particles.x.shape[0]):
-            # 计算变换后的位置：x * scale + offset
-            self.render_pos2[i] = self.Domain2.particles.x[i] * self.domain2_scale[None] + self.domain2_offset[None]
+            # 计算变换后的位置：(x * scale + offset) * render_scale
+            self.render_pos2[i] = (self.Domain2.particles.x[i] * self.domain2_scale[None] + self.domain2_offset[None]) * self.render_scale_field[None]
 
             # 设置颜色：边界粒子为白色，普通粒子为Domain2颜色（红色）
             if self.Domain2.particles.is_boundary_particle[i]:
@@ -283,7 +289,7 @@ class MPM_Schwarz:
 
         for I in ti.grouped(self.Domain1.grid.is_boundary_grid):
             grid_pos = self.Domain1.grid.get_grid_pos(I)
-            render_pos = grid_pos * self.domain1_scale[None] + self.domain1_offset[None]
+            render_pos = (grid_pos * self.domain1_scale[None] + self.domain1_offset[None]) * self.render_scale_field[None]
 
             # 检查is_boundary_grid标记（vector field，检查任意分量是否非零）
             if self.Domain1.grid.is_boundary_grid[I][0] != 0 or self.Domain1.grid.is_boundary_grid[I][1] != 0:
@@ -302,7 +308,7 @@ class MPM_Schwarz:
 
         for I in ti.grouped(self.Domain2.grid.is_boundary_grid):
             grid_pos = self.Domain2.grid.get_grid_pos(I)
-            render_pos = grid_pos * self.domain2_scale[None] + self.domain2_offset[None]
+            render_pos = (grid_pos * self.domain2_scale[None] + self.domain2_offset[None]) * self.render_scale_field[None]
 
             # 检查is_boundary_grid标记（vector field，检查任意分量是否非零）
             if self.Domain2.grid.is_boundary_grid[I][0] != 0 or self.Domain2.grid.is_boundary_grid[I][1] != 0:
@@ -321,7 +327,7 @@ class MPM_Schwarz:
         for I in ti.grouped(self.Domain1.grid.move_mass_field):
             if self.Domain1.grid.move_mass_field[I] > 0:
                 grid_pos = self.Domain1.grid.get_grid_pos(I)
-                render_pos = grid_pos * self.domain1_scale[None] + self.domain1_offset[None]
+                render_pos = (grid_pos * self.domain1_scale[None] + self.domain1_offset[None]) * self.render_scale_field[None]
                 idx = ti.atomic_add(move_mass_count, 1)
                 if idx < self.move_mass_grid_points1.shape[0]:
                     self.move_mass_grid_points1[idx] = render_pos
@@ -336,7 +342,7 @@ class MPM_Schwarz:
         for I in ti.grouped(self.Domain2.grid.move_mass_field):
             if self.Domain2.grid.move_mass_field[I] > 0:
                 grid_pos = self.Domain2.grid.get_grid_pos(I)
-                render_pos = grid_pos * self.domain2_scale[None] + self.domain2_offset[None]
+                render_pos = (grid_pos * self.domain2_scale[None] + self.domain2_offset[None]) * self.render_scale_field[None]
                 idx = ti.atomic_add(move_mass_count, 1)
                 if idx < self.move_mass_grid_points2.shape[0]:
                     self.move_mass_grid_points2[idx] = render_pos
