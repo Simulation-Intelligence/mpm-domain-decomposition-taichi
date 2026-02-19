@@ -1,15 +1,15 @@
 {
     "max_schwarz_iter": 50,
-    "schwarz_eta": 1e-6,
+    "schwarz_eta": 1e-06,
     "max_frames": 50000,
-    "velocity_convergence_threshold": 1e-6,
+    "velocity_convergence_threshold": 1e-06,
     "velocity_convergence_check_interval": 10,
     "use_record": false,
     "visualize_grid": true,
     "visualize_boundary_grid": true,
     "no_gui": false,
     "steps": 1,
-    "enable_perf_stats": true,
+    "enable_perf_stats": false,
     "stress_save_interval": 500,
     "arch": "cpu",
     "float_type": "f64",
@@ -19,8 +19,8 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 100,
-        "grid_ny": 40,
+        "grid_nx": 50,
+        "grid_ny": 20,
         "domain_width": 0.111111,
         "domain_height": 0.044444,
         "offset": [
@@ -58,7 +58,7 @@
         "move_boundary": {
             "start_region": [
                 [
-                    0.104000,
+                    0.104,
                     0.106111
                 ],
                 [
@@ -72,7 +72,7 @@
             ],
             "speed": 0.001111
         },
-        "dt": 0.00005,
+        "dt": 5e-05,
         "max_iter": 1,
         "solve_max_iter": 1000,
         "gravity": [
@@ -83,9 +83,9 @@
             {
                 "id": 0,
                 "name": "default",
-                "E": 1e5,
+                "E": 100000.0,
                 "nu": 0.3,
-                "rho": 1e3
+                "rho": 1000.0
             }
         ],
         "implicit": true,
@@ -151,7 +151,7 @@
             }
         ],
         "implicit_solver": "Newton",
-        "eta": 1e-4,
+        "eta": 0.0001,
         "max_frames": 5000,
         "last_frames_count": 5000,
         "use_record": false,
@@ -162,8 +162,8 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 40,
-        "grid_ny": 40,
+        "grid_nx": 20,
+        "grid_ny": 20,
         "domain_width": 0.044444,
         "domain_height": 0.044444,
         "offset": [
@@ -186,7 +186,7 @@
                 1.0
             ]
         ],
-        "dt": 0.00005,
+        "dt": 5e-05,
         "max_iter": 1,
         "solve_max_iter": 1000,
         "gravity": [
@@ -197,9 +197,9 @@
             {
                 "id": 0,
                 "name": "default",
-                "E": 1e5,
+                "E": 100000.0,
                 "nu": 0.3,
-                "rho": 1e3
+                "rho": 1000.0
             }
         ],
         "implicit": true,
@@ -372,7 +372,7 @@
             }
         ],
         "implicit_solver": "Newton",
-        "eta": 1e-4,
+        "eta": 0.0001,
         "max_frames": 5000,
         "last_frames_count": 5000,
         "use_record": false,

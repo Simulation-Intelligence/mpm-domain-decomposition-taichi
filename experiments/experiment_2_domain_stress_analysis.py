@@ -86,7 +86,6 @@ def run_simulation(config_path, use_schwarz=False):
             sys.executable,  # 使用当前Python解释器
             "simulators/implicit_mpm_schwarz.py",
             "--config", config_path,
-            "--no-gui"
         ]
         print(f"执行命令: {' '.join(cmd)}")
 
@@ -790,9 +789,9 @@ def main():
     # 批量模式参数
     parser.add_argument('--batch-mode', action='store_true',
                        help='启用批量模式：运行多个不同网格分辨率的实验')
-    parser.add_argument('--grid-start', type=int, default=80,
-                       help='批量模式：起始网格大小 (默认: 80)')
-    parser.add_argument('--grid-end', type=int, default=80,
+    parser.add_argument('--grid-start', type=int, default=40,
+                       help='批量模式：起始网格大小 (默认: 20)')
+    parser.add_argument('--grid-end', type=int, default=100,
                        help='批量模式：结束网格大小 (默认: 80)')
     parser.add_argument('--grid-step', type=int, default=20,
                        help='批量模式：网格大小步长 (默认: 20)')
