@@ -493,7 +493,7 @@ def analyze_and_plot(positions_or_tuple, stresses_or_none, config, output_dir, g
     plt.plot(line_x - center[0], ana_sig_xx, 'r--', lw=2, label='Analytical')
     plt.axvline(-radius, color='k', linestyle=':', alpha=0.3, label='Inclusion boundary')
     plt.axvline(radius, color='k', linestyle=':', alpha=0.3)
-    plt.xlabel('X position (relative to center)')
+    plt.xlabel('Radial position')
     plt.ylabel('Stress XX (Pa)')
     plt.xlim(-3*radius, 3*radius)
     plt.legend()
@@ -506,14 +506,14 @@ def analyze_and_plot(positions_or_tuple, stresses_or_none, config, output_dir, g
     plt.plot(line_x - center[0], ana_sig_yy, 'r--', lw=2, label='Analytical')
     plt.axvline(-radius, color='k', linestyle=':', alpha=0.3, label='Inclusion boundary')
     plt.axvline(radius, color='k', linestyle=':', alpha=0.3)
-    plt.xlabel('X position (relative to center)')
+    plt.xlabel('Radial position')
     plt.ylabel('Stress YY (Pa)')
     plt.xlim(-3*radius, 3*radius)
     plt.legend()
     plt.grid(True, alpha=0.3)
 
     # 保存图形
-    save_path = os.path.join(output_dir, 'result_v3_cartesian.png')
+    save_path = os.path.join(output_dir, 'result_v3_cartesian.pdf')
     plt.subplots_adjust(left=0.08, right=0.95, bottom=0.1, top=0.9, wspace=0.25)
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
@@ -712,12 +712,12 @@ def create_summary_plot(results, output_dir):
     radius = params['radius']
 
     # 左图: Sigma_XX
-    ax1.set_title(f"Transverse Stress $\sigma_{{xx}}$ - All Grid Sizes", fontsize=14)
+    ax1.set_title(f"Transverse Stress $\sigma_{{xx}}$", fontsize=14)
     # 坐标平移：使中心点变为0
     ax1.plot(line_x - center[0], ana_sig_xx, 'r--', lw=3, label='Analytical', zorder=10, alpha=0.9)
 
     # 右图: Sigma_YY
-    ax2.set_title(f"Radial Stress $\sigma_{{yy}}$ - All Grid Sizes", fontsize=14)
+    ax2.set_title(f"Radial Stress $\sigma_{{yy}}$", fontsize=14)
     # 坐标平移：使中心点变为0
     ax2.plot(line_x - center[0], ana_sig_yy, 'r--', lw=3, label='Analytical', zorder=10, alpha=0.9)
 
@@ -738,28 +738,29 @@ def create_summary_plot(results, output_dir):
         mpm_sig_xx = stresses[mask_strip, 0, 0]
         mpm_sig_yy = stresses[mask_strip, 1, 1]
 
-        label = f'Grid {grid_size}x{grid_size}'
+        label = f'{1.0/grid_size:.4g}'
+        idx = np.argsort(mpm_x)
 
         # Sigma_XX (坐标平移：使中心点变为0)
-        ax1.scatter(mpm_x - center[0], mpm_sig_xx, s=15, alpha=0.7, c=color, label=label, edgecolors='none')
+        ax1.plot(mpm_x[idx] - center[0], mpm_sig_xx[idx], '-o', color=color, linewidth=1.4, markersize=3, alpha=0.8, label=label)
 
         # Sigma_YY (坐标平移：使中心点变为0)
-        ax2.scatter(mpm_x - center[0], mpm_sig_yy, s=15, alpha=0.7, c=color, label=label, edgecolors='none')
+        ax2.plot(mpm_x[idx] - center[0], mpm_sig_yy[idx], '-o', color=color, linewidth=1.4, markersize=3, alpha=0.8, label=label)
 
     # 添加辅助线（相对坐标）
     for ax in [ax1, ax2]:
-        ax.axvline(-radius, color='k', linestyle=':', alpha=0.3, label='Inclusion boundary' if ax == ax1 else '')
+        ax.axvline(-radius, color='k', linestyle=':', alpha=0.3, label='Inclusion boundary' if ax == ax2 else '')
         ax.axvline(radius, color='k', linestyle=':', alpha=0.3)
-        ax.set_xlabel('X position (relative to center)', fontsize=12)
+        ax.set_xlabel('Radial position', fontsize=12)
         ax.set_ylabel('Stress (Pa)', fontsize=12)
         ax.set_xlim(-3*radius, 3*radius)
-        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
         ax.grid(True, alpha=0.3)
+    ax2.legend(loc='upper center', fontsize=10)
 
     plt.tight_layout()
 
     # 保存汇总图
-    summary_plot_path = os.path.join(output_dir, "summary_all_grids.png")
+    summary_plot_path = os.path.join(output_dir, "summary_all_grids.pdf")
     plt.savefig(summary_plot_path, dpi=200, bbox_inches='tight')
     plt.close()
 
@@ -887,7 +888,7 @@ def create_integrated_error_plot(results, output_dir):
     plt.tight_layout()
 
     # 保存图形
-    error_plot_path = os.path.join(output_dir, "integrated_error_comparison.png")
+    error_plot_path = os.path.join(output_dir, "integrated_error_comparison.pdf")
     plt.savefig(error_plot_path, dpi=200, bbox_inches='tight')
     plt.close()
 
@@ -927,7 +928,7 @@ def create_integrated_error_plot(results, output_dir):
     plt.tight_layout()
     
     # 保存收敛率图
-    convergence_plot_path = os.path.join(output_dir, "convergence_rate.png")
+    convergence_plot_path = os.path.join(output_dir, "convergence_rate.pdf")
     plt.savefig(convergence_plot_path, dpi=200, bbox_inches='tight')
     plt.close()
     

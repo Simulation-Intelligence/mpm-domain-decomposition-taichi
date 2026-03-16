@@ -103,7 +103,7 @@ class MPM_Schwarz:
         self.current_frame = 0
 
         # 性能统计（限制大小防止内存泄漏）
-        self.perf_stats = SchwarzPerformanceStats(max_frames_to_keep=1000)
+        self.perf_stats = SchwarzPerformanceStats(max_frames_to_keep=1000000)
         self.enable_perf_stats = self.main_config.get("enable_perf_stats", True)
 
         # 内存profiling（用于调试内存泄漏）
@@ -735,25 +735,7 @@ class MPM_Schwarz:
                 if self.frame_stage_profiler:
                     self.frame_stage_profiler.reset()
 
-            # 分层垃圾回收策略 - 根据频率和代数平衡性能和内存
-            # Level 1: 轻量级清理 - 每10帧，只清理最新临时对象
-            if self.current_frame % 10 == 0 and self.current_frame % 500 != 0 and self.current_frame % 1000 != 0:
-                if self.mem_profiler:
-                    self.mem_profiler.checkpoint(f"before_light_gc_frame_{self.current_frame}")
-                gc.collect(generation=0)  # 只清理generation 0（最新对象）
-                if self.mem_profiler:
-                    self.mem_profiler.checkpoint(f"after_light_gc_frame_{self.current_frame}")
-
-            # Level 2: 中等清理 - 每50帧
-            elif self.current_frame % 50 == 0 and self.current_frame % 1000 != 0:
-                if self.mem_profiler:
-                    self.mem_profiler.checkpoint(f"before_medium_gc_frame_{self.current_frame}")
-                gc.collect(generation=1)  # 清理generation 0和1
-                if self.mem_profiler:
-                    self.mem_profiler.checkpoint(f"after_medium_gc_frame_{self.current_frame}")
-
-            # Level 3: 完全清理 - 每100帧
-            elif self.current_frame % 100 == 0:
+            if self.current_frame % 10000 == 0:
                 if self.mem_profiler:
                     self.mem_profiler.checkpoint(f"before_full_gc_frame_{self.current_frame}")
                 gc.collect()  # 完全GC，清理所有代
@@ -1072,7 +1054,6 @@ class MPM_Schwarz:
         del von_mises_stress1, von_mises_stress2
         del d1_grid_stress, d1_grid_mass, d1_grid_meta
         del d2_grid_stress, d2_grid_mass, d2_grid_meta
-        gc.collect()
 
         return self._experiment_dir
 

@@ -1,0 +1,27 @@
+{
+  "frame": 1500,
+  "domain1": {
+    "n_particles": 5832,
+    "n_particles_total": 5832,
+    "n_particles_filtered": 0,
+    "dimension": 2,
+    "von_mises_stress": {
+      "min": 39.65188836405739,
+      "max": 6444.8762658859,
+      "mean": 2543.028999874179,
+      "std": 1349.2185766604323
+    }
+  },
+  "domain2": {
+    "n_particles": 1706,
+    "n_particles_total": 1706,
+    "n_particles_filtered": 0,
+    "dimension": 2,
+    "von_mises_stress": {
+      "min": 43.27354789035578,
+      "max": 10981.049320729118,
+      "mean": 5498.038843557282,
+      "std": 2857.231636960006
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "dim": 2,
+  "nx": 80,
+  "ny": 32,
+  "offset": [
+    0.0,
+    0.033333
+  ],
+  "dx_x": 0.0013888875,
+  "dx_y": 0.001388875,
+  "material_id_used": 0,
+  "mu": 38461.53846153846,
+  "lambda": 57692.30769230769,
+  "elasticity_model": "linear",
+  "valid_mass_threshold": 1e-10,
+  "valid_grid_count": 1951,
+  "invalid_j_count": 0
+}

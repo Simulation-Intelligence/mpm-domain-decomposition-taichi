@@ -86,7 +86,7 @@ class Newton:
             del self.H_builder
 
         # 重新创建SparseMatrixBuilder
-        self.H_builder = ti.linalg.SparseMatrixBuilder(new_dim, new_dim, max_num_triplets=int(new_dim**2* 0.5), dtype=self.float_type)
+        self.H_builder = ti.linalg.SparseMatrixBuilder(new_dim, new_dim, max_num_triplets=int(new_dim**2), dtype=self.float_type)
 
 
         print(f"Newton optimizer resized to dimension: {new_dim}")
@@ -133,7 +133,7 @@ class Newton:
 
             H_builder = ti.linalg.SparseMatrixBuilder(
                     self.dim[None], self.dim[None],
-                    max_num_triplets=int(self.dim[None]**2 * 0.1),
+                    max_num_triplets=int(self.dim[None]**2 *0.05),
                     dtype=self.float_type
                 )
 
@@ -154,10 +154,6 @@ class Newton:
                 print("Solver failed, resetting to gradient descent")
 
             del H, solver, H_builder
-
-            # 每 5 次迭代强制 GC，清理 Taichi 内部累积
-            if it % 5 == 0:
-                gc.collect(generation=0)
 
             # 线搜索
             alpha = self.line_search()

@@ -235,14 +235,14 @@ def run_single_simulation(config_path, use_schwarz=False, output_name=None):
         # 双域模式：使用Schwarz求解器
         cmd = [
             "python", "simulators/implicit_mpm_schwarz.py",
-            "--config", config_path
+            "--config", config_path, "--no-gui"
         ]
         print(f"  使用双域Schwarz求解器")
     else:
         # 单域模式：使用单域求解器
         cmd = [
             "python", "simulators/implicit_mpm.py",
-            "--config", config_path
+            "--config", config_path, "--no-gui"
         ]
         print(f"  使用单域求解器")
 
@@ -339,6 +339,37 @@ def find_rightmost_bottom_particle(positions, beam_params, domain_id=None):
         rightmost_bottom = bottom_particles[max_x_idx]
 
         return rightmost_bottom
+
+def find_rightmost_particle(positions, corner='bottom', tolerance=1e-6):
+    """
+    找到最右侧特定位置的粒子
+
+    参数:
+        positions: 粒子位置数组 (n, 2)
+        corner: 'bottom'（最右下角）, 'top'（最右上角）, 'middle'（最右边中间）
+        tolerance: 判断同一行/列的容差
+
+    返回:
+        选中粒子的位置 [x, y]
+    """
+    if corner == 'bottom':
+        ref_y = np.min(positions[:, 1])
+        mask = np.abs(positions[:, 1] - ref_y) < tolerance
+        candidates = positions[mask]
+        return candidates[np.argmax(candidates[:, 0])]
+    elif corner == 'top':
+        ref_y = np.max(positions[:, 1])
+        mask = np.abs(positions[:, 1] - ref_y) < tolerance
+        candidates = positions[mask]
+        return candidates[np.argmax(candidates[:, 0])]
+    elif corner == 'middle':
+        max_x = np.max(positions[:, 0])
+        mask = np.abs(positions[:, 0] - max_x) < tolerance
+        candidates = positions[mask]
+        mid_y = np.median(candidates[:, 1])
+        return candidates[np.argmin(np.abs(candidates[:, 1] - mid_y))]
+    else:
+        raise ValueError(f"未知的corner参数: {corner}")
 
 def find_closest_frame(target_frame, available_frames, mode='before'):
     """
@@ -713,6 +744,79 @@ def parse_experiment_results_dir(results_dir):
         'available_frames': available_frames,
         'results': results,
         'summary': summary
+    }
+
+def compute_hw_single_domain(results_dir, corner='bottom'):
+    """
+    从单域实验结果目录计算最终帧的h/w比值
+
+    参数:
+        results_dir: 单域实验结果目录路径（含config_backup.json和stress_data/）
+        corner: 跟踪粒子选择，'bottom'（最右下角）、'top'（最右上角）或'middle'（最右边中间）
+
+    返回:
+        包含h, w, h/w及粒子位置信息的字典
+    """
+    print(f"\n计算单域h/w: {results_dir}")
+    print(f"  跟踪粒子: {corner}")
+
+    # 1. 加载配置
+    config_path = os.path.join(results_dir, 'config_backup.json')
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"未找到配置文件: {config_path}")
+    config = load_config(config_path)
+    dbc_right_x = config['DBC_range'][0][0][1]
+    print(f"  固定端位置 (DBC右端): x = {dbc_right_x}")
+
+    # 2. 发现可用帧
+    stress_data_dir = os.path.join(results_dir, 'stress_data')
+    if not os.path.exists(stress_data_dir):
+        raise FileNotFoundError(f"未找到stress_data目录: {stress_data_dir}")
+    frame_dirs = [d for d in os.listdir(stress_data_dir) if d.startswith('frame_')]
+    available_frames = sorted([int(d.replace('frame_', '')) for d in frame_dirs])
+    print(f"  可用帧: {len(available_frames)} 个 (范围: {min(available_frames)} - {max(available_frames)})")
+
+    # 3. 在最早帧找到最右下角粒子并记住索引
+    first_frame = min(available_frames)
+    first_positions = np.load(os.path.join(stress_data_dir, f'frame_{first_frame}', 'positions.npy'))
+    tracked_pos = find_rightmost_particle(first_positions, corner=corner)
+    tracked_idx = None
+    for i, p in enumerate(first_positions):
+        if abs(p[0] - tracked_pos[0]) < 1e-10 and abs(p[1] - tracked_pos[1]) < 1e-10:
+            tracked_idx = i
+            break
+    if tracked_idx is None:
+        raise RuntimeError("无法找到跟踪粒子的索引")
+    initial_x, initial_y = tracked_pos
+    print(f"  跟踪粒子索引: {tracked_idx}")
+    print(f"  初始位置: x={initial_x:.6f}, y={initial_y:.6f}")
+    del first_positions
+
+    # 4. 加载最后一帧位置
+    last_frame = max(available_frames)
+    last_positions = np.load(os.path.join(stress_data_dir, f'frame_{last_frame}', 'positions.npy'))
+    final_pos = last_positions[tracked_idx]
+    final_x, final_y = final_pos
+    print(f"  最终帧 (frame {last_frame}) 位置: x={final_x:.6f}, y={final_y:.6f}")
+    del last_positions
+
+    # 5. 计算h/w
+    h = initial_y - final_y          # 向下位移（正值）
+    w = final_x - dbc_right_x        # 距固定端水平距离
+    h_over_w = h / w if w > 1e-12 else float('inf')
+
+    print(f"\n  结果: h={h:.6e}, w={w:.6e}, h/w={h_over_w:.6e}")
+
+    return {
+        'results_dir': results_dir,
+        'tracked_particle_idx': tracked_idx,
+        'initial_pos': [initial_x, initial_y],
+        'final_pos': [final_x, final_y],
+        'last_frame': last_frame,
+        'dbc_right_x': dbc_right_x,
+        'h': h,
+        'w': w,
+        'h_over_w': h_over_w,
     }
 
 def analyze_single_experiment(results_dir, plot=True, output_file=None):
@@ -1095,20 +1199,22 @@ def main():
     parser = argparse.ArgumentParser(description='静态悬臂梁实验')
     parser.add_argument('--config', default="config/config_2d_test4.json",
                        help='基础配置文件路径')
-    parser.add_argument('--mode', choices=['single', 'batch', 'analyze'], default='single',
-                       help='实验模式：单次(single)、批量(batch)或分析(analyze)')
+    parser.add_argument('--mode', choices=['single', 'batch', 'analyze', 'compute-hw'], default='single',
+                       help='实验模式：单次(single)、批量(batch)、分析(analyze)或计算h/w(compute-hw)')
     parser.add_argument('--use-schwarz', action='store_true',
                        help='使用双域Schwarz模式（默认为单域模式）')
     parser.add_argument('--gamma', type=float, default=None,
                        help='单次实验的gamma值（默认使用配置文件中的重力）')
-    parser.add_argument('--gamma-range', nargs=2, type=float, default=[4.33e+01 ,  1.00e+03],
+    parser.add_argument('--gamma-range', nargs=2, type=float, default=[1e-2 ,  1.00e+03],
                        help='批量实验的gamma范围 [最小值, 最大值]')
-    parser.add_argument('--n-points', type=int, default=4,
+    parser.add_argument('--n-points', type=int, default=12,
                        help='批量实验的测试点数')
     parser.add_argument('--output-dir', default=None,
                        help='输出目录')
     parser.add_argument('--results-dir', type=str, default=None,
-                       help='实验结果目录路径（用于analyze模式）')
+                       help='实验结果目录路径（用于analyze/compute-hw模式）')
+    parser.add_argument('--particle', choices=['bottom', 'top', 'middle'], default='bottom',
+                       help='compute-hw模式中跟踪的粒子位置：bottom（最右下角）、top（最右上角）、middle（最右边中间）')
 
     args = parser.parse_args()
 
@@ -1170,6 +1276,18 @@ def main():
             plot=True,
             output_file=output_file
         )
+
+    elif args.mode == 'compute-hw':
+        # 从单域结果目录计算最终帧h/w
+        if not args.results_dir:
+            print("错误: compute-hw模式需要指定--results-dir参数")
+            return
+
+        if not os.path.exists(args.results_dir):
+            print(f"错误: 结果目录不存在: {args.results_dir}")
+            return
+
+        compute_hw_single_domain(args.results_dir, corner=args.particle)
 
     print("\n实验完成!")
 

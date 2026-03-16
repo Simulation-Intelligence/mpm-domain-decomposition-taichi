@@ -484,21 +484,14 @@ class ImplicitMPM:
         self.gui.circles(x_numpy, radius=3, color=0x66CCFF)
         self.gui.show()
 
-        if self.recorder is None:
-            # 清理临时numpy数组
-            del x_numpy
-            # 每1000帧强制垃圾回收一次
-            if self.current_frame % 1000 == 0:
-                gc.collect()
-            return
-
-        print("Recording frame: ", len(self.recorder.frame_data) + 1)
-        boundary_flags = self.particles.is_boundary_particle.to_numpy().astype(np.uint32)
-        self.recorder.capture(x_numpy, boundary_flags)
+        if self.use_record and self.recorder is not None:
+            print("Recording frame: ", len(self.recorder.frame_data) + 1)
+            boundary_flags = self.particles.is_boundary_particle.to_numpy().astype(np.uint32)
+            self.recorder.capture(x_numpy, boundary_flags)
+            del boundary_flags
 
         # 清理临时numpy数组
-        del x_numpy, boundary_flags
-        # gc.collect() 已移至上方每1000帧调用一次
+        del x_numpy
     
     def _is_point_in_single_region(self, point, region_config):
         """检查点是否在单个区域内"""
@@ -627,7 +620,6 @@ class ImplicitMPM:
         del particle_stress, particle_strain, particle_positions
         del grid_stress, grid_strain, grid_weights
         del final_positions, final_stress, final_strain
-        gc.collect()
 
         return result_stress, result_strain, result_positions
 
@@ -793,7 +785,6 @@ class ImplicitMPM:
         del grid_stress, grid_mass, grid_meta
         if 'region_mask' in locals():
             del region_mask
-        gc.collect()
 
         return self._experiment_dir
 

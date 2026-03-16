@@ -2,17 +2,18 @@
     "arch": "cpu",
     "float_type": "f64",
     "dim": 2,
-    "grid_nx": 100,
-    "grid_ny": 100,
+    "grid_nx": 200,
+    "grid_ny": 200,
     "domain_width": 1.0,
     "domain_height": 1.0,
-    "particles_per_grid": 16,
+    "stress_save_interval": 5000,
+    "particles_per_grid": 9,
     "sampling_method": "gauss",
     "elasticity_model": "neohookean",
     "use_mapping": false,
-    "dt": 0.0002,
+    "dt": 0.002,
     "max_iter": 1,
-    "solve_max_iter": 100,
+    "solve_max_iter": 2,
     "solve_init_iter": 100,
     "offset": [
         0.0,
@@ -42,10 +43,10 @@
     ],
     "gravity": [
         0.0,
-        -2.58e-04
+        -6.46
     ],
-    "damping": 0.5,
-    "particle_damping": 0.999,
+    "damping": 0.8,
+    "particle_damping": 0.99,
     "material_params": [
         {
             "id": 0,
@@ -71,7 +72,7 @@
                         0.9
                     ],
                     [
-                        0.92,
+                        0.94,
                         0.96
                     ]
                 ]
@@ -83,9 +84,10 @@
     "implicit_solver": "Newton",
     "eta": 1e-5,
     "max_frames": 200000,
+    "last_frames_count": 1000,
     "use_record": false,
     "no_gui": false,
     "boundary_size": 0.0001,
-    "velocity_convergence_threshold": 1e-6,
+    "velocity_convergence_threshold": 1e-7,
     "velocity_convergence_check_interval": 10
 }

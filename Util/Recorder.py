@@ -113,9 +113,6 @@ class ParticleRecorder:
                 print("Playback finished.")
                 break
 
-            # 每1000帧强制垃圾回收一次，释放临时Taichi字段
-            if current_idx % 1000 == 0:
-                gc.collect()
 
             # time.sleep(frame_delay)
 

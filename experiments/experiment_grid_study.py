@@ -88,7 +88,7 @@ def compute_domain2_y_threshold(config):
         offset_y = float(offset[1])
 
     dy = domain_height / grid_ny
-    layers = bound + 1
+    layers = bound +1
     local_y_threshold_max = dy * layers
     local_y_threshold_min = dy * (layers - 2)
     y_threshold_max = offset_y + local_y_threshold_max
@@ -1007,7 +1007,7 @@ def compare_stress_with_analytical(analytical_results, mpm_results, grid_size, o
     plt.tight_layout()
 
     # 保存图片
-    plot_file = os.path.join(output_dir, f"stress_comparison_grid{grid_size}.png")
+    plot_file = os.path.join(output_dir, f"stress_comparison_grid{grid_size}.pdf")
     plt.savefig(plot_file, dpi=300, bbox_inches='tight')
     plt.close()
 
@@ -1107,7 +1107,7 @@ def create_summary_plot(analytical_results, all_mpm_results, output_dir, n_bins=
     plt.tight_layout()
 
     # 保存汇总图
-    summary_plot_file = os.path.join(output_dir, "stress_comparison_summary_all_grids.png")
+    summary_plot_file = os.path.join(output_dir, "stress_comparison_summary_all_grids.pdf")
     plt.savefig(summary_plot_file, dpi=300, bbox_inches='tight')
     plt.close()
 
@@ -1153,7 +1153,7 @@ def plot_grid_stress_line_single(grid_line_data, grid_size, output_dir, analytic
     ax.legend()
     plt.tight_layout()
 
-    plot_file = os.path.join(output_dir, f"grid_stress_line_grid{grid_size}.png")
+    plot_file = os.path.join(output_dir, f"grid_stress_line_grid{grid_size}.pdf")
     plt.savefig(plot_file, dpi=300, bbox_inches="tight")
     plt.close()
 
@@ -1166,20 +1166,18 @@ def plot_grid_stress_line_summary(all_grid_line_results, output_dir, analytical_
         print("警告: 无可用grid stress行数据，跳过汇总图")
         return None
 
-    _, ax = plt.subplots(1, 1, figsize=(14, 10))
+    _, ax = plt.subplots(1, 1, figsize=(12, 8))
     colors = ['blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan', 'magenta']
 
     for i, (grid_size, grid_line_data) in enumerate(all_grid_line_results.items()):
         x = grid_line_data["x"]
         pressure = grid_line_data["pressure"]
-        bound = grid_line_data["bound"]
-        frame_num = grid_line_data["frame_num"]
 
         if len(x) == 0:
             continue
 
         color = colors[i % len(colors)]
-        label = f"Grid {grid_size} (y_index={bound}, frame={frame_num})"
+        label = f"{0.6 / grid_size:.4g}"
         ax.plot(x, pressure, "-", color=color, linewidth=1.4, alpha=0.8, label=label)
 
     if analytical_results is not None:
@@ -1191,7 +1189,7 @@ def plot_grid_stress_line_summary(all_grid_line_results, output_dir, analytical_
             "r-",
             linewidth=2.2,
             alpha=0.9,
-            label="Analytical (Hertz)"
+            label="Analytical"
         )
         # 与粒子-解析解对比图一致：限制到接触区附近宽度
         params = analytical_results.get("params", {})
@@ -1204,12 +1202,11 @@ def plot_grid_stress_line_summary(all_grid_line_results, output_dir, analytical_
 
     ax.set_xlabel("x (m)", fontsize=12)
     ax.set_ylabel("Pressure (kPa)", fontsize=12)
-    ax.set_title("Grid Stress Line Summary (All Grid Sizes)", fontsize=14)
     ax.grid(True, alpha=0.3)
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax.legend(loc='upper right')
     plt.tight_layout()
 
-    plot_file = os.path.join(output_dir, "grid_stress_line_summary_all_grids.png")
+    plot_file = os.path.join(output_dir, "grid_stress_line_summary_all_grids.pdf")
     plt.savefig(plot_file, dpi=300, bbox_inches="tight")
     plt.close()
 
@@ -1456,7 +1453,7 @@ def main():
     parser = argparse.ArgumentParser(description='网格分辨率批处理实验')
     parser.add_argument('--use-schwarz', action='store_true',
                        help='使用Schwarz双域求解器（默认使用单域）')
-    parser.add_argument('--grid-range', nargs=2, type=int, default=[120, 120],
+    parser.add_argument('--grid-range', nargs=2, type=int, default=[40, 120],
                        help='网格大小范围 [开始, 结束] (默认: 64 160)')
     parser.add_argument('--grid-step', type=int, default=20,
                        help='网格大小步长 (默认: 16)')

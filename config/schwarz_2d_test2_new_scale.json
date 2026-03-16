@@ -1,7 +1,7 @@
 {
     "max_schwarz_iter": 50,
     "schwarz_eta": 1e-6,
-    "max_frames": 50000,
+    "max_frames": 5000,
     "velocity_convergence_threshold": 1e-6,
     "velocity_convergence_check_interval": 10,
     "use_record": false,
@@ -27,7 +27,7 @@
             0.0,
             0.033333
         ],
-        "particles_per_grid": 4,
+        "particles_per_grid": 9,
         "sampling_method": "regular",
         "use_mapping": false,
         "elasticity_model": "linear",
@@ -67,12 +67,12 @@
                 ]
             ],
             "displacement": [
-                0.002,
+                0.0002,
                 0.0
             ],
-            "speed": 0.001111
+            "speed": 0.2
         },
-        "dt": 0.00005,
+        "dt": 0.00002,
         "max_iter": 1,
         "solve_max_iter": 1000,
         "gravity": [
@@ -95,7 +95,7 @@
         "bound": 1,
         "boundary_size": 1.11111e-05,
         "damping": 0.5,
-        "particle_damping": 0.99,
+        "particle_damping": 0.999,
         "initial_velocity_y": -0.0,
         "shapes": [
             {
@@ -151,7 +151,7 @@
             }
         ],
         "implicit_solver": "Newton",
-        "eta": 1e-4,
+        "eta": 1e-5,
         "max_frames": 5000,
         "last_frames_count": 5000,
         "use_record": false,
@@ -162,31 +162,40 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 40,
-        "grid_ny": 40,
+        "grid_nx": 100,
+        "grid_ny": 100,
         "domain_width": 0.044444,
         "domain_height": 0.044444,
         "offset": [
             0.033333,
             0.033333
         ],
-        "particles_per_grid": 4,
+        "particles_per_grid": 9,
         "sampling_method": "regular",
         "use_mapping": false,
         "elasticity_model": "linear",
         "constrain_x_velocity": false,
         "auto_boundary": false,
-        "boundary_particle_range": [
+        "boundary_particle_range": [[
             [
-                0.0,
+                0.035222,
                 1.0
             ],
             [
                 0.0,
                 1.0
             ]
-        ],
-        "dt": 0.00005,
+        ],[
+            [
+                0.0,
+                0.009222
+            ],
+            [
+                0.0,
+                1.0
+            ]
+        ]],
+        "dt": 0.00002,
         "max_iter": 1,
         "solve_max_iter": 1000,
         "gravity": [
@@ -209,7 +218,7 @@
         "bound": 1,
         "boundary_size": 1.11111e-05,
         "damping": 0.5,
-        "particle_damping": 0.99,
+        "particle_damping": 0.999,
         "initial_velocity_y": -0.0,
         "shapes": [
             {
@@ -372,7 +381,7 @@
             }
         ],
         "implicit_solver": "Newton",
-        "eta": 1e-4,
+        "eta": 1e-5,
         "max_frames": 5000,
         "last_frames_count": 5000,
         "use_record": false,

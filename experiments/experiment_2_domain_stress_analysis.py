@@ -44,18 +44,31 @@ def modify_config_grid_size(config, grid_size, use_schwarz=False):
     new_config = copy.deepcopy(config)
 
     if use_schwarz:
-        # Schwarz模式：只修改Domain2的网格大小
+        # Schwarz模式：同比例修改Domain1和Domain2的网格大小
         if 'Domain2' in new_config:
-            original_nx = new_config['Domain2'].get('grid_nx', 30)
-            original_ny = new_config['Domain2'].get('grid_ny', 30)
-            aspect_ratio = original_ny / original_nx if original_nx > 0 else 1.0
+            original_d2_nx = new_config['Domain2'].get('grid_nx', 30)
+            original_d2_ny = new_config['Domain2'].get('grid_ny', 30)
+            d2_aspect_ratio = original_d2_ny / original_d2_nx if original_d2_nx > 0 else 1.0
 
             new_config['Domain2']['grid_nx'] = grid_size
-            new_config['Domain2']['grid_ny'] = int(grid_size * aspect_ratio)
+            new_config['Domain2']['grid_ny'] = int(grid_size * d2_aspect_ratio)
 
-            print(f"修改Schwarz配置: Domain2网格大小设为 {grid_size}x{int(grid_size * aspect_ratio)} (比例: {aspect_ratio:.3f})")
+            print(f"修改Schwarz配置: Domain2网格大小设为 {grid_size}x{int(grid_size * d2_aspect_ratio)} (比例: {d2_aspect_ratio:.3f})")
         else:
             print("警告: Schwarz配置中未找到Domain2")
+
+        if 'Domain1' in new_config and 'Domain2' in new_config:
+            # 按 Domain2 的缩放比例等比例调整 Domain1
+            scale = grid_size / original_d2_nx if original_d2_nx > 0 else 1.0
+            original_d1_nx = new_config['Domain1'].get('grid_nx', 30)
+            original_d1_ny = new_config['Domain1'].get('grid_ny', 30)
+            new_d1_nx = max(1, round(original_d1_nx * scale))
+            new_d1_ny = max(1, round(original_d1_ny * scale))
+            new_config['Domain1']['grid_nx'] = new_d1_nx
+            new_config['Domain1']['grid_ny'] = new_d1_ny
+            print(f"修改Schwarz配置: Domain1网格大小设为 {new_d1_nx}x{new_d1_ny} (缩放比例: {scale:.3f})")
+        else:
+            print("警告: Schwarz配置中未找到Domain1")
     else:
         # 原有单域逻辑
         # 获取原始网格大小和宽高比
@@ -279,8 +292,8 @@ def extract_domain2_cross_sections(positions2, stresses2, config, use_schwarz=Tr
     # 计算网格间距和截面宽度
     dx = domain_width / grid_nx
     dy = domain_height / grid_ny
-    strip_width_x = 0.2 * dx  # X方向截面宽度（垂直于Y轴）
-    strip_width_y = 0.2 * dy  # Y方向截面宽度（垂直于X轴）
+    strip_width_x = 0.5 * dx  # X方向截面宽度（垂直于Y轴）
+    strip_width_y = 0.5 * dy  # Y方向截面宽度（垂直于X轴）
 
     # 提取沿X轴的截面（Y = center_y，水平线）
     mask_x_axis = np.abs(positions2[:, 1] - center_y) < strip_width_y
