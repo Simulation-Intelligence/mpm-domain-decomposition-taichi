@@ -187,9 +187,8 @@ class Grid:
             if ti.static(self.dim == 2):
                 idx = I[0] * self.ny * self.dim + I[1] * self.dim
             else:
-                # 3D情况保持原有计算方式，使用size
-                for d in ti.static(range(self.dim)):
-                    idx += I[d] * self.size ** (self.dim-1-d) *self.dim
+                # 3D情况：使用实际的ny, nz作为stride（支持非正方体网格）
+                idx = I[0] * self.ny * self.nz * self.dim + I[1] * self.nz * self.dim + I[2] * self.dim
             return idx
 
     @ti.func
@@ -392,6 +391,8 @@ class Grid:
 
                     # 计算网格间距
                     dx_min = ti.min(self.dx_x, self.dx_y)
+                    if ti.static(self.dim == 3):
+                        dx_min = ti.min(dx_min, self.dx_z)
 
                     # if displacement_magnitude > dx_min:  # 只有当位移大于网格间距时才设置边界速度
                         # 位移方向作为边界速度方向

@@ -2,53 +2,64 @@
     "arch": "cpu",
     "float_type": "f64",
     "dim": 3,
-    "grid_size": 16,
-    "particles_per_grid": 16,
-    "use_possion_sampling": true,
-    "dt": 1e-3,
+    "grid_nx": 20,
+    "grid_ny": 20,
+    "grid_nz": 20,
+    "domain_width": 0.1,
+    "domain_height": 0.1,
+    "domain_depth": 0.1,
+    "offset": [0.0, 0.0, 0.0],
+    "particles_per_grid": 4,
+    "sampling_method": "regular",
+    "use_mapping": false,
+    "elasticity_model": "linear",
+    "constrain_x_velocity": false,
+    "auto_boundary": false,
+    "boundary_particle_range": [
+        [0.0, 1.0],
+        [0.0, 1.0],
+        [0.0, 1.0]
+    ],
+    "dt": 0.0001,
     "max_iter": 1,
     "solve_max_iter": 1000,
-    "solve_init_iter": 100,
-    "E": 1e6,
-    "nu": 0.3,
-    "implicit": true,
+    "gravity": [0.0, -9.8, 0.0],
+    "material_params": [
+        {
+            "id": 0,
+            "name": "default",
+            "E": 1e5,
+            "nu": 0.3,
+            "rho": 1e3
+        }
+    ],
+    "implicit": false,
+    "static_solve": false,
     "use_auto_diff": false,
     "compare_diff": false,
-    "bound": 2,
-    "boundary_size": 0.01,
-    "p_rho": 1e3,
-    "initial_velocity_y": -2.0,
-    "initial_position_range": [
-        [
-            [
-                0.4,
-                0.6
-            ],
-            [
-                0.3,
-                0.5
-            ],
-            [
-                0.4,
-                0.6
-            ]
-        ]
-    ],
-    "boundary_range": [
-        [
-            0.4,
-            0.6
-        ],
-        [
-            0.3,
-            0.5
-        ],
-        [
-            0.4,
-            0.6
-        ]
+    "bound": 3,
+    "boundary_size": 0.005,
+    "damping": 0.0,
+    "particle_damping": 0.999,
+    "initial_velocity_y": 0.0,
+    "shapes": [
+        {
+            "type": "rectangle",
+            "params": {
+                "range": [
+                    [0.02, 0.08],
+                    [0.04, 0.08],
+                    [0.02, 0.08]
+                ]
+            },
+            "operation": "add",
+            "material_id": 0
+        }
     ],
     "implicit_solver": "Newton",
-    "eta": 1e-2,
-    "record_frames": 160
+    "eta": 1e-4,
+    "max_frames": 20000,
+    "use_record": false,
+    "no_gui": false,
+    "stress_save_interval": 0
 }

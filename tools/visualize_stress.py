@@ -405,16 +405,16 @@ def visualize_single_frame(args, averaging_radius=None):
             save_path += '.png'
 
         print("Generating dual domain visualization...")
-        if dim != 2:
-            print(f"Error: Only 2D data visualization is supported, current data dimension is {dim}D")
-            return 1
-
-        if args.combined:
-            # Combined visualization mode
-            visualize_schwarz_stress_combined_2d(data_dict, save_path, args.log, args.cmap, args.max_stress, args.particle_size, averaging_radius, not args.continuous_colormap, args.colormap_levels)
+        if dim == 2:
+            if args.combined:
+                visualize_schwarz_stress_combined_2d(data_dict, save_path, args.log, args.cmap, args.max_stress, args.particle_size, averaging_radius, not args.continuous_colormap, args.colormap_levels)
+            else:
+                visualize_schwarz_stress_2d(data_dict, save_path, args.log, args.cmap, args.max_stress, args.particle_size, averaging_radius, not args.continuous_colormap, args.colormap_levels)
         else:
-            # Separate visualization mode
-            visualize_schwarz_stress_2d(data_dict, save_path, args.log, args.cmap, args.max_stress, args.particle_size, averaging_radius, not args.continuous_colormap, args.colormap_levels)
+            if args.combined:
+                visualize_schwarz_stress_combined_3d(data_dict, save_path, args.log, args.cmap, args.max_stress, args.particle_size, averaging_radius, not args.continuous_colormap, args.colormap_levels)
+            else:
+                visualize_schwarz_stress_3d(data_dict, save_path, args.log, args.cmap, args.max_stress, args.particle_size, averaging_radius, not args.continuous_colormap, args.colormap_levels)
 
     else:
         # Single domain mode (original functionality)
@@ -438,11 +438,10 @@ def visualize_single_frame(args, averaging_radius=None):
             save_path += '.png'
 
         print("Generating visualization...")
-        if dim != 2:
-            print(f"Error: Only 2D data visualization is supported, current data dimension is {dim}D")
-            return 1
-
-        visualize_stress_2d(positions, von_mises, frame_number, save_path, args.log, args.cmap, args.max_stress, args.particle_size, averaging_radius, not args.continuous_colormap, args.colormap_levels)
+        if dim == 2:
+            visualize_stress_2d(positions, von_mises, frame_number, save_path, args.log, args.cmap, args.max_stress, args.particle_size, averaging_radius, not args.continuous_colormap, args.colormap_levels)
+        else:
+            visualize_stress_3d(positions, von_mises, frame_number, save_path, args.log, args.cmap, args.max_stress, args.particle_size, averaging_radius, not args.continuous_colormap, args.colormap_levels)
 
 def load_schwarz_stress_data(output_dir, frame_number=None):
     """加载Schwarz双域应力数据"""
@@ -934,6 +933,267 @@ def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=Fals
 
     plt.show()
     plt.close()  # 显式关闭figure以释放内存
+
+
+def visualize_stress_3d(positions, von_mises, frame_number, save_path=None, use_log=False, stress_cmap=None, max_stress=None, particle_size=None, averaging_radius=None, use_discrete=True, n_levels=10):
+    """3D应力可视化（von Mises应力，使用matplotlib 3D scatter）"""
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+    if stress_cmap is None:
+        stress_cmap = CUSTOM_COLORMAP
+
+    if not use_discrete:
+        final_cmap = stress_cmap
+    else:
+        final_cmap = create_discrete_colormap(stress_cmap, n_levels)
+        print(f"使用离散colormap，级数: {n_levels}")
+
+    if averaging_radius is not None:
+        if averaging_radius == 'auto':
+            averaging_radius = estimate_optimal_averaging_radius(positions)
+        von_mises = compute_spatial_averaged_stress(positions, von_mises, averaging_radius)
+        print(f"应用空间平均化，半径: {averaging_radius:.6f}")
+    else:
+        print("跳过空间平均化（averaging_radius为None）")
+
+    if particle_size is None:
+        particle_size = calculate_adaptive_radius(positions)
+    print(f"Using particle size (s parameter): {particle_size:.2f}")
+
+    fig = plt.figure(figsize=(12, 9))
+    ax = fig.add_subplot(111, projection='3d')
+
+    if use_log:
+        from matplotlib.colors import LogNorm
+        von_mises_positive = von_mises.copy()
+        np.clip(von_mises_positive, 1e-10, None, out=von_mises_positive)
+        vm_vmin = np.min(von_mises_positive)
+        vm_vmax = max_stress if max_stress is not None else np.max(von_mises_positive)
+        scatter = ax.scatter(positions[:, 0], positions[:, 1], positions[:, 2],
+                             c=von_mises_positive, cmap=final_cmap, s=particle_size, alpha=0.8,
+                             norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none')
+        ax.set_title(f'von Mises Stress Distribution 3D (Log Scale, Frame {frame_number})')
+        cbar_label = 'von Mises Stress (Log)'
+    else:
+        vm_vmax = max_stress if max_stress is not None else np.max(von_mises)
+        scatter = ax.scatter(positions[:, 0], positions[:, 1], positions[:, 2],
+                             c=von_mises, cmap=final_cmap, s=particle_size, alpha=0.8,
+                             vmax=vm_vmax, edgecolors='none')
+        ax.set_title(f'von Mises Stress Distribution 3D (Frame {frame_number})')
+        cbar_label = 'von Mises Stress'
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    fig.colorbar(scatter, ax=ax, label=cbar_label, shrink=0.6)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Image saved to: {save_path}")
+
+    plt.show()
+    plt.close()
+
+
+def visualize_schwarz_stress_3d(data_dict, save_path=None, use_log=False, stress_cmap=None, max_stress=None, particle_size=None, averaging_radius=None, use_discrete=True, n_levels=10):
+    """3D Schwarz双域应力可视化（分域显示）"""
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+    if stress_cmap is None:
+        stress_cmap = CUSTOM_COLORMAP
+
+    if not use_discrete:
+        final_cmap = stress_cmap
+    else:
+        final_cmap = create_discrete_colormap(stress_cmap, n_levels)
+        print(f"使用离散colormap，级数: {n_levels}")
+
+    frame_number = data_dict['frame_number']
+    d1_data = data_dict['domain1']
+    d2_data = data_dict['domain2']
+
+    d1_von_mises = compute_von_mises_stress(d1_data['stress'])
+    d2_von_mises = compute_von_mises_stress(d2_data['stress'])
+
+    if averaging_radius is not None:
+        if averaging_radius == 'auto':
+            d1_radius = estimate_optimal_averaging_radius(d1_data['positions'])
+            d2_radius = estimate_optimal_averaging_radius(d2_data['positions'])
+            print(f"自动计算平均化半径 - Domain1: {d1_radius:.6f}, Domain2: {d2_radius:.6f}")
+        else:
+            d1_radius = d2_radius = averaging_radius
+        d1_von_mises = compute_spatial_averaged_stress(d1_data['positions'], d1_von_mises, d1_radius)
+        d2_von_mises = compute_spatial_averaged_stress(d2_data['positions'], d2_von_mises, d2_radius)
+        print("对双域应力应用空间平均化")
+    else:
+        print("跳过双域空间平均化（averaging_radius为None）")
+
+    all_von_mises = np.concatenate([d1_von_mises, d2_von_mises])
+
+    if particle_size is None:
+        d1_particle_size = calculate_adaptive_radius(d1_data['positions'])
+        d2_particle_size = calculate_adaptive_radius(d2_data['positions'])
+    else:
+        d1_particle_size = particle_size
+        d2_particle_size = particle_size
+
+    print(f"Domain1 particle size (s parameter): {d1_particle_size:.2f}")
+    print(f"Domain2 particle size (s parameter): {d2_particle_size:.2f}")
+
+    fig = plt.figure(figsize=(18, 8))
+    ax1 = fig.add_subplot(121, projection='3d')
+    ax2 = fig.add_subplot(122, projection='3d')
+
+    if use_log:
+        from matplotlib.colors import LogNorm
+        vm_positive = all_von_mises.copy()
+        np.clip(vm_positive, 1e-10, None, out=vm_positive)
+        vm_vmin = np.min(vm_positive)
+        vm_vmax = max_stress if max_stress is not None else np.max(vm_positive)
+
+        d1_vm_pos = d1_von_mises.copy()
+        np.clip(d1_vm_pos, 1e-10, None, out=d1_vm_pos)
+        d2_vm_pos = d2_von_mises.copy()
+        np.clip(d2_vm_pos, 1e-10, None, out=d2_vm_pos)
+
+        scatter1 = ax1.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], d1_data['positions'][:, 2],
+                               c=d1_vm_pos, cmap=final_cmap, s=d1_particle_size, alpha=0.8,
+                               norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none')
+        ax1.set_title(f'Domain1 von Mises Stress (Log Scale, Frame {frame_number})')
+        scatter2 = ax2.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], d2_data['positions'][:, 2],
+                               c=d2_vm_pos, cmap=final_cmap, s=d2_particle_size, alpha=0.8,
+                               norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none')
+        ax2.set_title(f'Domain2 von Mises Stress (Log Scale, Frame {frame_number})')
+        cbar_label = 'von Mises Stress (Log)'
+    else:
+        vm_vmin = np.min(all_von_mises)
+        vm_vmax = max_stress if max_stress is not None else np.max(all_von_mises)
+
+        scatter1 = ax1.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], d1_data['positions'][:, 2],
+                               c=d1_von_mises, cmap=final_cmap, s=d1_particle_size, alpha=0.8,
+                               vmin=vm_vmin, vmax=vm_vmax, edgecolors='none')
+        ax1.set_title(f'Domain1 von Mises Stress (Frame {frame_number})')
+        scatter2 = ax2.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], d2_data['positions'][:, 2],
+                               c=d2_von_mises, cmap=final_cmap, s=d2_particle_size, alpha=0.8,
+                               vmin=vm_vmin, vmax=vm_vmax, edgecolors='none')
+        ax2.set_title(f'Domain2 von Mises Stress (Frame {frame_number})')
+        cbar_label = 'von Mises Stress'
+
+    for ax in (ax1, ax2):
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+
+    fig.colorbar(scatter1, ax=ax1, label=cbar_label, shrink=0.6)
+    fig.colorbar(scatter2, ax=ax2, label=cbar_label, shrink=0.6)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Dual domain stress image saved to: {save_path}")
+
+    plt.show()
+    plt.close()
+
+
+def visualize_schwarz_stress_combined_3d(data_dict, save_path=None, use_log=False, stress_cmap=None, max_stress=None, particle_size=None, averaging_radius=None, use_discrete=True, n_levels=10):
+    """3D Schwarz双域合并应力可视化（两域叠加显示）"""
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+    if stress_cmap is None:
+        stress_cmap = CUSTOM_COLORMAP
+
+    if not use_discrete:
+        final_cmap = stress_cmap
+    else:
+        final_cmap = create_discrete_colormap(stress_cmap, n_levels)
+        print(f"使用离散colormap，级数: {n_levels}")
+
+    frame_number = data_dict['frame_number']
+    d1_data = data_dict['domain1']
+    d2_data = data_dict['domain2']
+
+    d1_von_mises = compute_von_mises_stress(d1_data['stress'])
+    d2_von_mises = compute_von_mises_stress(d2_data['stress'])
+
+    if averaging_radius is not None:
+        if averaging_radius == 'auto':
+            d1_radius = estimate_optimal_averaging_radius(d1_data['positions'])
+            d2_radius = estimate_optimal_averaging_radius(d2_data['positions'])
+            print(f"自动计算平均化半径 - Domain1: {d1_radius:.6f}, Domain2: {d2_radius:.6f}")
+        else:
+            d1_radius = d2_radius = averaging_radius
+        d1_von_mises = compute_spatial_averaged_stress(d1_data['positions'], d1_von_mises, d1_radius)
+        d2_von_mises = compute_spatial_averaged_stress(d2_data['positions'], d2_von_mises, d2_radius)
+        print("对双域应力应用空间平均化")
+    else:
+        print("跳过双域空间平均化（averaging_radius为None）")
+
+    all_von_mises = np.concatenate([d1_von_mises, d2_von_mises])
+
+    if particle_size is None:
+        d1_particle_size = calculate_adaptive_radius(d1_data['positions'])
+        d2_particle_size = calculate_adaptive_radius(d2_data['positions'])
+    else:
+        d1_particle_size = particle_size
+        d2_particle_size = particle_size
+
+    print(f"Domain1 particle size (s parameter): {d1_particle_size:.2f}")
+    print(f"Domain2 particle size (s parameter): {d2_particle_size:.2f}")
+
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+
+    if use_log:
+        from matplotlib.colors import LogNorm
+        vm_positive = all_von_mises.copy()
+        np.clip(vm_positive, 1e-10, None, out=vm_positive)
+        vm_vmin = np.min(vm_positive)
+        vm_vmax = max_stress if max_stress is not None else np.max(vm_positive)
+
+        d1_vm_pos = d1_von_mises.copy()
+        np.clip(d1_vm_pos, 1e-10, None, out=d1_vm_pos)
+        d2_vm_pos = d2_von_mises.copy()
+        np.clip(d2_vm_pos, 1e-10, None, out=d2_vm_pos)
+
+        scatter_d1 = ax.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], d1_data['positions'][:, 2],
+                                c=d1_vm_pos, cmap=final_cmap, s=d1_particle_size, alpha=0.8,
+                                norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none', label='Domain1')
+        scatter_d2 = ax.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], d2_data['positions'][:, 2],
+                                c=d2_vm_pos, cmap=final_cmap, s=d2_particle_size, alpha=0.8,
+                                norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none', label='Domain2')
+        ax.set_title(f'Dual Domain von Mises Stress 3D (Log Scale, Frame {frame_number})')
+        cbar_label = 'von Mises Stress (Log)'
+    else:
+        vm_vmin = np.min(all_von_mises)
+        vm_vmax = max_stress if max_stress is not None else np.max(all_von_mises)
+
+        scatter_d1 = ax.scatter(d1_data['positions'][:, 0], d1_data['positions'][:, 1], d1_data['positions'][:, 2],
+                                c=d1_von_mises, cmap=final_cmap, s=d1_particle_size, alpha=0.8,
+                                vmin=vm_vmin, vmax=vm_vmax, edgecolors='none', label='Domain1')
+        scatter_d2 = ax.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1], d2_data['positions'][:, 2],
+                                c=d2_von_mises, cmap=final_cmap, s=d2_particle_size, alpha=0.8,
+                                vmin=vm_vmin, vmax=vm_vmax, edgecolors='none', label='Domain2')
+        ax.set_title(f'Dual Domain von Mises Stress 3D (Frame {frame_number})')
+        cbar_label = 'von Mises Stress'
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.legend()
+    fig.colorbar(scatter_d1, ax=ax, label=cbar_label, shrink=0.6)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Dual domain combined stress image saved to: {save_path}")
+
+    plt.show()
+    plt.close()
 
 
 def print_schwarz_stress_statistics(data_dict):

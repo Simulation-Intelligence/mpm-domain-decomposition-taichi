@@ -118,8 +118,8 @@ class MPMSolver:
             self.F_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.nx, self.grid.ny))
             self.m_grid = ti.field(self.float_type, shape=(self.grid.nx, self.grid.ny))
         else:
-            self.F_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.size,)*self.dim)
-            self.m_grid = ti.field(self.float_type, shape=(self.grid.size,)*self.dim)
+            self.F_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.nx, self.grid.ny, self.grid.nz))
+            self.m_grid = ti.field(self.float_type, shape=(self.grid.nx, self.grid.ny, self.grid.nz))
 
     @ti.func
     def get_gravity(self):
@@ -249,14 +249,25 @@ class MPMSolver:
         eigenvals, eigenvecs = ti.sym_eig(matrix)
         for i in ti.static(range(self.dim)):
             eigenvals[i] = ti.max(eigenvals[i], 0)
-        
+
         # 重构正定矩阵：V @ diag(λ) @ V^T
         diag_vals = ti.Matrix.zero(self.float_type, self.dim, self.dim)
         for i in ti.static(range(self.dim)):
             diag_vals[i, i] = eigenvals[i]
-    
+
         psd_matrix = eigenvecs @ diag_vals @ eigenvecs.transpose()
         return psd_matrix
+
+    @ti.func
+    def make_PSD_2x2(self, matrix):
+        """Make a 2x2 matrix positive semi-definite (used for B matrices in 3D Hessian)."""
+        eigenvals, eigenvecs = ti.sym_eig(matrix)
+        for i in ti.static(range(2)):
+            eigenvals[i] = ti.max(eigenvals[i], 0)
+        diag_vals = ti.Matrix.zero(self.float_type, 2, 2)
+        for i in ti.static(range(2)):
+            diag_vals[i, i] = eigenvals[i]
+        return eigenvecs @ diag_vals @ eigenvecs.transpose()
     
     @ti.func
     def cal_vel_grad(self,v_flat,p):
@@ -325,10 +336,7 @@ class MPMSolver:
                     self.total_energy[None] += 0.5 * self.grid.m[I] * (vel - self.grid.v_prev[I]).norm_sqr()
 
                 # 计算势能
-                pos = ti.Vector([
-                    I[0] * self.grid.dx_x + self.grid.offset[0],
-                    I[1] * self.grid.dx_y + self.grid.offset[1]
-                ]) + vel * self.dt
+                pos = self.grid.get_grid_pos(I) + self.grid.offset + vel * self.dt
                 total_external_force = self.get_gravity() + self.grid.volume_force[I]
                 #阻尼力
                 if not ti.static(self.static_solve):
@@ -348,7 +356,7 @@ class MPMSolver:
                     self.total_energy[None] += 0.5 * self.grid.m[I] * (vel - self.grid.v_prev[I]).norm_sqr()
 
                 # 计算势能
-                pos = I * ti.Vector([self.grid.dx_x, self.grid.dx_y]) + self.grid.offset + vel * self.dt
+                pos = self.grid.get_grid_pos(I) + self.grid.offset + vel * self.dt
                 total_external_force = self.get_gravity() + self.grid.volume_force[I]
                 #阻尼力
                 if not ti.static(self.static_solve):
@@ -533,103 +541,186 @@ class MPMSolver:
 
             VT = V.transpose()
             
-            # 确保行列式为正 - 按照NeoHookean.py的polar_svd逻辑
-            if U.determinant() < 0:
-                U[:, 1] = -U[:, 1]
-                sigma_mat[1,1] = -sigma_mat[1,1]
-            if VT.determinant() < 0:
-                VT[1, :] = -VT[1, :]
-                sigma_mat[1,1] = -sigma_mat[1,1]
-            
-            # 提取奇异值
-            sigma = ti.Vector([sigma_mat[0,0], sigma_mat[1,1]])
-            
             mu, lam = self.particles.get_material_params(p)
             weight = self.particles.get_particle_weight(p)
-            
-            # 计算d2Psi_div_dsigma2矩阵元素
-            ln_sigma_prod = ti.log(sigma[0] * sigma[1])
-            inv2_0 = 1.0 / (sigma[0] * sigma[0])
-            d2Psi_dsigma2_00 = mu * (1 + inv2_0) - lam * inv2_0 * (ln_sigma_prod - 1)
-            inv2_1 = 1.0 / (sigma[1] * sigma[1])
-            d2Psi_dsigma2_11 = mu * (1 + inv2_1) - lam * inv2_1 * (ln_sigma_prod - 1)
-            d2Psi_dsigma2_01 = lam / (sigma[0] * sigma[1])
-            
-            # 构建2x2 d2Psi_dsigma2矩阵并使用make_PSD
-            d2Psi_dsigma2 = ti.Matrix([[d2Psi_dsigma2_00, d2Psi_dsigma2_01], 
-                                       [d2Psi_dsigma2_01, d2Psi_dsigma2_11]])
-            
-            # 使用make_PSD函数确保正定性
-            d2Psi_dsigma2_psd = self.make_PSD(d2Psi_dsigma2)
-            # d2Psi_dsigma2_psd = d2Psi_dsigma2
-            d2Psi_dsigma2_00 = d2Psi_dsigma2_psd[0, 0]
-            d2Psi_dsigma2_11 = d2Psi_dsigma2_psd[1, 1]
-            d2Psi_dsigma2_01 = d2Psi_dsigma2_psd[0, 1]
-            
-            # 计算B矩阵 - 按照C++参考实现
-            sigma_prod = sigma[0] * sigma[1]
-            middle = mu - lam * ti.log(sigma_prod)
-            BLeftCoef = (mu + middle / (sigma[0] * sigma[1])) / 2.0
-
-            # 计算dPsi_div_dsigma
-            inv0 = 1.0 / sigma[0]
-            dPsi_dsigma_0 = mu * (sigma[0] - inv0) + lam * inv0 * ln_sigma_prod
-            inv1 = 1.0 / sigma[1]
-            dPsi_dsigma_1 = mu * (sigma[1] - inv1) + lam * inv1 * ln_sigma_prod
-
-            # 计算rightCoef - 按照C++参考实现
-            rightCoef = (dPsi_dsigma_0 + dPsi_dsigma_1)
-            sum_sigma = sigma[0] + sigma[1]
-            eps = 1.0e-6
-            if sum_sigma < eps:
-                rightCoef /= 2 * eps
-            else:
-                rightCoef /= 2 * sum_sigma
-
-            # 构建2x2 B矩阵并使用make_PSD - 按照C++参考实现
-            B_matrix = ti.Matrix([[BLeftCoef + rightCoef, BLeftCoef - rightCoef],
-                                  [BLeftCoef - rightCoef, BLeftCoef + rightCoef]])
-            
-            # 使用make_PSD函数确保正定性
-            B_psd = self.make_PSD(B_matrix)
-            # B_psd = B_matrix
-            B_00 = B_psd[0, 0]
-            B_01 = B_psd[0, 1]
-            B_11 = B_psd[1, 1]
-            
-            # 构建M矩阵 (4x4)
-            M = ti.Matrix.zero(self.float_type, 4, 4)
-            M[0, 0] = d2Psi_dsigma2_00
-            M[0, 2] = d2Psi_dsigma2_01
-            M[1, 1] = B_00
-            M[1, 3] = B_01
-            M[3, 1] = B_01
-            M[3, 3] = B_11
-            M[2, 0] = d2Psi_dsigma2_01
-            M[2, 2] = d2Psi_dsigma2_11
-            
             base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
-            
             coeff = self.particles.p_vol * weight
 
-            # 计算完整的4x4 Hessian矩阵 d²Ψ/dF² 然后转换为2x2网格速度Hessian
-            dP_dF = ti.Matrix.zero(self.float_type, 4, 4)
-            
-            # 按照NeoHookean.py的公式构建4x4 Hessian
-            for j in ti.static(range(self.dim)):
-                for i in ti.static(range(self.dim)):
-                    ij = j * self.dim + i
-                    for s in ti.static(range(self.dim)):
-                        for r in ti.static(range(self.dim)):
-                            rs = s * self.dim + r
-                            dP_dF[ij, rs] = M[0, 0] * U[i, 0] * VT[0, j] * U[r, 0] * VT[0, s] \
-                                          + M[0, 2] * U[i, 0] * VT[0, j] * U[r, 1] * VT[1, s] \
-                                          + M[2, 0] * U[i, 1] * VT[1, j] * U[r, 0] * VT[0, s] \
-                                          + M[2, 2] * U[i, 1] * VT[1, j] * U[r, 1] * VT[1, s] \
-                                          + M[1, 1] * U[i, 0] * VT[1, j] * U[r, 0] * VT[1, s] \
-                                          + M[1, 3] * U[i, 0] * VT[1, j] * U[r, 1] * VT[0, s] \
-                                          + M[3, 1] * U[i, 1] * VT[0, j] * U[r, 0] * VT[1, s] \
-                                          + M[3, 3] * U[i, 1] * VT[0, j] * U[r, 1] * VT[0, s]
+            if ti.static(self.dim == 2):
+                # 确保行列式为正 (2D)
+                if U.determinant() < 0:
+                    U[:, 1] = -U[:, 1]
+                    sigma_mat[1, 1] = -sigma_mat[1, 1]
+                if VT.determinant() < 0:
+                    VT[1, :] = -VT[1, :]
+                    sigma_mat[1, 1] = -sigma_mat[1, 1]
+
+                sigma = ti.Vector([sigma_mat[0, 0], sigma_mat[1, 1]])
+
+                # 计算d2Psi_div_dsigma2矩阵元素 (2D)
+                ln_sigma_prod = ti.log(sigma[0] * sigma[1])
+                inv2_0 = 1.0 / (sigma[0] * sigma[0])
+                d2Psi_dsigma2_00 = mu * (1 + inv2_0) - lam * inv2_0 * (ln_sigma_prod - 1)
+                inv2_1 = 1.0 / (sigma[1] * sigma[1])
+                d2Psi_dsigma2_11 = mu * (1 + inv2_1) - lam * inv2_1 * (ln_sigma_prod - 1)
+                d2Psi_dsigma2_01 = lam / (sigma[0] * sigma[1])
+
+                d2Psi_dsigma2 = ti.Matrix([[d2Psi_dsigma2_00, d2Psi_dsigma2_01],
+                                           [d2Psi_dsigma2_01, d2Psi_dsigma2_11]])
+                d2Psi_dsigma2_psd = self.make_PSD(d2Psi_dsigma2)
+                d2Psi_dsigma2_00 = d2Psi_dsigma2_psd[0, 0]
+                d2Psi_dsigma2_11 = d2Psi_dsigma2_psd[1, 1]
+                d2Psi_dsigma2_01 = d2Psi_dsigma2_psd[0, 1]
+
+                # 计算B矩阵 (2D)
+                sigma_prod = sigma[0] * sigma[1]
+                middle = mu - lam * ti.log(sigma_prod)
+                BLeftCoef = (mu + middle / sigma_prod) / 2.0
+
+                inv0 = 1.0 / sigma[0]
+                dPsi_dsigma_0 = mu * (sigma[0] - inv0) + lam * inv0 * ln_sigma_prod
+                inv1 = 1.0 / sigma[1]
+                dPsi_dsigma_1 = mu * (sigma[1] - inv1) + lam * inv1 * ln_sigma_prod
+
+                rightCoef = dPsi_dsigma_0 + dPsi_dsigma_1
+                sum_sigma = sigma[0] + sigma[1]
+                eps = 1.0e-6
+                if sum_sigma < eps:
+                    rightCoef /= 2 * eps
+                else:
+                    rightCoef /= 2 * sum_sigma
+
+                B_psd = self.make_PSD_2x2(ti.Matrix(
+                    [[BLeftCoef + rightCoef, BLeftCoef - rightCoef],
+                     [BLeftCoef - rightCoef, BLeftCoef + rightCoef]]))
+                B_00 = B_psd[0, 0]
+                B_01 = B_psd[0, 1]
+                B_11 = B_psd[1, 1]
+
+                # 构建4x4 M矩阵并组装dP_dF (2D)
+                M = ti.Matrix.zero(self.float_type, 4, 4)
+                M[0, 0] = d2Psi_dsigma2_00
+                M[0, 2] = d2Psi_dsigma2_01
+                M[1, 1] = B_00
+                M[1, 3] = B_01
+                M[3, 1] = B_01
+                M[3, 3] = B_11
+                M[2, 0] = d2Psi_dsigma2_01
+                M[2, 2] = d2Psi_dsigma2_11
+
+                dP_dF = ti.Matrix.zero(self.float_type, 4, 4)
+                for j in ti.static(range(2)):
+                    for i in ti.static(range(2)):
+                        ij = j * 2 + i
+                        for s in ti.static(range(2)):
+                            for r in ti.static(range(2)):
+                                rs = s * 2 + r
+                                dP_dF[ij, rs] = (
+                                    M[0, 0] * U[i, 0] * VT[0, j] * U[r, 0] * VT[0, s]
+                                    + M[0, 2] * U[i, 0] * VT[0, j] * U[r, 1] * VT[1, s]
+                                    + M[2, 0] * U[i, 1] * VT[1, j] * U[r, 0] * VT[0, s]
+                                    + M[2, 2] * U[i, 1] * VT[1, j] * U[r, 1] * VT[1, s]
+                                    + M[1, 1] * U[i, 0] * VT[1, j] * U[r, 0] * VT[1, s]
+                                    + M[1, 3] * U[i, 0] * VT[1, j] * U[r, 1] * VT[0, s]
+                                    + M[3, 1] * U[i, 1] * VT[0, j] * U[r, 0] * VT[1, s]
+                                    + M[3, 3] * U[i, 1] * VT[0, j] * U[r, 1] * VT[0, s])
+            else:
+                # 确保行列式为正 (3D)
+                if U.determinant() < 0:
+                    U[:, 2] = -U[:, 2]
+                    sigma_mat[2, 2] = -sigma_mat[2, 2]
+                if VT.determinant() < 0:
+                    VT[2, :] = -VT[2, :]
+                    sigma_mat[2, 2] = -sigma_mat[2, 2]
+
+                sigma = ti.Vector([sigma_mat[0, 0], sigma_mat[1, 1], sigma_mat[2, 2]])
+
+                # 3x3 d2Psi_dsigma2矩阵
+                ln_J = ti.log(sigma[0] * sigma[1] * sigma[2])
+                inv2_0 = 1.0 / (sigma[0] * sigma[0])
+                inv2_1 = 1.0 / (sigma[1] * sigma[1])
+                inv2_2 = 1.0 / (sigma[2] * sigma[2])
+                d2Psi_3d = ti.Matrix([
+                    [mu*(1.0+inv2_0) - lam*inv2_0*(ln_J-1.0), lam/(sigma[0]*sigma[1]), lam/(sigma[0]*sigma[2])],
+                    [lam/(sigma[1]*sigma[0]), mu*(1.0+inv2_1) - lam*inv2_1*(ln_J-1.0), lam/(sigma[1]*sigma[2])],
+                    [lam/(sigma[2]*sigma[0]), lam/(sigma[2]*sigma[1]), mu*(1.0+inv2_2) - lam*inv2_2*(ln_J-1.0)]
+                ])
+                d2Psi_3d_psd = self.make_PSD(d2Psi_3d)
+
+                # dPsi_dsigma for each singular value
+                dPsi_0 = mu * (sigma[0] - 1.0/sigma[0]) + lam * ln_J / sigma[0]
+                dPsi_1 = mu * (sigma[1] - 1.0/sigma[1]) + lam * ln_J / sigma[1]
+                dPsi_2 = mu * (sigma[2] - 1.0/sigma[2]) + lam * ln_J / sigma[2]
+
+                middle = mu - lam * ln_J
+                eps = 1.0e-6
+
+                # B matrix for pair (0,1)
+                BLC_01 = (mu + middle / (sigma[0] * sigma[1])) / 2.0
+                rC_01 = dPsi_0 + dPsi_1
+                ss_01 = sigma[0] + sigma[1]
+                if ss_01 < eps:
+                    rC_01 /= 2.0 * eps
+                else:
+                    rC_01 /= 2.0 * ss_01
+                B_01_psd = self.make_PSD_2x2(ti.Matrix(
+                    [[BLC_01 + rC_01, BLC_01 - rC_01],
+                     [BLC_01 - rC_01, BLC_01 + rC_01]]))
+
+                # B matrix for pair (0,2)
+                BLC_02 = (mu + middle / (sigma[0] * sigma[2])) / 2.0
+                rC_02 = dPsi_0 + dPsi_2
+                ss_02 = sigma[0] + sigma[2]
+                if ss_02 < eps:
+                    rC_02 /= 2.0 * eps
+                else:
+                    rC_02 /= 2.0 * ss_02
+                B_02_psd = self.make_PSD_2x2(ti.Matrix(
+                    [[BLC_02 + rC_02, BLC_02 - rC_02],
+                     [BLC_02 - rC_02, BLC_02 + rC_02]]))
+
+                # B matrix for pair (1,2)
+                BLC_12 = (mu + middle / (sigma[1] * sigma[2])) / 2.0
+                rC_12 = dPsi_1 + dPsi_2
+                ss_12 = sigma[1] + sigma[2]
+                if ss_12 < eps:
+                    rC_12 /= 2.0 * eps
+                else:
+                    rC_12 /= 2.0 * ss_12
+                B_12_psd = self.make_PSD_2x2(ti.Matrix(
+                    [[BLC_12 + rC_12, BLC_12 - rC_12],
+                     [BLC_12 - rC_12, BLC_12 + rC_12]]))
+
+                # 构建9x9 dP_dF矩阵 (3D)
+                dP_dF = ti.Matrix.zero(self.float_type, 9, 9)
+                for j in ti.static(range(3)):
+                    for i in ti.static(range(3)):
+                        ij = j * 3 + i
+                        for s in ti.static(range(3)):
+                            for r in ti.static(range(3)):
+                                rs = s * 3 + r
+                                dP_dF[ij, rs] = (
+                                    d2Psi_3d_psd[0,0]*U[i,0]*VT[0,j]*U[r,0]*VT[0,s]
+                                    + d2Psi_3d_psd[0,1]*U[i,0]*VT[0,j]*U[r,1]*VT[1,s]
+                                    + d2Psi_3d_psd[0,2]*U[i,0]*VT[0,j]*U[r,2]*VT[2,s]
+                                    + d2Psi_3d_psd[1,0]*U[i,1]*VT[1,j]*U[r,0]*VT[0,s]
+                                    + d2Psi_3d_psd[1,1]*U[i,1]*VT[1,j]*U[r,1]*VT[1,s]
+                                    + d2Psi_3d_psd[1,2]*U[i,1]*VT[1,j]*U[r,2]*VT[2,s]
+                                    + d2Psi_3d_psd[2,0]*U[i,2]*VT[2,j]*U[r,0]*VT[0,s]
+                                    + d2Psi_3d_psd[2,1]*U[i,2]*VT[2,j]*U[r,1]*VT[1,s]
+                                    + d2Psi_3d_psd[2,2]*U[i,2]*VT[2,j]*U[r,2]*VT[2,s]
+                                    + B_01_psd[0,0]*U[i,0]*VT[1,j]*U[r,0]*VT[1,s]
+                                    + B_01_psd[0,1]*U[i,0]*VT[1,j]*U[r,1]*VT[0,s]
+                                    + B_01_psd[1,0]*U[i,1]*VT[0,j]*U[r,0]*VT[1,s]
+                                    + B_01_psd[1,1]*U[i,1]*VT[0,j]*U[r,1]*VT[0,s]
+                                    + B_02_psd[0,0]*U[i,0]*VT[2,j]*U[r,0]*VT[2,s]
+                                    + B_02_psd[0,1]*U[i,0]*VT[2,j]*U[r,2]*VT[0,s]
+                                    + B_02_psd[1,0]*U[i,2]*VT[0,j]*U[r,0]*VT[2,s]
+                                    + B_02_psd[1,1]*U[i,2]*VT[0,j]*U[r,2]*VT[0,s]
+                                    + B_12_psd[0,0]*U[i,1]*VT[2,j]*U[r,1]*VT[2,s]
+                                    + B_12_psd[0,1]*U[i,1]*VT[2,j]*U[r,2]*VT[1,s]
+                                    + B_12_psd[1,0]*U[i,2]*VT[1,j]*U[r,1]*VT[2,s]
+                                    + B_12_psd[1,1]*U[i,2]*VT[1,j]*U[r,2]*VT[1,s])
 
             for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
                 grid_idx = self.wrap_grid_idx(base + offset)
@@ -1027,7 +1118,10 @@ class MPMSolver:
         """计算Neo-Hookean模型的应力"""
         U, sig, V = ti.svd(self.particles.F[p])
         if sig.determinant() < 0:
-            sig[1,1] = -sig[1,1]
+            if ti.static(self.dim == 2):
+                sig[1, 1] = -sig[1, 1]
+            else:
+                sig[2, 2] = -sig[2, 2]
         self.particles.F[p] = U @ sig @ V.transpose()
 
         J = self.particles.F[p].determinant()
@@ -1150,7 +1244,10 @@ class MPMSolver:
         """计算Neo-Hookean模型的应力和应变"""
         U, sig, V = ti.svd(self.particles.F[p])
         if sig.determinant() < 0:
-            sig[1,1] = -sig[1,1]
+            if ti.static(self.dim == 2):
+                sig[1, 1] = -sig[1, 1]
+            else:
+                sig[2, 2] = -sig[2, 2]
         F_corrected = U @ sig @ V.transpose()
 
         J = F_corrected.determinant()

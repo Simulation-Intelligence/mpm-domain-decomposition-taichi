@@ -9,8 +9,19 @@ from Util.Recorder import *
 import matplotlib.pyplot as plt
 import time
 import gc
+import math
+import numpy as np
 
-from Util.Project import project
+_PROJECT_PHI = math.radians(28.0)
+_PROJECT_THETA = math.radians(32.0)
+_PROJECT_CP = math.cos(_PROJECT_PHI)
+_PROJECT_SP = math.sin(_PROJECT_PHI)
+_PROJECT_CT = math.cos(_PROJECT_THETA)
+_PROJECT_ST = math.sin(_PROJECT_THETA)
+
+_COLOR_DOMAIN1_NORMAL_HEX = (int(0.024 * 255) << 16) | (int(0.522 * 255) << 8) | int(0.529 * 255)
+_COLOR_DOMAIN2_NORMAL_HEX = (int(0.929 * 255) << 16) | (int(0.333 * 255) << 8) | int(0.231 * 255)
+_COLOR_BOUNDARY_HEX = 0xFFFFFF
 
 @ti.data_oriented
 class MPM_Schwarz:
@@ -59,6 +70,7 @@ class MPM_Schwarz:
         self.max_schwarz_iter = self.main_config.get("max_schwarz_iter", 1)  # Schwarz迭代次数
         self.steps=self.main_config.get("steps", 10)  # 迭代步数
         self.max_frames = self.main_config.get("max_frames", 60)  # 最大帧数
+        self.render_fps = self.main_config.get("render_fps", 60)  # GUI帧率上限
         self.use_record = self.main_config.get("use_record", False)  # 是否使用录制
 
         # 应力保存配置
@@ -88,6 +100,7 @@ class MPM_Schwarz:
                 0xFFFFFF   # 边界粒子
             ], dtype=np.uint32),
             max_frames=self.max_frames,
+            max_particles=self.Domain1.particles.x.shape[0] + self.Domain2.particles.x.shape[0],
             lines_begin=lines_begin,
             lines_end=lines_end,
             lines_color=lines_color
@@ -138,18 +151,40 @@ class MPM_Schwarz:
         self.convergence_max_velocity = ti.field(dtype=ti.f64, shape=())
 
         # 计算渲染缩放系数（基于Domain1的最大边长，使几何体在屏幕上正确缩放）
-        _d1_max_side = max(self.Domain1.grid.domain_width, self.Domain1.grid.domain_height)
+        self.dim1 = self.Domain1.dim
+        self.dim2 = self.Domain2.dim
+        if self.dim1 == 3:
+            _d1_max_side = max(self.Domain1.grid.domain_width, self.Domain1.grid.domain_height, self.Domain1.grid.domain_depth)
+        else:
+            _d1_max_side = max(self.Domain1.grid.domain_width, self.Domain1.grid.domain_height)
         self.render_scale = 1.0 / _d1_max_side
 
         # 只在非无GUI模式下初始化GUI
         if not self.no_gui:
-            self.gui = ti.GUI("Implicit MPM Schwarz", res=(800, 800))
+            self.gui = ti.GUI("Implicit MPM Schwarz", res=(800, 800), fast_gui=True)
+            self._pos1_np = None
+            self._pos2_np = None
+            self._color1_np = None
+            self._color2_np = None
+            self._record_pos_np = None
+            self._record_color_np = None
+            self._record_color1_np = None
+            self._record_color2_np = None
             # 预创建网格线条字段
             self._init_grid_lines()
             # 创建用于渲染的位置字段
             self._init_render_fields()
+            self._ensure_render_buffers()
         else:
             self.gui = None
+            self._pos1_np = None
+            self._pos2_np = None
+            self._color1_np = None
+            self._color2_np = None
+            self._record_pos_np = None
+            self._record_color_np = None
+            self._record_color1_np = None
+            self._record_color2_np = None
 
         # 初始化完成后的内存检查点
         if self.mem_profiler:
@@ -160,6 +195,8 @@ class MPM_Schwarz:
         if not self.visualize_grid:
             self.grid_vertices1 = None
             self.grid_vertices2 = None
+            self._grid_vertices1_np = None
+            self._grid_vertices2_np = None
             self.boundary_grid_points1 = None
             self.boundary_grid_points2 = None
             self.move_mass_grid_points1 = None
@@ -180,8 +217,10 @@ class MPM_Schwarz:
 
             self.grid_vertices1 = ti.Vector.field(2, dtype=ti.f32, shape=len(vertices1))
             self.grid_vertices1.from_numpy(vertices1)
+            self._grid_vertices1_np = vertices1
         else:
             self.grid_vertices1 = None
+            self._grid_vertices1_np = None
 
         # 创建Domain2网格线条字段
         if len(lines_begin2) > 0 and len(lines_end2) > 0:
@@ -191,8 +230,10 @@ class MPM_Schwarz:
 
             self.grid_vertices2 = ti.Vector.field(2, dtype=ti.f32, shape=len(vertices2))
             self.grid_vertices2.from_numpy(vertices2)
+            self._grid_vertices2_np = vertices2
         else:
             self.grid_vertices2 = None
+            self._grid_vertices2_np = None
 
         # 初始化边界网格点的可视化字段
         if self.visualize_boundary_grid:
@@ -206,13 +247,17 @@ class MPM_Schwarz:
     def _init_boundary_grid_points(self):
         """初始化边界网格点的可视化字段"""
         # 为每个域预分配最大可能的边界网格点数
-        max_grid_points1 = self.Domain1.grid.nx * self.Domain1.grid.ny
-        max_grid_points2 = self.Domain2.grid.nx * self.Domain2.grid.ny
+        max_grid_points1 = self.Domain1.grid.get_total_grid_points()
+        max_grid_points2 = self.Domain2.grid.get_total_grid_points()
 
         self.boundary_grid_points1 = ti.Vector.field(2, dtype=ti.f32, shape=max_grid_points1)
         self.boundary_grid_points2 = ti.Vector.field(2, dtype=ti.f32, shape=max_grid_points2)
         self.move_mass_grid_points1 = ti.Vector.field(2, dtype=ti.f32, shape=max_grid_points1)
         self.move_mass_grid_points2 = ti.Vector.field(2, dtype=ti.f32, shape=max_grid_points2)
+        self._boundary_grid_points1_np = np.zeros((max_grid_points1, 2), dtype=np.float32)
+        self._boundary_grid_points2_np = np.zeros((max_grid_points2, 2), dtype=np.float32)
+        self._move_mass_grid_points1_np = np.zeros((max_grid_points1, 2), dtype=np.float32)
+        self._move_mass_grid_points2_np = np.zeros((max_grid_points2, 2), dtype=np.float32)
 
         # 记录实际边界网格点数量的字段
         self.boundary_grid_count1 = ti.field(ti.i32, shape=())
@@ -237,49 +282,47 @@ class MPM_Schwarz:
         self.render_pos1 = ti.Vector.field(2, dtype=ti.f32, shape=max_particles1)
         self.render_pos2 = ti.Vector.field(2, dtype=ti.f32, shape=max_particles2)
 
-        # 创建颜色字段，用于区分普通粒子和边界粒子
-        self.render_color1 = ti.Vector.field(3, dtype=ti.f32, shape=max_particles1)
-        self.render_color2 = ti.Vector.field(3, dtype=ti.f32, shape=max_particles2)
+        # 创建颜色字段（hex），用于区分普通粒子和边界粒子
+        self.render_color1_hex = ti.field(dtype=ti.u32, shape=max_particles1)
+        self.render_color2_hex = ti.field(dtype=ti.u32, shape=max_particles2)
 
-        # 存储offset作为Taichi字段，方便kernel访问
+        # 存储offset作为Taichi字段，方便kernel访问（2D域kernel使用；3D域仅占位不使用）
         self.domain1_offset = ti.Vector.field(2, dtype=ti.f32, shape=())
         self.domain2_offset = ti.Vector.field(2, dtype=ti.f32, shape=())
         self.domain1_scale = ti.field(dtype=ti.f32, shape=())
         self.domain2_scale = ti.field(dtype=ti.f32, shape=())
         self.render_scale_field = ti.field(dtype=ti.f32, shape=())
+        if self.dim1 == 2:
+            self.domain1_offset[None] = ti.Vector([self.Domain1.offset[0], self.Domain1.offset[1]])
+        if self.dim2 == 2:
+            self.domain2_offset[None] = ti.Vector([self.Domain2.offset[0], self.Domain2.offset[1]])
 
-        # 初始化offset和scale
-        self.domain1_offset[None] = ti.Vector([self.Domain1.offset[0], self.Domain1.offset[1]])
-        self.domain2_offset[None] = ti.Vector([self.Domain2.offset[0], self.Domain2.offset[1]])
+        # 初始化scale
         self.domain1_scale[None] = self.Domain1.scale
         self.domain2_scale[None] = self.Domain2.scale
         self.render_scale_field[None] = self.render_scale
 
     @ti.kernel
     def _update_render_positions_domain1(self):
-        """更新Domain1的渲染位置和颜色"""
-        for i in range(self.Domain1.particles.x.shape[0]):
-            # 计算变换后的位置：(x * scale + offset) * render_scale
-            self.render_pos1[i] = (self.Domain1.particles.x[i] * self.domain1_scale[None] + self.domain1_offset[None]) * self.render_scale_field[None]
-
-            # 设置颜色：边界粒子为白色，普通粒子为Domain1颜色（青色）
-            if self.Domain1.particles.is_boundary_particle[i]:
-                self.render_color1[i] = ti.Vector([1.0, 1.0, 1.0])  # 白色
-            else:
-                self.render_color1[i] = ti.Vector([0.024, 0.522, 0.529])  # 青色
+        """更新Domain1的渲染位置和颜色（仅2D域）"""
+        if ti.static(self.Domain1.dim == 2):
+            for i in range(self.Domain1.particles.x.shape[0]):
+                self.render_pos1[i] = (self.Domain1.particles.x[i] * self.domain1_scale[None] + self.domain1_offset[None]) * self.render_scale_field[None]
+                if self.Domain1.particles.is_boundary_particle[i]:
+                    self.render_color1_hex[i] = _COLOR_BOUNDARY_HEX
+                else:
+                    self.render_color1_hex[i] = _COLOR_DOMAIN1_NORMAL_HEX
 
     @ti.kernel
     def _update_render_positions_domain2(self):
-        """更新Domain2的渲染位置和颜色"""
-        for i in range(self.Domain2.particles.x.shape[0]):
-            # 计算变换后的位置：(x * scale + offset) * render_scale
-            self.render_pos2[i] = (self.Domain2.particles.x[i] * self.domain2_scale[None] + self.domain2_offset[None]) * self.render_scale_field[None]
-
-            # 设置颜色：边界粒子为白色，普通粒子为Domain2颜色（红色）
-            if self.Domain2.particles.is_boundary_particle[i]:
-                self.render_color2[i] = ti.Vector([1.0, 1.0, 1.0])  # 白色
-            else:
-                self.render_color2[i] = ti.Vector([0.929, 0.333, 0.231])  # 红色
+        """更新Domain2的渲染位置和颜色（仅2D域）"""
+        if ti.static(self.Domain2.dim == 2):
+            for i in range(self.Domain2.particles.x.shape[0]):
+                self.render_pos2[i] = (self.Domain2.particles.x[i] * self.domain2_scale[None] + self.domain2_offset[None]) * self.render_scale_field[None]
+                if self.Domain2.particles.is_boundary_particle[i]:
+                    self.render_color2_hex[i] = _COLOR_BOUNDARY_HEX
+                else:
+                    self.render_color2_hex[i] = _COLOR_DOMAIN2_NORMAL_HEX
 
     @ti.kernel
     def _update_boundary_grid_points_domain1(self):
@@ -292,7 +335,11 @@ class MPM_Schwarz:
             render_pos = (grid_pos * self.domain1_scale[None] + self.domain1_offset[None]) * self.render_scale_field[None]
 
             # 检查is_boundary_grid标记（vector field，检查任意分量是否非零）
-            if self.Domain1.grid.is_boundary_grid[I][0] != 0 or self.Domain1.grid.is_boundary_grid[I][1] != 0:
+            is_bnd1 = False
+            for _d in ti.static(range(self.Domain1.grid.dim)):
+                if self.Domain1.grid.is_boundary_grid[I][_d] != 0:
+                    is_bnd1 = True
+            if is_bnd1:
                 idx = ti.atomic_add(boundary_count, 1)
                 if idx < self.boundary_grid_points1.shape[0]:
                     self.boundary_grid_points1[idx] = render_pos
@@ -311,7 +358,11 @@ class MPM_Schwarz:
             render_pos = (grid_pos * self.domain2_scale[None] + self.domain2_offset[None]) * self.render_scale_field[None]
 
             # 检查is_boundary_grid标记（vector field，检查任意分量是否非零）
-            if self.Domain2.grid.is_boundary_grid[I][0] != 0 or self.Domain2.grid.is_boundary_grid[I][1] != 0:
+            is_bnd2 = False
+            for _d in ti.static(range(self.Domain2.grid.dim)):
+                if self.Domain2.grid.is_boundary_grid[I][_d] != 0:
+                    is_bnd2 = True
+            if is_bnd2:
                 idx = ti.atomic_add(boundary_count, 1)
                 if idx < self.boundary_grid_points2.shape[0]:
                     self.boundary_grid_points2[idx] = render_pos
@@ -348,6 +399,116 @@ class MPM_Schwarz:
                     self.move_mass_grid_points2[idx] = render_pos
 
         self.move_mass_grid_count2[None] = move_mass_count
+
+    def _ensure_render_buffers(self):
+        n1 = self.Domain1.particles.x.shape[0]
+        n2 = self.Domain2.particles.x.shape[0]
+        if self._pos1_np is None or self._pos1_np.shape[0] != n1:
+            self._pos1_np = np.zeros((n1, 2), dtype=np.float32)
+            self._color1_np = np.zeros((n1,), dtype=np.uint32)
+            self._record_color1_np = np.zeros((n1,), dtype=np.uint32)
+        if self._pos2_np is None or self._pos2_np.shape[0] != n2:
+            self._pos2_np = np.zeros((n2, 2), dtype=np.float32)
+            self._color2_np = np.zeros((n2,), dtype=np.uint32)
+            self._record_color2_np = np.zeros((n2,), dtype=np.uint32)
+        total = n1 + n2
+        if self._record_pos_np is None or self._record_pos_np.shape[0] != total:
+            self._record_pos_np = np.zeros((total, 2), dtype=np.float32)
+            self._record_color_np = np.zeros((total,), dtype=np.uint32)
+
+    @ti.kernel
+    def _export_render_domain1(self, pos_out: ti.types.ndarray(), color_out: ti.types.ndarray()):
+        for i in range(self.Domain1.particles.x.shape[0]):
+            pos_out[i, 0] = self.render_pos1[i][0]
+            pos_out[i, 1] = self.render_pos1[i][1]
+            color_out[i] = ti.cast(self.render_color1_hex[i], ti.u32)
+
+    @ti.kernel
+    def _export_render_domain2(self, pos_out: ti.types.ndarray(), color_out: ti.types.ndarray()):
+        for i in range(self.Domain2.particles.x.shape[0]):
+            pos_out[i, 0] = self.render_pos2[i][0]
+            pos_out[i, 1] = self.render_pos2[i][1]
+            color_out[i] = ti.cast(self.render_color2_hex[i], ti.u32)
+
+    @ti.kernel
+    def _fill_render_domain1_3d(self, pos_out: ti.types.ndarray(), color_out: ti.types.ndarray()):
+        for i in range(self.Domain1.particles.x.shape[0]):
+            pos = (self.Domain1.particles.x[i] * self.domain1_scale[None] + ti.Vector([self.Domain1.offset[0], self.Domain1.offset[1], self.Domain1.offset[2]])) * self.render_scale
+            x = pos[0] - 0.5
+            y = pos[1] - 0.5
+            z = pos[2] - 0.5
+            x2 = x * _PROJECT_CP + z * _PROJECT_SP
+            z2 = z * _PROJECT_CP - x * _PROJECT_SP
+            u = x2
+            v = y * _PROJECT_CT + z2 * _PROJECT_ST
+            pos_out[i, 0] = u + 0.5
+            pos_out[i, 1] = v + 0.5
+            if self.Domain1.particles.is_boundary_particle[i]:
+                color_out[i] = ti.cast(_COLOR_BOUNDARY_HEX, ti.u32)
+            else:
+                color_out[i] = ti.cast(_COLOR_DOMAIN1_NORMAL_HEX, ti.u32)
+
+    @ti.kernel
+    def _fill_render_domain2_3d(self, pos_out: ti.types.ndarray(), color_out: ti.types.ndarray()):
+        for i in range(self.Domain2.particles.x.shape[0]):
+            pos = (self.Domain2.particles.x[i] * self.domain2_scale[None] + ti.Vector([self.Domain2.offset[0], self.Domain2.offset[1], self.Domain2.offset[2]])) * self.render_scale
+            x = pos[0] - 0.5
+            y = pos[1] - 0.5
+            z = pos[2] - 0.5
+            x2 = x * _PROJECT_CP + z * _PROJECT_SP
+            z2 = z * _PROJECT_CP - x * _PROJECT_SP
+            u = x2
+            v = y * _PROJECT_CT + z2 * _PROJECT_ST
+            pos_out[i, 0] = u + 0.5
+            pos_out[i, 1] = v + 0.5
+            if self.Domain2.particles.is_boundary_particle[i]:
+                color_out[i] = ti.cast(_COLOR_BOUNDARY_HEX, ti.u32)
+            else:
+                color_out[i] = ti.cast(_COLOR_DOMAIN2_NORMAL_HEX, ti.u32)
+
+    @ti.kernel
+    def _fill_record_color_domain1(self, out: ti.types.ndarray()):
+        for i in range(self.Domain1.particles.x.shape[0]):
+            if self.Domain1.particles.is_boundary_particle[i]:
+                out[i] = ti.cast(2, ti.u32)
+            else:
+                out[i] = ti.cast(0, ti.u32)
+
+    @ti.kernel
+    def _fill_record_color_domain2(self, out: ti.types.ndarray()):
+        for i in range(self.Domain2.particles.x.shape[0]):
+            if self.Domain2.particles.is_boundary_particle[i]:
+                out[i] = ti.cast(2, ti.u32)
+            else:
+                out[i] = ti.cast(1, ti.u32)
+
+    @ti.kernel
+    def _export_boundary_points_domain1(self, pos_out: ti.types.ndarray()):
+        for i in range(self.boundary_grid_points1.shape[0]):
+            if i < self.boundary_grid_count1[None]:
+                pos_out[i, 0] = self.boundary_grid_points1[i][0]
+                pos_out[i, 1] = self.boundary_grid_points1[i][1]
+
+    @ti.kernel
+    def _export_boundary_points_domain2(self, pos_out: ti.types.ndarray()):
+        for i in range(self.boundary_grid_points2.shape[0]):
+            if i < self.boundary_grid_count2[None]:
+                pos_out[i, 0] = self.boundary_grid_points2[i][0]
+                pos_out[i, 1] = self.boundary_grid_points2[i][1]
+
+    @ti.kernel
+    def _export_move_mass_points_domain1(self, pos_out: ti.types.ndarray()):
+        for i in range(self.move_mass_grid_points1.shape[0]):
+            if i < self.move_mass_grid_count1[None]:
+                pos_out[i, 0] = self.move_mass_grid_points1[i][0]
+                pos_out[i, 1] = self.move_mass_grid_points1[i][1]
+
+    @ti.kernel
+    def _export_move_mass_points_domain2(self, pos_out: ti.types.ndarray()):
+        for i in range(self.move_mass_grid_points2.shape[0]):
+            if i < self.move_mass_grid_count2[None]:
+                pos_out[i, 0] = self.move_mass_grid_points2[i][0]
+                pos_out[i, 1] = self.move_mass_grid_points2[i][1]
 
     def exchange_boundary_conditions(self):
         """
@@ -414,9 +575,11 @@ class MPM_Schwarz:
                 base, fx = self.Domain2.grid.particle_to_grid_base_and_fx(x_local_in_domain2)
 
                 # 检查是否在Domain2的网格范围内且该点有质量
-                if base[0] >= 0 and base[0] < self.Domain2.grid.nx and \
-                   base[1] >= 0 and base[1] < self.Domain2.grid.ny and \
-                   self.Domain2.grid.m[base] > 0:
+                in_d2 = base[0] >= 0 and base[0] < self.Domain2.grid.nx and \
+                        base[1] >= 0 and base[1] < self.Domain2.grid.ny
+                if ti.static(self.Domain2.grid.dim == 3):
+                    in_d2 = in_d2 and base[2] >= 0 and base[2] < self.Domain2.grid.nz
+                if in_d2 and self.Domain2.grid.m[base] > 0:
                     # 这是真正的overlap区域，计算Domain1的速度收敛性
                     velocity_diff_norm = (self.Domain1.grid.v[I] - self.Domain1_prev_grid_v[I]).norm()
                     ti.atomic_max(self.convergence_max_residual[None], velocity_diff_norm)
@@ -438,9 +601,11 @@ class MPM_Schwarz:
                 base, fx = self.Domain1.grid.particle_to_grid_base_and_fx(x_local_in_domain1)
 
                 # 检查是否在Domain1的网格范围内且该点有质量
-                if base[0] >= 0 and base[0] < self.Domain1.grid.nx and \
-                   base[1] >= 0 and base[1] < self.Domain1.grid.ny and \
-                   self.Domain1.grid.m[base] > 0:
+                in_d1 = base[0] >= 0 and base[0] < self.Domain1.grid.nx and \
+                        base[1] >= 0 and base[1] < self.Domain1.grid.ny
+                if ti.static(self.Domain1.grid.dim == 3):
+                    in_d1 = in_d1 and base[2] >= 0 and base[2] < self.Domain1.grid.nz
+                if in_d1 and self.Domain1.grid.m[base] > 0:
                     # 这是真正的overlap区域，计算Domain2的速度收敛性
                     velocity_diff_norm = (self.Domain2.grid.v[I] - self.Domain2_prev_grid_v[I]).norm()
                     ti.atomic_max(self.convergence_max_residual[None], velocity_diff_norm)
@@ -750,9 +915,19 @@ class MPM_Schwarz:
         if self.mem_profiler:
             self.mem_profiler.checkpoint(f"render_frame_{self.current_frame}_start")
 
-        # 使用kernel更新渲染位置
-        self._update_render_positions_domain1()
-        self._update_render_positions_domain2()
+        self._ensure_render_buffers()
+
+        # 更新渲染位置：2D域用kernel导出，3D域用kernel投影
+        if self.dim1 == 2:
+            self._update_render_positions_domain1()
+            self._export_render_domain1(self._pos1_np, self._color1_np)
+        else:
+            self._fill_render_domain1_3d(self._pos1_np, self._color1_np)
+        if self.dim2 == 2:
+            self._update_render_positions_domain2()
+            self._export_render_domain2(self._pos2_np, self._color2_np)
+        else:
+            self._fill_render_domain2_3d(self._pos2_np, self._color2_np)
 
         # 更新边界网格点（如果启用了边界网格可视化）
         if self.visualize_boundary_grid:
@@ -773,46 +948,47 @@ class MPM_Schwarz:
         # 使用ti.GUI的API（避免Vulkan依赖）
         self.gui.clear(0x112F41)
 
-        # 使用预计算的渲染位置字段和颜色字段
+        # 渲染Domain1粒子
         if self.Domain1.particles.x.shape[0] > 0:
-            pos1 = self.render_pos1.to_numpy()
-            colors1 = self._vec3_to_hex(self.render_color1.to_numpy())
-            self.gui.circles(pos1, radius=2, color=colors1)
+            self.gui.circles(self._pos1_np, radius=2, color=self._color1_np)
 
+        # 渲染Domain2粒子
         if self.Domain2.particles.x.shape[0] > 0:
-            pos2 = self.render_pos2.to_numpy()
-            colors2 = self._vec3_to_hex(self.render_color2.to_numpy())
-            self.gui.circles(pos2, radius=2, color=colors2)
+            self.gui.circles(self._pos2_np, radius=2, color=self._color2_np)
 
         # 绘制grid网格
         if self.visualize_grid:
             # 使用预创建的网格线条字段（顶点成对排列）
-            if self.grid_vertices1 is not None:
-                verts = self.grid_vertices1.to_numpy()
+            if self._grid_vertices1_np is not None:
+                verts = self._grid_vertices1_np
                 self.gui.lines(verts[::2], verts[1::2], radius=1, color=0x068587)
 
-            if self.grid_vertices2 is not None:
-                verts = self.grid_vertices2.to_numpy()
+            if self._grid_vertices2_np is not None:
+                verts = self._grid_vertices2_np
                 self.gui.lines(verts[::2], verts[1::2], radius=1, color=0xED553B)
 
         # 绘制边界网格点
         if self.visualize_boundary_grid and self.visualize_grid:
             # 绘制is_boundary_grid标记的网格点，不同domain用不同颜色
             if self.boundary_grid_points1 is not None and self.boundary_grid_count1[None] > 0:
-                pts = self.boundary_grid_points1.to_numpy()[:self.boundary_grid_count1[None]]
+                self._export_boundary_points_domain1(self._boundary_grid_points1_np)
+                pts = self._boundary_grid_points1_np[:self.boundary_grid_count1[None]]
                 self.gui.circles(pts, radius=3, color=0xFF9999)  # 浅红色 - Domain1
 
             if self.boundary_grid_points2 is not None and self.boundary_grid_count2[None] > 0:
-                pts = self.boundary_grid_points2.to_numpy()[:self.boundary_grid_count2[None]]
+                self._export_boundary_points_domain2(self._boundary_grid_points2_np)
+                pts = self._boundary_grid_points2_np[:self.boundary_grid_count2[None]]
                 self.gui.circles(pts, radius=3, color=0x9999FF)  # 浅蓝色 - Domain2
 
             # 绘制move_mass_field > 0的网格点
             if self.move_mass_grid_points1 is not None and self.move_mass_grid_count1[None] > 0:
-                pts = self.move_mass_grid_points1.to_numpy()[:self.move_mass_grid_count1[None]]
+                self._export_move_mass_points_domain1(self._move_mass_grid_points1_np)
+                pts = self._move_mass_grid_points1_np[:self.move_mass_grid_count1[None]]
                 self.gui.circles(pts, radius=4, color=0xFF00FF)  # 洋红色
 
             if self.move_mass_grid_points2 is not None and self.move_mass_grid_count2[None] > 0:
-                pts = self.move_mass_grid_points2.to_numpy()[:self.move_mass_grid_count2[None]]
+                self._export_move_mass_points_domain2(self._move_mass_grid_points2_np)
+                pts = self._move_mass_grid_points2_np[:self.move_mass_grid_count2[None]]
                 self.gui.circles(pts, radius=4, color=0xFF00FF)  # 洋红色
 
         self.gui.show()
@@ -822,28 +998,21 @@ class MPM_Schwarz:
                 self.mem_profiler.checkpoint(f"render_frame_{self.current_frame}_end")
             return
         print("Frame", len(self.recorder.frame_data))
-        all_pos = np.concatenate([
-            self.render_pos1.to_numpy(),
-            self.render_pos2.to_numpy()
-        ])
+        n1 = self.Domain1.particles.x.shape[0]
+        n2 = self.Domain2.particles.x.shape[0]
+        total = n1 + n2
 
-        # 生成颜色索引 (0:域1普通, 1:域2普通, 2:边界)
-        d1_colors = np.where(
-            self.Domain1.particles.is_boundary_particle.to_numpy(),
-            2, 0
-        )
-        d2_colors = np.where(
-            self.Domain2.particles.is_boundary_particle.to_numpy(),
-            2, 1
-        )
-        all_colors = np.concatenate([d1_colors, d2_colors]).astype(np.uint32)
+        if n1 > 0:
+            np.copyto(self._record_pos_np[:n1], self._pos1_np)
+            self._fill_record_color_domain1(self._record_color1_np)
+            np.copyto(self._record_color_np[:n1], self._record_color1_np)
+        if n2 > 0:
+            np.copyto(self._record_pos_np[n1:total], self._pos2_np)
+            self._fill_record_color_domain2(self._record_color2_np)
+            np.copyto(self._record_color_np[n1:total], self._record_color2_np)
 
         # 捕获帧
-        self.recorder.capture(all_pos, all_colors)
-
-        # 清理临时numpy数组，避免内存累积
-        del all_pos, d1_colors, d2_colors, all_colors
-        # gc.collect() 已移至 step() 中每1000帧调用一次
+        self.recorder.capture(self._record_pos_np[:total], self._record_color_np[:total])
 
         if self.mem_profiler:
             self.mem_profiler.checkpoint(f"render_frame_{self.current_frame}_end")
@@ -1174,72 +1343,82 @@ if __name__ == "__main__":
     frame_count = 0
     target_frames = cfg.get("max_frames", 60)
 
-    if args.no_gui:
-        # 无GUI模式：直接运行到目标帧数
-        print(f"Running simulation in headless mode for {target_frames} frames...")
-        while frame_count < target_frames:
-            mpm.step()
-            frame_count += 1
+    gc.disable()  # 禁用GC以避免render中临时numpy数组触发周期性GC暂停
+    try:
+        if args.no_gui:
+            # 无GUI模式：直接运行到目标帧数
+            print(f"Running simulation in headless mode for {target_frames} frames...")
+            while frame_count < target_frames:
+                mpm.step()
+                frame_count += 1
 
-            # 间隔保存应力数据
-            if mpm.stress_save_interval > 0 and frame_count % mpm.stress_save_interval == 0:
-                print(f"保存第 {frame_count} 帧的应力数据...")
+                # 间隔保存应力数据
+                if mpm.stress_save_interval > 0 and frame_count % mpm.stress_save_interval == 0:
+                    print(f"保存第 {frame_count} 帧的应力数据...")
+                    mpm.save_stress_data(frame_count)
+                    mpm.saved_stress_frames.append(frame_count)
+
+                # 检查速度收敛
+                if mpm.check_velocity_convergence(frame_count):
+                    print(f"在第 {frame_count} 帧达到速度收敛，提前终止模拟")
+                    break
+
+                if frame_count % 100 == 0:
+                    print(f"Progress: {frame_count}/{target_frames} frames")
+            print("Simulation completed.")
+
+            # 保存最终帧的应力数据（如果还没保存过）
+            if frame_count not in mpm.saved_stress_frames:
+                print(f"保存最终帧 {frame_count} 的应力数据...")
                 mpm.save_stress_data(frame_count)
                 mpm.saved_stress_frames.append(frame_count)
 
-            # 检查速度收敛
-            if mpm.check_velocity_convergence(frame_count):
-                print(f"在第 {frame_count} 帧达到速度收敛，提前终止模拟")
-                break
+            # 生成内存分析报告
+            if mpm.mem_profiler:
+                mpm.mem_profiler.checkpoint("simulation_complete")
+                report_path = os.path.join(mpm._experiment_dir, "memory_profile.json")
+                mpm.mem_profiler.save_report(report_path)
+                mpm.mem_profiler.stop()
+        else:
+            # GUI模式：使用传统的GUI循环
+            _render_interval = 1.0 / mpm.render_fps
+            _last_render_t = 0.0
+            while mpm.gui and mpm.gui.running:
+                mpm.step()
+                _now = time.perf_counter()
+                if _now - _last_render_t >= _render_interval:
+                    mpm.render()
+                    _last_render_t = _now
+                frame_count += 1
 
-            if frame_count % 100 == 0:
-                print(f"Progress: {frame_count}/{target_frames} frames")
-        print("Simulation completed.")
+                # 间隔保存应力数据
+                if mpm.stress_save_interval > 0 and frame_count % mpm.stress_save_interval == 0:
+                    print(f"保存第 {frame_count} 帧的应力数据...")
+                    mpm.save_stress_data(frame_count)
+                    mpm.saved_stress_frames.append(frame_count)
 
-        # 保存最终帧的应力数据（如果还没保存过）
-        if frame_count not in mpm.saved_stress_frames:
-            print(f"保存最终帧 {frame_count} 的应力数据...")
-            mpm.save_stress_data(frame_count)
-            mpm.saved_stress_frames.append(frame_count)
+                # 检查速度收敛
+                if mpm.check_velocity_convergence(frame_count):
+                    print(f"在第 {frame_count} 帧达到速度收敛，提前终止模拟")
+                    break
 
-        # 生成内存分析报告
-        if mpm.mem_profiler:
-            mpm.mem_profiler.checkpoint("simulation_complete")
-            report_path = os.path.join(mpm._experiment_dir, "memory_profile.json")
-            mpm.mem_profiler.save_report(report_path)
-            mpm.mem_profiler.stop()
-    else:
-        # GUI模式：使用传统的GUI循环
-        while mpm.gui and mpm.gui.running:
-            mpm.step()
-            mpm.render()
-            frame_count += 1
-
-            # 间隔保存应力数据
-            if mpm.stress_save_interval > 0 and frame_count % mpm.stress_save_interval == 0:
-                print(f"保存第 {frame_count} 帧的应力数据...")
+                # 自动停止条件
+                if frame_count >= mpm.max_frames:
+                    break
+            # 保存最终帧的应力数据（如果还没保存过）
+            if frame_count not in mpm.saved_stress_frames:
+                print(f"保存最终帧 {frame_count} 的应力数据...")
                 mpm.save_stress_data(frame_count)
                 mpm.saved_stress_frames.append(frame_count)
-
-            # 检查速度收敛
-            if mpm.check_velocity_convergence(frame_count):
-                print(f"在第 {frame_count} 帧达到速度收敛，提前终止模拟")
-                break
-
-            # 自动停止条件
-            if frame_count >= mpm.max_frames:
-                break
-        # 保存最终帧的应力数据（如果还没保存过）
-        if frame_count not in mpm.saved_stress_frames:
-            print(f"保存最终帧 {frame_count} 的应力数据...")
-            mpm.save_stress_data(frame_count)
-            mpm.saved_stress_frames.append(frame_count)
-        # 生成内存分析报告（GUI模式）
-        if mpm.mem_profiler:
-            mpm.mem_profiler.checkpoint("simulation_complete")
-            report_path = os.path.join(mpm._experiment_dir, "memory_profile.json")
-            mpm.mem_profiler.save_report(report_path)
-            mpm.mem_profiler.stop()
+            # 生成内存分析报告（GUI模式）
+            if mpm.mem_profiler:
+                mpm.mem_profiler.checkpoint("simulation_complete")
+                report_path = os.path.join(mpm._experiment_dir, "memory_profile.json")
+                mpm.mem_profiler.save_report(report_path)
+                mpm.mem_profiler.stop()
+    finally:
+        gc.enable()
+        gc.collect()
 
 
 

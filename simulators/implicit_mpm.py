@@ -1,6 +1,8 @@
 import taichi as ti
 import time
 import gc
+import math
+import numpy as np
 
 import sys
 import os
@@ -15,10 +17,15 @@ from Util.Config import Config
 
 from Util.Recorder import *
 
-from Util.Project import project
-
 from tools.performance_stats import SingleDomainPerformanceStats
 
+
+_PROJECT_PHI = math.radians(28.0)
+_PROJECT_THETA = math.radians(32.0)
+_PROJECT_CP = math.cos(_PROJECT_PHI)
+_PROJECT_SP = math.sin(_PROJECT_PHI)
+_PROJECT_CT = math.cos(_PROJECT_THETA)
+_PROJECT_ST = math.sin(_PROJECT_THETA)
 
 
 # ------------------ 主模拟器 ------------------
@@ -57,7 +64,7 @@ class ImplicitMPM:
         self.particle_damping = self.cfg.get("particle_damping", 1.0)
 
         self.scale = self.cfg.get("scale", 1.0)
-        self.offset = self.cfg.get("offset", (0, 0))
+        self.offset = self.cfg.get("offset", (0, 0) if self.dim == 2 else (0, 0, 0))
 
         # 帧计数和最后100帧检测
         self.current_frame = 0
@@ -83,6 +90,7 @@ class ImplicitMPM:
         # 其他公共参数初始化
         self.max_schwarz_iter = config.get("max_schwarz_iter", 1)  # Schwarz迭代次数
         self.max_frames = config.get("max_frames", 60)  # 最大帧数
+        self.render_fps = config.get("render_fps", 60)  # GUI帧率上限
         self.use_record = config.get("use_record", False)  # 是否使用录制
 
         # 应力保存配置
@@ -104,21 +112,34 @@ class ImplicitMPM:
                 0x66CCFF,  # 域1普通粒子
                 0xFFFFFF
             ], dtype=np.uint32),
-            max_frames=self.max_frames
+            max_frames=self.max_frames,
+            max_particles=self.particles.x.shape[0]
         )
 
         # 计算渲染缩放系数（基于本域最大边长，使几何体在屏幕上正确缩放）
-        _max_side = max(self.grid.domain_width, self.grid.domain_height)
+        if self.dim == 3:
+            _max_side = max(self.grid.domain_width, self.grid.domain_height, self.grid.domain_depth)
+        else:
+            _max_side = max(self.grid.domain_width, self.grid.domain_height)
         self.render_scale = 1.0 / _max_side
 
         # 初始化GUI（如果不是no_gui模式）
         if not self.no_gui:
-            self.gui = ti.GUI("Implicit MPM", res=(800, 800))
+            self.gui = ti.GUI("Implicit MPM", res=(800, 800), fast_gui=True)
         else:
             self.gui = None
 
+        self._render_pos_np = None
+        self._record_color_idx_np = None
+
         # 性能统计
         self.perf_stats = SingleDomainPerformanceStats()
+
+    def _ensure_render_buffers(self):
+        n_particles = self.particles.x.shape[0]
+        if self._render_pos_np is None or self._render_pos_np.shape[0] != n_particles:
+            self._render_pos_np = np.zeros((n_particles, 2), dtype=np.float32)
+            self._record_color_idx_np = np.zeros((n_particles,), dtype=np.uint32)
 
     def _apply_config_overrides(self, config: Config, overrides: dict = None):
         """
@@ -300,7 +321,11 @@ class ImplicitMPM:
 
                 # 插值move_boundary粒子的位移到网格
                 if ti.static(self.grid.has_move_boundary):
-                    if self.particles.is_move_boundary_particle[p] and offset[0] == 1 and offset[1] == 1  :
+                    is_center_offset = True
+                    for _d in ti.static(range(self.dim)):
+                        if offset[_d] != 1:
+                            is_center_offset = False
+                    if self.particles.is_move_boundary_particle[p] and is_center_offset:
                         # 计算当前位置与目标位置的相对位移
                         relative_displacement = self.particles.target_position[p] - self.particles.x[p]
                         # 按权重和质量插值到网格
@@ -351,17 +376,28 @@ class ImplicitMPM:
                     #         in_boundary_range = True
 
                     if in_boundary_range:
-                        # 检查8个相邻grid是否有质量为0的
+                        # 检查相邻grid是否有质量为0的
                         has_zero_mass_neighbor = False
-                        for di in ti.static([-1, 0, 1]):
-                            for dj in ti.static([-1, 0, 1]):
-                                if not (di == 0 and dj == 0):  # 跳过中心grid
-                                    neighbor_idx = I + ti.Vector([di, dj])
-                                    # 边界检查
-                                    if (neighbor_idx[0] >= 0 and neighbor_idx[0] < self.grid.nx and
-                                        neighbor_idx[1] >= 0 and neighbor_idx[1] < self.grid.ny):
-                                        if self.grid.m[neighbor_idx] == 0:
-                                            has_zero_mass_neighbor = True
+                        if ti.static(self.dim == 2):
+                            for di in ti.static([-1, 0, 1]):
+                                for dj in ti.static([-1, 0, 1]):
+                                    if not (di == 0 and dj == 0):
+                                        neighbor_idx = I + ti.Vector([di, dj])
+                                        if (neighbor_idx[0] >= 0 and neighbor_idx[0] < self.grid.nx and
+                                                neighbor_idx[1] >= 0 and neighbor_idx[1] < self.grid.ny):
+                                            if self.grid.m[neighbor_idx] == 0:
+                                                has_zero_mass_neighbor = True
+                        else:
+                            for di in ti.static([-1, 0, 1]):
+                                for dj in ti.static([-1, 0, 1]):
+                                    for dk in ti.static([-1, 0, 1]):
+                                        if not (di == 0 and dj == 0 and dk == 0):
+                                            neighbor_idx = I + ti.Vector([di, dj, dk])
+                                            if (neighbor_idx[0] >= 0 and neighbor_idx[0] < self.grid.nx and
+                                                    neighbor_idx[1] >= 0 and neighbor_idx[1] < self.grid.ny and
+                                                    neighbor_idx[2] >= 0 and neighbor_idx[2] < self.grid.nz):
+                                                if self.grid.m[neighbor_idx] == 0:
+                                                    has_zero_mass_neighbor = True
 
                         if has_zero_mass_neighbor:
                             self.grid.is_particle_boundary_grid[I] = 1
@@ -469,29 +505,53 @@ class ImplicitMPM:
 
         return False
 
+    @ti.kernel
+    def _fill_render_pos_2d(self, out: ti.types.ndarray()):
+        for i in range(self.particles.x.shape[0]):
+            pos = self.particles.x[i] * self.render_scale
+            out[i, 0] = pos[0]
+            out[i, 1] = pos[1]
+
+    @ti.kernel
+    def _fill_render_pos_3d(self, out: ti.types.ndarray()):
+        for i in range(self.particles.x.shape[0]):
+            pos = self.particles.x[i] * self.render_scale
+            x = pos[0] - 0.5
+            y = pos[1] - 0.5
+            z = pos[2] - 0.5
+            x2 = x * _PROJECT_CP + z * _PROJECT_SP
+            z2 = z * _PROJECT_CP - x * _PROJECT_SP
+            u = x2
+            v = y * _PROJECT_CT + z2 * _PROJECT_ST
+            out[i, 0] = u + 0.5
+            out[i, 1] = v + 0.5
+
+    @ti.kernel
+    def _fill_boundary_flags(self, out: ti.types.ndarray()):
+        for i in range(self.particles.is_boundary_particle.shape[0]):
+            out[i] = ti.cast(self.particles.is_boundary_particle[i], ti.u32)
+
     def render(self):
         # 在无GUI模式下跳过渲染
         if self.no_gui or self.gui is None:
             return
 
-        x_numpy = self.particles.x.to_numpy() * self.render_scale
-
+        self._ensure_render_buffers()
         if self.dim == 3:
-            x_numpy= project(x_numpy)
+            self._fill_render_pos_3d(self._render_pos_np)
+        else:
+            self._fill_render_pos_2d(self._render_pos_np)
 
         # 使用ti.GUI的API（避免Vulkan依赖）
         self.gui.clear(0x112F41)
-        self.gui.circles(x_numpy, radius=3, color=0x66CCFF)
+        self.gui.circles(self._render_pos_np, radius=3, color=0x66CCFF)
+        print(f"To Render frame {self.current_frame}")
         self.gui.show()
-
+        print(f"Rendered frame {self.current_frame}")
         if self.use_record and self.recorder is not None:
             print("Recording frame: ", len(self.recorder.frame_data) + 1)
-            boundary_flags = self.particles.is_boundary_particle.to_numpy().astype(np.uint32)
-            self.recorder.capture(x_numpy, boundary_flags)
-            del boundary_flags
-
-        # 清理临时numpy数组
-        del x_numpy
+            self._fill_boundary_flags(self._record_color_idx_np)
+            self.recorder.capture(self._render_pos_np, self._record_color_idx_np)
     
     def _is_point_in_single_region(self, point, region_config):
         """检查点是否在单个区域内"""
@@ -841,21 +901,31 @@ if __name__ == "__main__":
         print("保存初始状态的应力数据...")
         mpm.save_stress_data(0)
         max_frames = mpm.max_frames
-        while (i < max_frames) and ((mpm.gui is not None and mpm.gui.running) or mpm.no_gui):
-           mpm.step()
-           mpm.render()
-           i += 1
+        _render_interval = 1.0 / mpm.render_fps
+        _last_render_t = 0.0
+        gc.disable()  # 禁用GC以避免render中临时numpy数组触发周期性GC暂停
+        try:
+            while (i < max_frames) and ((mpm.gui is not None and mpm.gui.running) or mpm.no_gui):
+               mpm.step()
+               _now = time.perf_counter()
+               if _now - _last_render_t >= _render_interval:
+                   mpm.render()
+                   _last_render_t = _now
+               i += 1
 
-           # 间隔保存应力数据
-           if mpm.stress_save_interval > 0 and i % mpm.stress_save_interval == 0:
-               print(f"保存第 {i} 帧的应力数据...")
-               mpm.save_stress_data(i)
-               mpm.saved_stress_frames.append(i)
+               # 间隔保存应力数据
+               if mpm.stress_save_interval > 0 and i % mpm.stress_save_interval == 0:
+                   print(f"保存第 {i} 帧的应力数据...")
+                   mpm.save_stress_data(i)
+                   mpm.saved_stress_frames.append(i)
 
-           # 检查速度收敛
-           if mpm.check_velocity_convergence(i):
-               print(f"在第 {i} 帧达到速度收敛，提前终止模拟")
-               break
+               # 检查速度收敛
+               if mpm.check_velocity_convergence(i):
+                   print(f"在第 {i} 帧达到速度收敛，提前终止模拟")
+                   break
+        finally:
+            gc.enable()
+            gc.collect()
 
         # 在最后一帧记录应力数据（如果还没有保存过）
         if mpm.stress_save_interval == 0 or i not in mpm.saved_stress_frames:
