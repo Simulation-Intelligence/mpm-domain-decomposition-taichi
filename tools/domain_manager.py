@@ -14,9 +14,9 @@ class DomainManager:
         # 如果有公共粒子配置，则创建公共粒子实例
         common_particles = Particles(common_particles_config) if common_particles_config else None
         
-        # 初始化两个子域MPM实例
-        self.domain1 = ImplicitMPM(domain1_config, common_particles)
-        self.domain2 = ImplicitMPM(domain2_config, common_particles)
+        # 初始化两个子域MPM实例（禁用各自的GUI，只用主容器的GUI）
+        self.domain1 = ImplicitMPM(domain1_config, common_particles, no_gui=True)
+        self.domain2 = ImplicitMPM(domain2_config, common_particles, no_gui=True)
 
         # 确定大小时间步长域
         self._setup_time_domains()

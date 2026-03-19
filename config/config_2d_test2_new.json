@@ -6,7 +6,7 @@
     "grid_ny": 40,
     "domain_width": 1.0,
     "domain_height": 0.4,
-    "particles_per_grid": 16,
+    "particles_per_grid": 4,
     "sampling_method": "regular",
     "use_mapping": false,
     "elasticity_model": "linear",

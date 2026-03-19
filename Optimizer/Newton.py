@@ -133,7 +133,7 @@ class Newton:
 
             H_builder = ti.linalg.SparseMatrixBuilder(
                     self.dim[None], self.dim[None],
-                    max_num_triplets=int(self.dim[None]**2 *0.05),
+                    max_num_triplets=int(self.dim[None]**2 *0.1),
                     dtype=self.float_type
                 )
 

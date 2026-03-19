@@ -14,6 +14,9 @@ matplotlib.use('Agg')  # Use non-interactive backend to avoid segfault with Taic
 import matplotlib.pyplot as plt
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tools.plot_style import apply_cmame_style, COLORS as CMAME_COLORS
+apply_cmame_style()
 from simulators.implicit_mpm import ImplicitMPM
 from Util.Config import Config
 import taichi as ti
@@ -27,14 +30,15 @@ def save_config(config, config_path):
     with open(config_path, 'w') as f:
         json.dump(config, f, indent=4)
 
-def modify_config_grid_size(config, grid_size, use_schwarz=False):
+def modify_config_grid_size(config, grid_size, use_schwarz=False, modify_domain1=False):
     """
     修改配置文件的网格分辨率
 
     参数:
         config: 配置字典
-        grid_size: 新的网格大小
+        grid_size: 新的网格大小（Schwarz模式下对应 Domain2 的 grid_nx）
         use_schwarz: 是否为Schwarz双域配置
+        modify_domain1: Schwarz模式下是否同步缩放 Domain1 的分辨率（默认不修改）
 
     返回:
         修改后的配置字典
@@ -43,16 +47,30 @@ def modify_config_grid_size(config, grid_size, use_schwarz=False):
     new_config = copy.deepcopy(config)
 
     if use_schwarz:
-        # Schwarz模式：只修改Domain2的网格大小
+        # Schwarz模式：修改 Domain2；可选同步缩放 Domain1
         if 'Domain2' in new_config:
-            original_nx = new_config['Domain2'].get('grid_nx', 30)
-            original_ny = new_config['Domain2'].get('grid_ny', 30)
-            aspect_ratio = original_ny / original_nx if original_nx > 0 else 1.0
+            orig_d2_nx = new_config['Domain2'].get('grid_nx', 30)
+            orig_d2_ny = new_config['Domain2'].get('grid_ny', 30)
+            d2_aspect = orig_d2_ny / orig_d2_nx if orig_d2_nx > 0 else 1.0
 
             new_config['Domain2']['grid_nx'] = grid_size
-            new_config['Domain2']['grid_ny'] = int(grid_size * aspect_ratio)
+            new_config['Domain2']['grid_ny'] = int(grid_size * d2_aspect)
 
-            print(f"修改Schwarz配置: Domain2网格大小设为 {grid_size}x{int(grid_size * aspect_ratio)} (比例: {aspect_ratio:.3f})")
+            print(f"修改Schwarz配置: Domain2网格大小设为 {grid_size}x{int(grid_size * d2_aspect)} (比例: {d2_aspect:.3f})")
+
+            if modify_domain1 and 'Domain1' in new_config:
+                orig_d1_nx = new_config['Domain1'].get('grid_nx', 30)
+                orig_d1_ny = new_config['Domain1'].get('grid_ny', 30)
+                d1_aspect = orig_d1_ny / orig_d1_nx if orig_d1_nx > 0 else 1.0
+                # 按 Domain2 的缩放比例等比例调整 Domain1
+                scale = grid_size / orig_d2_nx if orig_d2_nx > 0 else 1.0
+                new_d1_nx = max(1, round(orig_d1_nx * scale))
+                new_d1_ny = max(1, round(orig_d1_ny * scale))
+                new_config['Domain1']['grid_nx'] = new_d1_nx
+                new_config['Domain1']['grid_ny'] = new_d1_ny
+                print(f"修改Schwarz配置: Domain1网格大小设为 {new_d1_nx}x{new_d1_ny} (缩放比例: {scale:.3f})")
+            elif modify_domain1:
+                print("警告: Schwarz配置中未找到Domain1，跳过Domain1分辨率修改")
         else:
             print("警告: Schwarz配置中未找到Domain2")
     else:
@@ -136,8 +154,7 @@ def run_simulation(config_path, use_schwarz=False):
         cmd = [
             sys.executable,  # 使用当前Python解释器
             "simulators/implicit_mpm_schwarz.py",
-            "--config", config_path,
-            "--no-gui"
+            "--config", config_path
         ]
         print(f"执行命令: {' '.join(cmd)}")
 
@@ -193,7 +210,25 @@ def run_simulation(config_path, use_schwarz=False):
         # 验证一下positions2的范围是否合理
         print(f"Domain2位置范围: x=[{positions2[:, 0].min():.3f}, {positions2[:, 0].max():.3f}], y=[{positions2[:, 1].min():.3f}, {positions2[:, 1].max():.3f}]")
 
-        return (positions1, stresses1, positions2, stresses2)
+        timing_dict = None
+        try:
+            stats_path = os.path.join(latest_dir, 'performance_stats', 'stats_data.json')
+            with open(stats_path) as _f:
+                _stats = json.load(_f)
+            _fd = _stats.get('frame_data', [])
+            _big = sum(sum(f['big_domain_solve_time']) for f in _fd)
+            _small = sum(sum(f['small_domain_solve_time']) for f in _fd)
+            _total = sum(f['total_frame_time'] for f in _fd)
+            timing_dict = {
+                'mode': 'schwarz',
+                'big_domain_solve_time': _big,
+                'small_domain_solve_time': _small,
+                'other_time': _total - _big - _small,
+                'total_time': _total,
+            }
+        except Exception as _e:
+            print(f"警告: 无法加载计时数据: {_e}")
+        return (positions1, stresses1, positions2, stresses2, timing_dict)
     else:
         # 单域模式：调用 implicit_mpm.py
         cmd = [
@@ -254,7 +289,23 @@ def run_simulation(config_path, use_schwarz=False):
 
         print(f"加载了 {len(positions)} 个粒子的数据")
 
-        return (positions, stresses)
+        timing_dict = None
+        try:
+            stats_path = os.path.join(latest_exp_dir, 'performance_stats', 'stats_data.json')
+            with open(stats_path) as _f:
+                _stats = json.load(_f)
+            _sum = _stats.get('summary', {})
+            _total = _sum.get('total_time', 0.0)
+            _solve = _sum.get('solve_time', 0.0)
+            timing_dict = {
+                'mode': 'single',
+                'solve_time': _solve,
+                'other_time': _total - _solve,
+                'total_time': _total,
+            }
+        except Exception as _e:
+            print(f"警告: 无法加载计时数据: {_e}")
+        return (positions, stresses, timing_dict)
 
 def calculate_strip_width(config, grid_size=None, use_schwarz=False):
     """
@@ -482,40 +533,44 @@ def analyze_and_plot(positions_or_tuple, stresses_or_none, config, output_dir, g
         radius, delta, E_in, nu_in, E_out, nu_out
     )
 
-    # 绘图
-    plt.figure(figsize=(12, 5))
-    title_suffix = f" (Grid {grid_size}x{grid_size})" if grid_size else ""
+    _, (ax_xx, ax_yy) = plt.subplots(1, 2, figsize=(10, 4.5))
 
-    # 左图: Sigma_XX
-    plt.subplot(1, 2, 1)
-    plt.title(f"Transverse Stress $\sigma_{{xx}}${title_suffix}")
-    plt.scatter(mpm_x - center[0], mpm_sig_xx, s=10, alpha=0.6, label='MPM', c='blue', edgecolors='none')
-    plt.plot(line_x - center[0], ana_sig_xx, 'r--', lw=2, label='Analytical')
-    plt.axvline(-radius, color='k', linestyle=':', alpha=0.3, label='Inclusion boundary')
-    plt.axvline(radius, color='k', linestyle=':', alpha=0.3)
-    plt.xlabel('Radial position')
-    plt.ylabel('Stress XX (Pa)')
-    plt.xlim(-3*radius, 3*radius)
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+    sort_idx = np.argsort(mpm_x)
+    mpm_x_s = mpm_x[sort_idx] - center[0]
+    mpm_sig_xx_s = mpm_sig_xx[sort_idx]
+    mpm_sig_yy_s = mpm_sig_yy[sort_idx]
 
-    # 右图: Sigma_YY
-    plt.subplot(1, 2, 2)
-    plt.title(f"Radial Stress $\sigma_{{yy}}${title_suffix}")
-    plt.scatter(mpm_x - center[0], mpm_sig_yy, s=10, alpha=0.6, label='MPM', c='green', edgecolors='none')
-    plt.plot(line_x - center[0], ana_sig_yy, 'r--', lw=2, label='Analytical')
-    plt.axvline(-radius, color='k', linestyle=':', alpha=0.3, label='Inclusion boundary')
-    plt.axvline(radius, color='k', linestyle=':', alpha=0.3)
-    plt.xlabel('Radial position')
-    plt.ylabel('Stress YY (Pa)')
-    plt.xlim(-3*radius, 3*radius)
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+    # Left: Sigma_XX
+    ax_xx.plot(mpm_x_s, mpm_sig_xx_s, color='#3182bd', lw=1.5,
+               marker='o', markersize=4, markerfacecolor='none', markeredgewidth=1.0,
+               label='MPM')
+    ax_xx.plot(line_x - center[0], ana_sig_xx, color='#b2182b', linestyle='--',
+               lw=2.0, label='Analytical')
+    ax_xx.axvline(-radius, color='k', linestyle=':', alpha=0.3, label='Inclusion boundary')
+    ax_xx.axvline(radius, color='k', linestyle=':', alpha=0.3)
+    ax_xx.set_xlabel(r'Radial position (m)')
+    ax_xx.set_ylabel(r'$\sigma_{xx}$ (Pa)')
+    ax_xx.set_xlim(-3*radius, 3*radius)
+    ax_xx.legend()
+    ax_xx.grid(True, alpha=0.3)
 
-    # 保存图形
+    # Right: Sigma_YY
+    ax_yy.plot(mpm_x_s, mpm_sig_yy_s, color='#2ca02c', lw=1.5,
+               marker='s', markersize=4, markerfacecolor='none', markeredgewidth=1.0,
+               label='MPM')
+    ax_yy.plot(line_x - center[0], ana_sig_yy, color='#b2182b', linestyle='--',
+               lw=2.0, label='Analytical')
+    ax_yy.axvline(-radius, color='k', linestyle=':', alpha=0.3, label='Inclusion boundary')
+    ax_yy.axvline(radius, color='k', linestyle=':', alpha=0.3)
+    ax_yy.set_xlabel(r'Radial position (m)')
+    ax_yy.set_ylabel(r'$\sigma_{yy}$ (Pa)')
+    ax_yy.set_xlim(-3*radius, 3*radius)
+    ax_yy.legend()
+    ax_yy.grid(True, alpha=0.3)
+
     save_path = os.path.join(output_dir, 'result_v3_cartesian.pdf')
-    plt.subplots_adjust(left=0.08, right=0.95, bottom=0.1, top=0.9, wspace=0.25)
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.tight_layout()
+    plt.savefig(save_path)
     plt.close()
 
     print(f"图表已保存: {save_path}")
@@ -572,12 +627,18 @@ def run_single_experiment(config_path, grid_size, output_dir, use_schwarz=False)
 
     # 运行模拟
     sim_results = run_simulation(config_path, use_schwarz)
+    timing_dict = sim_results[-1]   # 最后一个元素是 timing_dict (or None)
+    sim_data = sim_results[:-1]     # 前面是 positions/stresses
+
+    if timing_dict is not None:
+        with open(os.path.join(output_dir, 'timing.json'), 'w') as _f:
+            json.dump(timing_dict, _f, indent=4)
 
     # 分析和绘图
     if use_schwarz:
-        results = analyze_and_plot(sim_results, None, config, output_dir, grid_size, use_schwarz=True)
+        results = analyze_and_plot(sim_data, None, config, output_dir, grid_size, use_schwarz=True)
     else:
-        positions, stresses = sim_results
+        positions, stresses = sim_data
         results = analyze_and_plot(positions, stresses, config, output_dir, grid_size, use_schwarz=False)
 
     # 保存配置备份
@@ -628,7 +689,10 @@ def run_batch_experiments(args):
 
         try:
             # 1. 修改配置
-            modified_config = modify_config_grid_size(base_config, grid_size, use_schwarz=args.schwarz)
+            modify_d1 = getattr(args, 'modify_domain1', False) and args.schwarz
+            modified_config = modify_config_grid_size(base_config, grid_size,
+                                                      use_schwarz=args.schwarz,
+                                                      modify_domain1=modify_d1)
 
             # 2. 创建临时配置文件
             temp_config_path = os.path.join(args.output_dir, f"temp_config_grid{grid_size}.json")
@@ -693,11 +757,9 @@ def create_summary_plot(results, output_dir):
         print("警告: 没有可用的实验数据")
         return
 
-    # 定义颜色列表
-    colors = ['blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan', 'magenta']
+    colors = CMAME_COLORS
 
-    # 创建图形
-    _, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    _, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5))
 
     # 获取第一个实验的解析解和参数（所有实验的解析解应该相同）
     first_grid = list(experiment_data.keys())[0]
@@ -711,15 +773,10 @@ def create_summary_plot(results, output_dir):
     center = params['center']
     radius = params['radius']
 
-    # 左图: Sigma_XX
-    ax1.set_title(f"Transverse Stress $\sigma_{{xx}}$", fontsize=14)
-    # 坐标平移：使中心点变为0
-    ax1.plot(line_x - center[0], ana_sig_xx, 'r--', lw=3, label='Analytical', zorder=10, alpha=0.9)
-
-    # 右图: Sigma_YY
-    ax2.set_title(f"Radial Stress $\sigma_{{yy}}$", fontsize=14)
-    # 坐标平移：使中心点变为0
-    ax2.plot(line_x - center[0], ana_sig_yy, 'r--', lw=3, label='Analytical', zorder=10, alpha=0.9)
+    ax1.plot(line_x - center[0], ana_sig_xx, color='#b2182b', linestyle='--',
+             lw=2.0, label='Analytical', zorder=10, alpha=0.9)
+    ax2.plot(line_x - center[0], ana_sig_yy, color='#b2182b', linestyle='--',
+             lw=2.0, label='Analytical', zorder=10, alpha=0.9)
 
     # 绘制所有网格大小的MPM结果
     for i, (grid_size, exp_data) in enumerate(sorted(experiment_data.items())):
@@ -742,26 +799,30 @@ def create_summary_plot(results, output_dir):
         idx = np.argsort(mpm_x)
 
         # Sigma_XX (坐标平移：使中心点变为0)
-        ax1.plot(mpm_x[idx] - center[0], mpm_sig_xx[idx], '-o', color=color, linewidth=1.4, markersize=3, alpha=0.8, label=label)
-
-        # Sigma_YY (坐标平移：使中心点变为0)
-        ax2.plot(mpm_x[idx] - center[0], mpm_sig_yy[idx], '-o', color=color, linewidth=1.4, markersize=3, alpha=0.8, label=label)
+        ax1.plot(mpm_x[idx] - center[0], mpm_sig_xx[idx], '-o', color=color,
+                 linewidth=1.5, markersize=5, markerfacecolor='none',
+                 markeredgewidth=1.2, alpha=0.9, label=label)
+        ax2.plot(mpm_x[idx] - center[0], mpm_sig_yy[idx], '-o', color=color,
+                 linewidth=1.5, markersize=5, markerfacecolor='none',
+                 markeredgewidth=1.2, alpha=0.9, label=label)
 
     # 添加辅助线（相对坐标）
     for ax in [ax1, ax2]:
-        ax.axvline(-radius, color='k', linestyle=':', alpha=0.3, label='Inclusion boundary' if ax == ax2 else '')
+        ax.axvline(-radius, color='k', linestyle=':', alpha=0.3,
+                   label='Inclusion boundary' if ax == ax2 else '')
         ax.axvline(radius, color='k', linestyle=':', alpha=0.3)
-        ax.set_xlabel('Radial position', fontsize=12)
-        ax.set_ylabel('Stress (Pa)', fontsize=12)
+        ax.set_xlabel(r'Radial position (m)')
+        ax.set_ylabel(r'Stress (Pa)')
         ax.set_xlim(-3*radius, 3*radius)
         ax.grid(True, alpha=0.3)
-    ax2.legend(loc='upper center', fontsize=10)
+    ax1.set_ylabel(r'$\sigma_{xx}$ (Pa)')
+    ax2.set_ylabel(r'$\sigma_{yy}$ (Pa)')
+    ax2.legend(loc='upper center')
 
     plt.tight_layout()
 
-    # 保存汇总图
     summary_plot_path = os.path.join(output_dir, "summary_all_grids.pdf")
-    plt.savefig(summary_plot_path, dpi=200, bbox_inches='tight')
+    plt.savefig(summary_plot_path)
     plt.close()
 
     print(f"汇总对比图已保存到: {summary_plot_path}")
@@ -860,36 +921,33 @@ def create_integrated_error_plot(results, output_dir):
         integrated_errors_yy.append(integrated_error_yy)
         integrated_errors_total.append(integrated_error_total)
 
-    # 创建图形
-    _, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    _, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5))
 
-    # 左图: 分别显示σ_xx和σ_yy的误差
-    ax1.plot(grid_sizes, integrated_errors_xx, 'o-', linewidth=2, markersize=8,
-             label='$\sigma_{xx}$', color='blue')
-    ax1.plot(grid_sizes, integrated_errors_yy, 's-', linewidth=2, markersize=8,
-             label='$\sigma_{yy}$', color='green')
-    ax1.set_xlabel('Grid Size', fontsize=12)
-    ax1.set_ylabel('Normalized Integrated Error (Pa)', fontsize=12)
-    ax1.set_title('Normalized Integrated Error by Stress Component', fontsize=14)
-    ax1.legend(fontsize=11)
+    ax1.plot(grid_sizes, integrated_errors_xx, 'o-', linewidth=2, markersize=7,
+             markerfacecolor='none', markeredgewidth=1.5,
+             label=r'$\sigma_{xx}$', color='#3182bd')
+    ax1.plot(grid_sizes, integrated_errors_yy, 's-', linewidth=2, markersize=7,
+             markerfacecolor='none', markeredgewidth=1.5,
+             label=r'$\sigma_{yy}$', color='#2ca02c')
+    ax1.set_xlabel(r'Grid size')
+    ax1.set_ylabel(r'Normalized integrated error (Pa)')
+    ax1.legend()
     ax1.grid(True, alpha=0.3)
-    ax1.set_yscale('log')  # 使用对数坐标以便更好地观察趋势
+    ax1.set_yscale('log')
 
-    # 右图: 总体误差
-    ax2.plot(grid_sizes, integrated_errors_total, 'o-', linewidth=2, markersize=8,
-             color='red', label='Average Error')
-    ax2.set_xlabel('Grid Size', fontsize=12)
-    ax2.set_ylabel('Normalized Integrated Error (Pa)', fontsize=12)
-    ax2.set_title('Total Normalized Integrated Error', fontsize=14)
-    ax2.legend(fontsize=11)
+    ax2.plot(grid_sizes, integrated_errors_total, 'o-', linewidth=2, markersize=7,
+             markerfacecolor='none', markeredgewidth=1.5,
+             color='#b2182b', label='Average error')
+    ax2.set_xlabel(r'Grid size')
+    ax2.set_ylabel(r'Normalized integrated error (Pa)')
+    ax2.legend()
     ax2.grid(True, alpha=0.3)
-    ax2.set_yscale('log')  # 使用对数坐标
+    ax2.set_yscale('log')
 
     plt.tight_layout()
 
-    # 保存图形
     error_plot_path = os.path.join(output_dir, "integrated_error_comparison.pdf")
-    plt.savefig(error_plot_path, dpi=200, bbox_inches='tight')
+    plt.savefig(error_plot_path)
     plt.close()
 
     print(f"积分误差对比图已保存到: {error_plot_path}")
@@ -898,38 +956,33 @@ def create_integrated_error_plot(results, output_dir):
     # 计算网格间距 dx
     dx_values = [params['domain_h'] / gs for gs in grid_sizes]
     
-    _, ax_conv = plt.subplots(1, 1, figsize=(8, 6))
-    
-    # 绘制误差-网格间距关系 (log-log)
-    ax_conv.loglog(dx_values, integrated_errors_total, 'o-', linewidth=2, markersize=8,
-                   color='red', label='Total Error')
-    
-    # 拟合收敛率（在log空间中进行线性拟合）
+    _, ax_conv = plt.subplots(1, 1, figsize=(5.5, 4.5))
+
+    ax_conv.loglog(dx_values, integrated_errors_total, 'o-', linewidth=2, markersize=7,
+                   markerfacecolor='none', markeredgewidth=1.5,
+                   color='#b2182b', label='Total error')
+
     log_dx = np.log(dx_values)
     log_error = np.log(integrated_errors_total)
-    
-    # 线性拟合: log(error) = slope * log(dx) + intercept
     coeffs = np.polyfit(log_dx, log_error, 1)
     slope = coeffs[0]
     intercept = coeffs[1]
-    
-    # 绘制拟合直线
+
     dx_fit = np.array([min(dx_values), max(dx_values)])
     error_fit = np.exp(intercept) * dx_fit**slope
-    ax_conv.loglog(dx_fit, error_fit, '--', linewidth=2, color='gray',
-                   label=f'Slope = {slope:.2f}')
-    
-    ax_conv.set_xlabel('Grid Spacing $dx$ (m)', fontsize=12)
-    ax_conv.set_ylabel('Normalized Integrated Error (Pa)', fontsize=12)
-    ax_conv.set_title('Convergence Rate (log-log scale)', fontsize=14)
-    ax_conv.legend(fontsize=11)
+    ax_conv.loglog(dx_fit, error_fit, '--', linewidth=1.5, color='gray',
+                   label=rf'Slope $= {slope:.2f}$')
+
+    ax_conv.set_xlabel(r'Grid spacing $dx$ (m)')
+    ax_conv.set_ylabel(r'Normalized integrated error (Pa)')
+    ax_conv.minorticks_on()
+    ax_conv.legend()
     ax_conv.grid(True, alpha=0.3, which='both')
-    
+
     plt.tight_layout()
-    
-    # 保存收敛率图
+
     convergence_plot_path = os.path.join(output_dir, "convergence_rate.pdf")
-    plt.savefig(convergence_plot_path, dpi=200, bbox_inches='tight')
+    plt.savefig(convergence_plot_path)
     plt.close()
     
     print(f"收敛率图已保存到: {convergence_plot_path}")
@@ -951,7 +1004,65 @@ def create_integrated_error_plot(results, output_dir):
 
     print(f"积分误差数据已保存到: {error_data_path}")
 
+    # 加载各 grid 的计时数据并打印汇总表
+    _result_dirs = results.get('result_dirs', {})
+    timing_list = []
+    for _gs in grid_sizes:
+        _t = None
+        _gd = _result_dirs.get(_gs) or _result_dirs.get(str(_gs))
+        if _gd:
+            _tp = os.path.join(_gd, 'timing.json')
+            if os.path.exists(_tp):
+                with open(_tp) as _f:
+                    _t = json.load(_f)
+        timing_list.append(_t)
+
+    _use_schwarz = (timing_list[0].get('mode') == 'schwarz'
+                    if timing_list and timing_list[0] else False)
+    print_results_table(grid_sizes, dx_values,
+                        integrated_errors_xx, integrated_errors_yy,
+                        integrated_errors_total, slope,
+                        timing_list, _use_schwarz)
+
     return error_plot_path
+
+def print_results_table(grid_sizes, dx_values, integrated_errors_xx,
+                        integrated_errors_yy, integrated_errors_total,
+                        convergence_rate, timing_list=None, use_schwarz=False):
+    has_timing = timing_list and any(t is not None for t in timing_list)
+    if use_schwarz:
+        W = 104
+        hdr = (f"  {'Grid':>6}  {'dx':>8}  {'Err_xx(Pa)':>12}  {'Err_yy(Pa)':>12}"
+               f"  {'Total(Pa)':>12}  {'BigDom(s)':>10}  {'SmDom(s)':>10}"
+               f"  {'Other(s)':>9}  {'Total(s)':>9}")
+    else:
+        W = 88
+        hdr = (f"  {'Grid':>6}  {'dx':>8}  {'Err_xx(Pa)':>12}  {'Err_yy(Pa)':>12}"
+               f"  {'Total(Pa)':>12}  {'Solve(s)':>9}  {'Other(s)':>9}  {'Total(s)':>9}")
+
+    print("\n" + "=" * W)
+    print(f"  Eshelby 夹杂实验结果汇总 ({'Schwarz' if use_schwarz else 'Single Domain'})")
+    print("=" * W)
+    print(hdr)
+    print("-" * W)
+
+    for i, (gs, dx, exx, eyy, etot) in enumerate(zip(
+            grid_sizes, dx_values, integrated_errors_xx,
+            integrated_errors_yy, integrated_errors_total)):
+        t = timing_list[i] if (has_timing and timing_list) else None
+        if use_schwarz:
+            ts = (f"  {t['big_domain_solve_time']:>10.2f}  {t['small_domain_solve_time']:>10.2f}"
+                  f"  {t['other_time']:>9.2f}  {t['total_time']:>9.2f}") if t else \
+                 f"  {'N/A':>10}  {'N/A':>10}  {'N/A':>9}  {'N/A':>9}"
+        else:
+            ts = (f"  {t['solve_time']:>9.2f}  {t['other_time']:>9.2f}"
+                  f"  {t['total_time']:>9.2f}") if t else \
+                 f"  {'N/A':>9}  {'N/A':>9}  {'N/A':>9}"
+        print(f"  {gs:>6}  {dx:>8.4f}  {exx:>12.3e}  {eyy:>12.3e}  {etot:>12.3e}{ts}")
+
+    print("-" * W)
+    print(f"  收敛率 (log-log Total vs dx): {convergence_rate:.3f}")
+    print("=" * W + "\n")
 
 def load_experiment_results(output_dir):
     """
@@ -1108,6 +1219,8 @@ def main():
     # Schwarz模式
     parser.add_argument('--schwarz', action='store_true',
                        help='使用Schwarz域分解求解器')
+    parser.add_argument('--modify-domain1', action='store_true',
+                       help='Schwarz批量模式下同步缩放Domain1的分辨率（默认不修改Domain1）')
 
     # 分析模式参数
     parser.add_argument('--analyze-only', action='store_true',
@@ -1116,12 +1229,12 @@ def main():
     # 批量模式参数
     parser.add_argument('--batch-mode', action='store_true',
                        help='启用批量模式：运行多个不同网格分辨率的实验')
-    parser.add_argument('--grid-start', type=int, default=20,
-                       help='批量模式：起始网格大小 (默认: 40)')
-    parser.add_argument('--grid-end', type=int, default=80,
-                       help='批量模式：结束网格大小 (默认: 80)')
-    parser.add_argument('--grid-step', type=int, default=20,
-                       help='批量模式：网格大小步长 (默认: 20)')
+    parser.add_argument('--grid-start', type=int, default=30,
+                       help='批量模式：起始网格大小 (默认: 30)')
+    parser.add_argument('--grid-end', type=int, default=120,
+                       help='批量模式：结束网格大小 (默认: 120)')
+    parser.add_argument('--grid-step', type=int, default=30,
+                       help='批量模式：网格大小步长 (默认: 30)')
 
     args = parser.parse_args()
 

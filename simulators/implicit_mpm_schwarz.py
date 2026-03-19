@@ -5,12 +5,17 @@ from tools.particle_state_manager import ParticleStateManager
 from tools.performance_stats import SchwarzPerformanceStats
 
 from Util.Recorder import *
+from Util.Visualization import cv2_draw_particles, cv2_draw_particles_colored, FPSCounter
+from Util.ExperimentDir import create_experiment_directory
+from Util.StressIO import is_point_in_regions, compute_von_mises_stress, save_stress_frame, write_stress_stats_json
 
 import matplotlib.pyplot as plt
 import time
 import gc
 import math
 import numpy as np
+import cv2
+
 
 _PROJECT_PHI = math.radians(28.0)
 _PROJECT_THETA = math.radians(32.0)
@@ -160,8 +165,12 @@ class MPM_Schwarz:
         self.render_scale = 1.0 / _d1_max_side
 
         # 只在非无GUI模式下初始化GUI
+        self.gui = None  # ti.GUI 不再使用
+        self._win_name = "Implicit MPM Schwarz"
+        self._fps_counter = FPSCounter()  # FPS 计数器
         if not self.no_gui:
-            self.gui = ti.GUI("Implicit MPM Schwarz", res=(800, 800), fast_gui=True)
+            cv2.namedWindow(self._win_name, cv2.WINDOW_AUTOSIZE)
+            self._cv2_running = True
             self._pos1_np = None
             self._pos2_np = None
             self._color1_np = None
@@ -176,7 +185,7 @@ class MPM_Schwarz:
             self._init_render_fields()
             self._ensure_render_buffers()
         else:
-            self.gui = None
+            self._cv2_running = False
             self._pos1_np = None
             self._pos2_np = None
             self._color1_np = None
@@ -909,7 +918,7 @@ class MPM_Schwarz:
 
     def render(self):
         # 在无GUI模式下跳过渲染
-        if self.no_gui or self.gui is None:
+        if self.no_gui or not self._cv2_running:
             return
 
         if self.mem_profiler:
@@ -945,53 +954,67 @@ class MPM_Schwarz:
             else:
                 self.move_mass_grid_count2[None] = 0
 
-        # 使用ti.GUI的API（避免Vulkan依赖）
-        self.gui.clear(0x112F41)
+        # 用 cv2 渲染（非阻塞，避免 WSL2 XSync 卡死）
+        img = np.full((800, 800, 3), (65, 47, 17), dtype=np.uint8)  # 背景色 0x112F41
 
-        # 渲染Domain1粒子
+        # 渲染Domain1粒子（逐粒子颜色）
         if self.Domain1.particles.x.shape[0] > 0:
-            self.gui.circles(self._pos1_np, radius=2, color=self._color1_np)
+            cv2_draw_particles_colored(img, self._pos1_np, self._color1_np, radius=2)
 
-        # 渲染Domain2粒子
+        # 渲染Domain2粒子（逐粒子颜色）
         if self.Domain2.particles.x.shape[0] > 0:
-            self.gui.circles(self._pos2_np, radius=2, color=self._color2_np)
+            cv2_draw_particles_colored(img, self._pos2_np, self._color2_np, radius=2)
 
-        # 绘制grid网格
+        # 绘制grid网格线
         if self.visualize_grid:
-            # 使用预创建的网格线条字段（顶点成对排列）
             if self._grid_vertices1_np is not None:
                 verts = self._grid_vertices1_np
-                self.gui.lines(verts[::2], verts[1::2], radius=1, color=0x068587)
+                p1s = (verts[::2] * 800).astype(np.int32)
+                p2s = (verts[1::2] * 800).astype(np.int32)
+                p1s[:, 1] = 800 - p1s[:, 1]
+                p2s[:, 1] = 800 - p2s[:, 1]
+                for p1, p2 in zip(p1s, p2s):
+                    cv2.line(img, tuple(p1), tuple(p2), (135, 133, 6), 1)  # 0x068587
 
             if self._grid_vertices2_np is not None:
                 verts = self._grid_vertices2_np
-                self.gui.lines(verts[::2], verts[1::2], radius=1, color=0xED553B)
+                p1s = (verts[::2] * 800).astype(np.int32)
+                p2s = (verts[1::2] * 800).astype(np.int32)
+                p1s[:, 1] = 800 - p1s[:, 1]
+                p2s[:, 1] = 800 - p2s[:, 1]
+                for p1, p2 in zip(p1s, p2s):
+                    cv2.line(img, tuple(p1), tuple(p2), (59, 85, 237), 1)  # 0xED553B
 
         # 绘制边界网格点
         if self.visualize_boundary_grid and self.visualize_grid:
-            # 绘制is_boundary_grid标记的网格点，不同domain用不同颜色
             if self.boundary_grid_points1 is not None and self.boundary_grid_count1[None] > 0:
                 self._export_boundary_points_domain1(self._boundary_grid_points1_np)
                 pts = self._boundary_grid_points1_np[:self.boundary_grid_count1[None]]
-                self.gui.circles(pts, radius=3, color=0xFF9999)  # 浅红色 - Domain1
+                cv2_draw_particles(img, pts, radius=3, bgr_color=(153, 153, 255))  # 0xFF9999
 
             if self.boundary_grid_points2 is not None and self.boundary_grid_count2[None] > 0:
                 self._export_boundary_points_domain2(self._boundary_grid_points2_np)
                 pts = self._boundary_grid_points2_np[:self.boundary_grid_count2[None]]
-                self.gui.circles(pts, radius=3, color=0x9999FF)  # 浅蓝色 - Domain2
+                cv2_draw_particles(img, pts, radius=3, bgr_color=(255, 153, 153))  # 0x9999FF
 
-            # 绘制move_mass_field > 0的网格点
             if self.move_mass_grid_points1 is not None and self.move_mass_grid_count1[None] > 0:
                 self._export_move_mass_points_domain1(self._move_mass_grid_points1_np)
                 pts = self._move_mass_grid_points1_np[:self.move_mass_grid_count1[None]]
-                self.gui.circles(pts, radius=4, color=0xFF00FF)  # 洋红色
+                cv2_draw_particles(img, pts, radius=4, bgr_color=(255, 0, 255))  # 0xFF00FF
 
             if self.move_mass_grid_points2 is not None and self.move_mass_grid_count2[None] > 0:
                 self._export_move_mass_points_domain2(self._move_mass_grid_points2_np)
                 pts = self._move_mass_grid_points2_np[:self.move_mass_grid_count2[None]]
-                self.gui.circles(pts, radius=4, color=0xFF00FF)  # 洋红色
+                cv2_draw_particles(img, pts, radius=4, bgr_color=(255, 0, 255))  # 0xFF00FF
 
-        self.gui.show()
+        self._fps_counter.draw_on_image(img)  # 显示 FPS
+        cv2.imshow(self._win_name, img)
+        self._fps_counter.update()  # 更新 FPS 计数器
+        key = cv2.waitKey(1)
+        if key == ord('q') or key == 27:
+            self._cv2_running = False
+        elif cv2.getWindowProperty(self._win_name, cv2.WND_PROP_VISIBLE) < 1:
+            self._cv2_running = False
         # 合并两域粒子数据
         if self.recorder is None:
             if self.mem_profiler:
@@ -1018,30 +1041,8 @@ class MPM_Schwarz:
             self.mem_profiler.checkpoint(f"render_frame_{self.current_frame}_end")
     
     def _create_experiment_directory(self, config_path=None):
-        """创建实验目录并备份配置文件"""
-        import json
-        import os
-        import shutil
-        from datetime import datetime
-
-        # 创建带时间戳的主实验目录
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_output_dir = "experiment_results"
-        experiment_name = f"schwarz_{timestamp}"
-        experiment_dir = os.path.join(base_output_dir, experiment_name)
-        os.makedirs(experiment_dir, exist_ok=True)
-
-        # 备份配置文件
-        if config_path and os.path.exists(config_path):
-            config_backup_path = os.path.join(experiment_dir, "config_backup.json")
-            shutil.copy2(config_path, config_backup_path)
-            print(f"配置文件已备份到: {config_backup_path}")
-
-        # 创建stress_data子目录
-        stress_data_dir = os.path.join(experiment_dir, "stress_data")
-        os.makedirs(stress_data_dir, exist_ok=True)
-
-        return experiment_dir, stress_data_dir
+        """创建实验目录并备份配置文件（委托给 Util.ExperimentDir）"""
+        return create_experiment_directory("schwarz", config_path)
 
     def save_stress_data(self, frame_number):
         """保存两个域的应力数据"""
@@ -1099,6 +1100,10 @@ class MPM_Schwarz:
         if not hasattr(self, '_experiment_dir') or not hasattr(self, '_stress_data_dir'):
             self._experiment_dir, self._stress_data_dir = self._create_experiment_directory(self.config_path)
 
+        # 计算两个域的von Mises应力（使用Util函数）
+        von_mises_stress1 = compute_von_mises_stress(filtered_stress_data1, self.Domain1.dim)
+        von_mises_stress2 = compute_von_mises_stress(filtered_stress_data2, self.Domain2.dim)
+
         # 为当前帧创建单独的子目录
         frame_dir = f"{self._stress_data_dir}/frame_{frame_number}"
         os.makedirs(frame_dir, exist_ok=True)
@@ -1108,11 +1113,13 @@ class MPM_Schwarz:
         np.save(f"{frame_dir}/domain1_stress.npy", filtered_stress_data1)
         np.save(f"{frame_dir}/domain1_positions.npy", filtered_positions1)
         np.save(f"{frame_dir}/domain1_boundary_flags.npy", filtered_boundary_flags1)
+        np.save(f"{frame_dir}/domain1_von_mises.npy", von_mises_stress1)
 
         # Domain2数据
         np.save(f"{frame_dir}/domain2_stress.npy", filtered_stress_data2)
         np.save(f"{frame_dir}/domain2_positions.npy", filtered_positions2)
         np.save(f"{frame_dir}/domain2_boundary_flags.npy", filtered_boundary_flags2)
+        np.save(f"{frame_dir}/domain2_von_mises.npy", von_mises_stress2)
 
         # 保存两个域的网格应力（基于各自F_grid）和网格质量
         d1_grid_stress, d1_grid_mass, d1_grid_meta = self.Domain1.solver.get_grid_stress_from_F_grid_numpy()
@@ -1156,24 +1163,6 @@ class MPM_Schwarz:
                 print(f"Saved Domain2 actual masses: {actual_masses2}")
         except Exception as e:
             print(f"Warning: Could not save Domain2 actual masses: {e}")
-        
-        # 计算两个域的von Mises应力
-        def compute_von_mises_stress(stress_data, dim):
-            von_mises_stress = []
-            for i in range(stress_data.shape[0]):
-                if dim == 2:
-                    s = stress_data[i]
-                    # 2D von Mises应力
-                    von_mises = np.sqrt(s[0,0]**2 + s[1,1]**2 - s[0,0]*s[1,1] + 3*s[0,1]**2)
-                else:
-                    # 3D von Mises应力
-                    s = stress_data[i]
-                    von_mises = np.sqrt(0.5*((s[0,0]-s[1,1])**2 + (s[1,1]-s[2,2])**2 + (s[2,2]-s[0,0])**2) + 3*(s[0,1]**2 + s[1,2]**2 + s[2,0]**2))
-                von_mises_stress.append(von_mises)
-            return von_mises_stress
-        
-        von_mises_stress1 = compute_von_mises_stress(filtered_stress_data1, self.Domain1.dim)
-        von_mises_stress2 = compute_von_mises_stress(filtered_stress_data2, self.Domain2.dim)
         
         # 保存统计信息
         stats = {
@@ -1383,7 +1372,7 @@ if __name__ == "__main__":
             # GUI模式：使用传统的GUI循环
             _render_interval = 1.0 / mpm.render_fps
             _last_render_t = 0.0
-            while mpm.gui and mpm.gui.running:
+            while mpm._cv2_running:
                 mpm.step()
                 _now = time.perf_counter()
                 if _now - _last_render_t >= _render_interval:

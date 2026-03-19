@@ -3,13 +3,19 @@
 Schwarz 域分解方法的性能统计与可视化工具
 """
 
+import sys
 import time
 import numpy as np
 from copy import deepcopy
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # 使用非交互式后端避免 macOS 上的 matplotlib 错误
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
+from tools.plot_style import apply_cmame_style
+apply_cmame_style()
 from collections import defaultdict
 import json
 import os
@@ -180,29 +186,29 @@ class SchwarzPerformanceStats:
         small_means = np.array(small_means)
         small_stds = np.array(small_stds)
 
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5))
 
-        # 左图：平均值带误差带
         ax1.fill_between(schwarz_iters, big_means - big_stds, big_means + big_stds,
-                         color='blue', alpha=0.2)
-        ax1.plot(schwarz_iters, big_means, 'b-o', label='Big Domain', linewidth=2, markersize=6)
+                         color='#3182bd', alpha=0.15)
+        ax1.plot(schwarz_iters, big_means, 'o-', color='#3182bd',
+                 label='Big domain', linewidth=2, markersize=6,
+                 markerfacecolor='none', markeredgewidth=1.5)
 
         ax1.fill_between(schwarz_iters, small_means - small_stds, small_means + small_stds,
-                         color='red', alpha=0.2)
-        ax1.plot(schwarz_iters, small_means, 'r-s', label='Small Domain', linewidth=2, markersize=6)
+                         color='#b2182b', alpha=0.15)
+        ax1.plot(schwarz_iters, small_means, 's-', color='#b2182b',
+                 label='Small domain', linewidth=2, markersize=6,
+                 markerfacecolor='none', markeredgewidth=1.5)
 
-        ax1.set_xlabel('Schwarz Iteration', fontsize=12)
-        ax1.set_ylabel('Newton Iterations (mean ± std)', fontsize=12)
-        ax1.set_title(f'Average Newton Iterations vs Schwarz Iteration\n(Aggregated over {len(self.frame_data)} frames)', fontsize=14)
+        ax1.set_xlabel(r'Schwarz iteration')
+        ax1.set_ylabel(r'Newton iterations (mean $\pm$ std)')
         ax1.legend()
         ax1.grid(True, alpha=0.3)
         ax1.set_xticks(schwarz_iters)
 
-        # 右图：样本数量（每个 Schwarz 迭代位置有多少帧的数据）
-        ax2.bar(schwarz_iters, sample_counts, color='#2ecc71', alpha=0.7, edgecolor='black')
-        ax2.set_xlabel('Schwarz Iteration', fontsize=12)
-        ax2.set_ylabel('Number of Frames', fontsize=12)
-        ax2.set_title('Sample Count per Schwarz Iteration\n(How many frames reached this iteration)', fontsize=14)
+        ax2.bar(schwarz_iters, sample_counts, color='#2ca02c', alpha=0.7, edgecolor='black')
+        ax2.set_xlabel(r'Schwarz iteration')
+        ax2.set_ylabel(r'Number of frames')
         ax2.grid(True, alpha=0.3, axis='y')
         ax2.set_xticks(schwarz_iters)
 
@@ -240,17 +246,17 @@ class SchwarzPerformanceStats:
             print(f"Frame {frame_idx} has no Schwarz iterations")
             return
 
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(5.5, 4.5))
 
         ax.plot(schwarz_iters, frame['big_domain_newton_iters'],
-                'b-o', label='Big Domain (dt_large)', linewidth=2, markersize=8)
+                'o-', color='#3182bd', label='Big domain', linewidth=2, markersize=6,
+                markerfacecolor='none', markeredgewidth=1.5)
         ax.plot(schwarz_iters, frame['small_domain_newton_iters'],
-                'r-s', label='Small Domain (dt_small, accumulated)', linewidth=2, markersize=8)
+                's-', color='#b2182b', label='Small domain', linewidth=2, markersize=6,
+                markerfacecolor='none', markeredgewidth=1.5)
 
-        ax.set_xlabel('Schwarz Iteration', fontsize=12)
-        ax.set_ylabel('Newton Iterations', fontsize=12)
-        actual_frame_idx = frame_idx if frame_idx >= 0 else len(self.frame_data) + frame_idx
-        ax.set_title(f'Newton Iterations vs Schwarz Iteration (Frame {actual_frame_idx})', fontsize=14)
+        ax.set_xlabel(r'Schwarz iteration')
+        ax.set_ylabel(r'Newton iterations')
         ax.legend()
         ax.grid(True, alpha=0.3)
         ax.set_xticks(range(1, frame['schwarz_iters'] + 1))
@@ -290,10 +296,10 @@ class SchwarzPerformanceStats:
 
         ax.semilogy(iters, vals, 'g-o', linewidth=2, markersize=8)
 
-        ax.set_xlabel('Schwarz Iteration', fontsize=12)
-        ax.set_ylabel('Residual (log scale)', fontsize=12)
+        ax.set_xlabel('Schwarz Iteration')
+        ax.set_ylabel('Residual (log scale)')
         actual_frame_idx = frame_idx if frame_idx >= 0 else len(self.frame_data) + frame_idx
-        ax.set_title(f'Schwarz Convergence (Frame {actual_frame_idx})', fontsize=14)
+        ax.set_title(f'Schwarz Convergence (Frame {actual_frame_idx})')
         ax.grid(True, alpha=0.3)
 
         plt.tight_layout()
@@ -333,9 +339,9 @@ class SchwarzPerformanceStats:
             ax.scatter(unconverged, [schwarz_counts[i] for i in unconverged],
                       c='red', s=50, marker='x', label='Unconverged', zorder=5)
 
-        ax.set_xlabel('Frame', fontsize=12)
-        ax.set_ylabel('Schwarz Iterations', fontsize=12)
-        ax.set_title('Schwarz Iterations Over Time', fontsize=14)
+        ax.set_xlabel('Frame')
+        ax.set_ylabel('Schwarz Iterations')
+        ax.set_title('Schwarz Iterations Over Time')
         ax.legend()
         ax.grid(True, alpha=0.3)
 
@@ -375,9 +381,9 @@ class SchwarzPerformanceStats:
                      colors=['#3498db', '#e74c3c'], alpha=0.7)
         ax.plot(frames, total_newton, 'k-', linewidth=1.5, label='Total')
 
-        ax.set_xlabel('Frame', fontsize=12)
-        ax.set_ylabel('Total Newton Iterations', fontsize=12)
-        ax.set_title('Newton Iterations per Frame (Stacked)', fontsize=14)
+        ax.set_xlabel('Frame')
+        ax.set_ylabel('Total Newton Iterations')
+        ax.set_title('Newton Iterations per Frame (Stacked)')
         ax.legend(loc='upper right')
         ax.grid(True, alpha=0.3)
 
@@ -406,16 +412,17 @@ class SchwarzPerformanceStats:
 
         rates = [residuals[i+1] / residuals[i] for i in range(len(residuals)-1)]
 
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(5.5, 4.5))
 
-        ax.plot(range(2, len(residuals) + 1), rates, 'b-o', linewidth=2, markersize=8)
-        ax.axhline(y=1.0, color='r', linestyle='--', label='Rate = 1 (no convergence)')
-        ax.axhline(y=0.5, color='g', linestyle=':', alpha=0.7, label='Rate = 0.5 (good)')
+        ax.plot(range(2, len(residuals) + 1), rates, 'o-', color='#3182bd',
+                linewidth=2, markersize=6, markerfacecolor='none', markeredgewidth=1.5)
+        ax.axhline(y=1.0, color='#b2182b', linestyle='--', label='Rate $= 1$ (no convergence)')
+        ax.axhline(y=0.5, color='#2ca02c', linestyle=':', alpha=0.8, label='Rate $= 0.5$ (good)')
 
-        ax.set_xlabel('Schwarz Iteration', fontsize=12)
-        ax.set_ylabel('Convergence Rate (r_{k+1}/r_k)', fontsize=12)
+        ax.set_xlabel(r'Schwarz iteration')
+        ax.set_ylabel(r'Convergence rate ($r_{k+1}/r_k$)')
         actual_frame_idx = frame_idx if frame_idx >= 0 else len(self.frame_data) + frame_idx
-        ax.set_title(f'Schwarz Convergence Rate (Frame {actual_frame_idx})', fontsize=14)
+        ax.set_title(f'Schwarz Convergence Rate (Frame {actual_frame_idx})')
         ax.legend()
         ax.grid(True, alpha=0.3)
         ax.set_ylim([0, min(2, max(rates) * 1.2)])
@@ -449,9 +456,9 @@ class SchwarzPerformanceStats:
         ax1.plot(frames, big_times, 'b-', label='Big Domain Solve', alpha=0.7)
         ax1.plot(frames, small_times, 'r-', label='Small Domain Solve', alpha=0.7)
         ax1.plot(frames, total_times, 'k-', label='Total Frame Time', linewidth=2)
-        ax1.set_xlabel('Frame', fontsize=12)
-        ax1.set_ylabel('Time (s)', fontsize=12)
-        ax1.set_title('Solve Time per Frame', fontsize=14)
+        ax1.set_xlabel('Frame')
+        ax1.set_ylabel('Time (s)')
+        ax1.set_title('Solve Time per Frame')
         ax1.legend(loc='upper right')
         ax1.grid(True, alpha=0.3)
 
@@ -473,7 +480,7 @@ class SchwarzPerformanceStats:
         if non_zero:
             sizes, labels, colors = zip(*non_zero)
             ax2.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
-        ax2.set_title('Overall Time Distribution', fontsize=14)
+        ax2.set_title('Overall Time Distribution')
 
         plt.tight_layout()
         if save_path:
@@ -505,9 +512,9 @@ class SchwarzPerformanceStats:
                     color='#3498db', alpha=0.7, edgecolor='black')
             ax1.axvline(np.mean(all_big_iters), color='red', linestyle='--',
                        label=f'Mean: {np.mean(all_big_iters):.1f}')
-            ax1.set_xlabel('Newton Iterations', fontsize=12)
-            ax1.set_ylabel('Frequency', fontsize=12)
-            ax1.set_title('Big Domain Newton Iterations Distribution', fontsize=14)
+            ax1.set_xlabel('Newton Iterations')
+            ax1.set_ylabel('Frequency')
+            ax1.set_title('Big Domain Newton Iterations Distribution')
             ax1.legend()
             ax1.grid(True, alpha=0.3)
 
@@ -516,9 +523,9 @@ class SchwarzPerformanceStats:
             ax2.hist(all_small_iters, bins=20, color='#e74c3c', alpha=0.7, edgecolor='black')
             ax2.axvline(np.mean(all_small_iters), color='blue', linestyle='--',
                        label=f'Mean: {np.mean(all_small_iters):.1f}')
-            ax2.set_xlabel('Newton Iterations (accumulated)', fontsize=12)
-            ax2.set_ylabel('Frequency', fontsize=12)
-            ax2.set_title('Small Domain Newton Iterations Distribution', fontsize=14)
+            ax2.set_xlabel('Newton Iterations (accumulated)')
+            ax2.set_ylabel('Frequency')
+            ax2.set_title('Small Domain Newton Iterations Distribution')
             ax2.legend()
             ax2.grid(True, alpha=0.3)
 
@@ -558,16 +565,16 @@ class SchwarzPerformanceStats:
                 ax.semilogy(range(1, len(residuals)+1), residuals,
                            '-o', color=color, alpha=0.6, markersize=4, linewidth=1)
 
-        ax.set_xlabel('Schwarz Iteration', fontsize=12)
-        ax.set_ylabel('Residual (log scale)', fontsize=12)
-        ax.set_title(f'Schwarz Convergence Curves ({len(frame_indices)} frames)', fontsize=14)
+        ax.set_xlabel('Schwarz Iteration')
+        ax.set_ylabel('Residual (log scale)')
+        ax.set_title(f'Schwarz Convergence Curves ({len(frame_indices)} frames)')
         ax.grid(True, alpha=0.3)
 
         # 添加 colorbar
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=n_frames-1))
         sm.set_array([])
         cbar = plt.colorbar(sm, ax=ax)
-        cbar.set_label('Frame Index', fontsize=12)
+        cbar.set_label('Frame Index')
 
         plt.tight_layout()
         if save_path:
@@ -811,9 +818,9 @@ class SingleDomainPerformanceStats:
         ax.plot(frames, moving_avg, 'r-', linewidth=2,
                 label=f'Moving Average (window={window_size})')
 
-        ax.set_xlabel('Frame', fontsize=12)
-        ax.set_ylabel('Newton Iterations', fontsize=12)
-        ax.set_title('Newton Iterations Over Time', fontsize=14)
+        ax.set_xlabel('Frame')
+        ax.set_ylabel('Newton Iterations')
+        ax.set_title('Newton Iterations Over Time')
         ax.legend()
         ax.grid(True, alpha=0.3)
 
@@ -849,9 +856,9 @@ class SingleDomainPerformanceStats:
             ax.hist(newton_counts, bins=bins, color='#3498db', alpha=0.7, edgecolor='black')
             ax.axvline(np.mean(newton_counts), color='red', linestyle='--',
                        label=f'Mean: {np.mean(newton_counts):.1f}')
-            ax.set_xlabel('Newton Iterations', fontsize=12)
-            ax.set_ylabel('Frequency', fontsize=12)
-            ax.set_title('Newton Iterations Distribution', fontsize=14)
+            ax.set_xlabel('Newton Iterations')
+            ax.set_ylabel('Frequency')
+            ax.set_title('Newton Iterations Distribution')
             ax.legend()
             ax.grid(True, alpha=0.3)
 
@@ -880,9 +887,9 @@ class SingleDomainPerformanceStats:
         # 左图：时间随帧变化
         ax1.plot(frames, solve_times, 'b-', label='Solve Time', alpha=0.7)
         ax1.plot(frames, total_times, 'k-', label='Total Frame Time', linewidth=2)
-        ax1.set_xlabel('Frame', fontsize=12)
-        ax1.set_ylabel('Time (s)', fontsize=12)
-        ax1.set_title('Time per Frame', fontsize=14)
+        ax1.set_xlabel('Frame')
+        ax1.set_ylabel('Time (s)')
+        ax1.set_title('Time per Frame')
         ax1.legend()
         ax1.grid(True, alpha=0.3)
 
@@ -899,7 +906,7 @@ class SingleDomainPerformanceStats:
         if non_zero:
             sizes, labels, colors = zip(*non_zero)
             ax2.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
-        ax2.set_title('Overall Time Distribution', fontsize=14)
+        ax2.set_title('Overall Time Distribution')
 
         plt.tight_layout()
         if save_path:
@@ -940,9 +947,9 @@ class SingleDomainPerformanceStats:
             else:
                 print("Warning: Newton iterations have no variation, skipping linear fit")
 
-        ax.set_xlabel('Newton Iterations', fontsize=12)
-        ax.set_ylabel('Solve Time (ms)', fontsize=12)
-        ax.set_title('Newton Iterations vs Solve Time', fontsize=14)
+        ax.set_xlabel('Newton Iterations')
+        ax.set_ylabel('Solve Time (ms)')
+        ax.set_title('Newton Iterations vs Solve Time')
         ax.legend()
         ax.grid(True, alpha=0.3)
 

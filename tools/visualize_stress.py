@@ -2,14 +2,19 @@
 """
 应力数据可视化工具
 """
-import numpy as np
 import sys
+import numpy as np
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import matplotlib
 # 只在保存文件模式或all-frames模式下使用Agg后端（内存优化）
 # 否则使用默认后端以支持交互式显示
 if '--save' in sys.argv or '--all-frames' in sys.argv:
     matplotlib.use('Agg')  # Non-interactive backend for lower memory overhead
 import matplotlib.pyplot as plt
+
+from tools.plot_style import apply_cmame_style
+apply_cmame_style()
 import matplotlib.colors as colors
 from matplotlib.colors import LinearSegmentedColormap
 from scipy.spatial import cKDTree
@@ -682,7 +687,7 @@ def visualize_stress_2d(positions, von_mises, frame_number, save_path=None, use_
                            cmap=final_cmap, s=particle_size, alpha=0.8,
                            norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none')
         ax.set_title(f'von Mises Stress Distribution (Log Scale, Frame {frame_number})')
-        cbar_label = 'von Mises Stress (Log)'
+        cbar_label = r'von Mises stress (Pa, log scale)'
     else:
         # von Mises stress (linear scale)
         vm_vmax = max_stress if max_stress is not None else np.max(von_mises)
@@ -690,10 +695,10 @@ def visualize_stress_2d(positions, von_mises, frame_number, save_path=None, use_
                            cmap=final_cmap, s=particle_size, alpha=0.8,
                            vmax=vm_vmax, edgecolors='none')
         ax.set_title(f'von Mises Stress Distribution (Frame {frame_number})')
-        cbar_label = 'von Mises Stress'
+        cbar_label = r'von Mises stress (Pa)'
 
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
+    ax.set_xlabel(r'$x$ (m)')
+    ax.set_ylabel(r'$y$ (m)')
     ax.set_aspect('equal')
     plt.colorbar(scatter, ax=ax, label=cbar_label)
 
@@ -776,7 +781,7 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress
                               c=d1_vm_positive, cmap=final_cmap, s=d1_particle_size, alpha=0.8,
                               norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none')
         ax1.set_title(f'Domain1 von Mises Stress (Log Scale, Frame {frame_number})')
-        cbar1_label = 'von Mises Stress (Log)'
+        cbar1_label = r'von Mises stress (Pa, log scale)'
 
         # Domain2 von Mises stress (log scale)
         d2_vm_positive = d2_von_mises.copy()
@@ -785,7 +790,7 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress
                               c=d2_vm_positive, cmap=final_cmap, s=d2_particle_size, alpha=0.8,
                               norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none')
         ax2.set_title(f'Domain2 von Mises Stress (Log Scale, Frame {frame_number})')
-        cbar2_label = 'von Mises Stress (Log)'
+        cbar2_label = r'von Mises stress (Pa, log scale)'
     else:
         # Linear scale
         vm_vmin = np.min(all_von_mises)
@@ -796,22 +801,22 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress
                               c=d1_von_mises, cmap=final_cmap, s=d1_particle_size, alpha=0.8,
                               vmin=vm_vmin, vmax=vm_vmax, edgecolors='none')
         ax1.set_title(f'Domain1 von Mises Stress (Frame {frame_number})')
-        cbar1_label = 'von Mises Stress'
+        cbar1_label = r'von Mises stress (Pa)'
 
         # Domain2 von Mises stress (linear scale)
         scatter2 = ax2.scatter(d2_data['positions'][:, 0], d2_data['positions'][:, 1],
                               c=d2_von_mises, cmap=final_cmap, s=d2_particle_size, alpha=0.8,
                               vmin=vm_vmin, vmax=vm_vmax, edgecolors='none')
         ax2.set_title(f'Domain2 von Mises Stress (Frame {frame_number})')
-        cbar2_label = 'von Mises Stress'
+        cbar2_label = r'von Mises stress (Pa)'
     
-    ax1.set_xlabel('X')
-    ax1.set_ylabel('Y')
+    ax1.set_xlabel(r'$x$ (m)')
+    ax1.set_ylabel(r'$y$ (m)')
     ax1.set_aspect('equal')
     plt.colorbar(scatter1, ax=ax1, label=cbar1_label)
 
-    ax2.set_xlabel('X')
-    ax2.set_ylabel('Y')
+    ax2.set_xlabel(r'$x$ (m)')
+    ax2.set_ylabel(r'$y$ (m)')
     ax2.set_aspect('equal')
     plt.colorbar(scatter2, ax=ax2, label=cbar2_label)
     
@@ -901,7 +906,7 @@ def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=Fals
                                norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax),
                                edgecolors='none', label='Domain2')
         ax.set_title(f'Dual Domain von Mises Stress Distribution (Log Scale, Frame {frame_number})')
-        cbar_label = 'von Mises Stress (Log)'
+        cbar_label = r'von Mises stress (Pa, log scale)'
     else:
         # Linear scale范围
         vm_vmin = np.min(all_von_mises)
@@ -917,10 +922,10 @@ def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=Fals
                                vmin=vm_vmin, vmax=vm_vmax,
                                edgecolors='none', label='Domain2')
         ax.set_title(f'Dual Domain von Mises Stress Distribution (Frame {frame_number})')
-        cbar_label = 'von Mises Stress'
+        cbar_label = r'von Mises stress (Pa)'
 
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
+    ax.set_xlabel(r'$x$ (m)')
+    ax.set_ylabel(r'$y$ (m)')
     ax.set_aspect('equal')
     ax.legend()
     plt.colorbar(scatter_d1, ax=ax, label=cbar_label)
@@ -973,18 +978,18 @@ def visualize_stress_3d(positions, von_mises, frame_number, save_path=None, use_
                              c=von_mises_positive, cmap=final_cmap, s=particle_size, alpha=0.8,
                              norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none')
         ax.set_title(f'von Mises Stress Distribution 3D (Log Scale, Frame {frame_number})')
-        cbar_label = 'von Mises Stress (Log)'
+        cbar_label = r'von Mises stress (Pa, log scale)'
     else:
         vm_vmax = max_stress if max_stress is not None else np.max(von_mises)
         scatter = ax.scatter(positions[:, 0], positions[:, 1], positions[:, 2],
                              c=von_mises, cmap=final_cmap, s=particle_size, alpha=0.8,
                              vmax=vm_vmax, edgecolors='none')
         ax.set_title(f'von Mises Stress Distribution 3D (Frame {frame_number})')
-        cbar_label = 'von Mises Stress'
+        cbar_label = r'von Mises stress (Pa)'
 
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
+    ax.set_xlabel(r'$x$ (m)')
+    ax.set_ylabel(r'$y$ (m)')
+    ax.set_zlabel(r'$z$ (m)')
     fig.colorbar(scatter, ax=ax, label=cbar_label, shrink=0.6)
 
     plt.tight_layout()
@@ -1066,7 +1071,7 @@ def visualize_schwarz_stress_3d(data_dict, save_path=None, use_log=False, stress
                                c=d2_vm_pos, cmap=final_cmap, s=d2_particle_size, alpha=0.8,
                                norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none')
         ax2.set_title(f'Domain2 von Mises Stress (Log Scale, Frame {frame_number})')
-        cbar_label = 'von Mises Stress (Log)'
+        cbar_label = r'von Mises stress (Pa, log scale)'
     else:
         vm_vmin = np.min(all_von_mises)
         vm_vmax = max_stress if max_stress is not None else np.max(all_von_mises)
@@ -1079,12 +1084,12 @@ def visualize_schwarz_stress_3d(data_dict, save_path=None, use_log=False, stress
                                c=d2_von_mises, cmap=final_cmap, s=d2_particle_size, alpha=0.8,
                                vmin=vm_vmin, vmax=vm_vmax, edgecolors='none')
         ax2.set_title(f'Domain2 von Mises Stress (Frame {frame_number})')
-        cbar_label = 'von Mises Stress'
+        cbar_label = r'von Mises stress (Pa)'
 
     for ax in (ax1, ax2):
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Z')
+        ax.set_xlabel(r'$x$ (m)')
+        ax.set_ylabel(r'$y$ (m)')
+        ax.set_zlabel(r'$z$ (m)')
 
     fig.colorbar(scatter1, ax=ax1, label=cbar_label, shrink=0.6)
     fig.colorbar(scatter2, ax=ax2, label=cbar_label, shrink=0.6)
@@ -1166,7 +1171,7 @@ def visualize_schwarz_stress_combined_3d(data_dict, save_path=None, use_log=Fals
                                 c=d2_vm_pos, cmap=final_cmap, s=d2_particle_size, alpha=0.8,
                                 norm=LogNorm(vmin=vm_vmin, vmax=vm_vmax), edgecolors='none', label='Domain2')
         ax.set_title(f'Dual Domain von Mises Stress 3D (Log Scale, Frame {frame_number})')
-        cbar_label = 'von Mises Stress (Log)'
+        cbar_label = r'von Mises stress (Pa, log scale)'
     else:
         vm_vmin = np.min(all_von_mises)
         vm_vmax = max_stress if max_stress is not None else np.max(all_von_mises)
@@ -1178,11 +1183,11 @@ def visualize_schwarz_stress_combined_3d(data_dict, save_path=None, use_log=Fals
                                 c=d2_von_mises, cmap=final_cmap, s=d2_particle_size, alpha=0.8,
                                 vmin=vm_vmin, vmax=vm_vmax, edgecolors='none', label='Domain2')
         ax.set_title(f'Dual Domain von Mises Stress 3D (Frame {frame_number})')
-        cbar_label = 'von Mises Stress'
+        cbar_label = r'von Mises stress (Pa)'
 
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
+    ax.set_xlabel(r'$x$ (m)')
+    ax.set_ylabel(r'$y$ (m)')
+    ax.set_zlabel(r'$z$ (m)')
     ax.legend()
     fig.colorbar(scatter_d1, ax=ax, label=cbar_label, shrink=0.6)
 

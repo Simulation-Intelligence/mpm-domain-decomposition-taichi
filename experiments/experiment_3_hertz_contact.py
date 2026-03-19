@@ -13,6 +13,9 @@ import matplotlib.pyplot as plt
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from tools.plot_style import apply_cmame_style, COLORS as CMAME_COLORS
+apply_cmame_style()
+
 # 延迟导入Taichi相关模块，避免在不需要时初始化
 try:
     import taichi as ti
@@ -276,7 +279,7 @@ def visualize_results(results, output_dir, save_image=True):
         params['radius'], params['E'], params['nu'], params['applied_pressure'])
 
     # Create figure with single plot
-    _, ax = plt.subplots(1, 1, figsize=(10, 6))
+    _, ax = plt.subplots(1, 1, figsize=(5.5, 4.5))
 
     # Pressure distribution at y=0 (now stress_yy is 1D array)
     center_x = params['center'][0]
@@ -285,12 +288,13 @@ def visualize_results(results, output_dir, save_image=True):
     pressure_contact = -stress_yy/1000
     x_contact = x_coords
 
-    ax.plot(x_contact, pressure_contact, 'b-', linewidth=2, label='Hertz contact pressure')
-    ax.axvline(x=center_x - contact_width, color='red', linestyle='--', alpha=0.7, label=f'Contact boundary (±{contact_width:.9f}m)')
-    ax.axvline(x=center_x + contact_width, color='red', linestyle='--', alpha=0.7)
-    ax.set_xlabel('x (m)')
-    ax.set_ylabel('Pressure (kPa)')
-    ax.set_title('Hertz Contact Pressure Distribution')
+    ax.plot(x_contact, pressure_contact, color='#3182bd', linewidth=2,
+            label='Hertz contact pressure')
+    ax.axvline(x=center_x - contact_width, color='#b2182b', linestyle='--', alpha=0.8,
+               label=rf'Contact boundary ($\pm${contact_width:.4g}\,m)')
+    ax.axvline(x=center_x + contact_width, color='#b2182b', linestyle='--', alpha=0.8)
+    ax.set_xlabel(r'$x$ (m)')
+    ax.set_ylabel(r'Contact pressure (kPa)')
     ax.grid(True, alpha=0.3)
     ax.legend()
     ax.set_xlim(center_x - contact_width*1.2, center_x + contact_width*1.2)
@@ -298,8 +302,8 @@ def visualize_results(results, output_dir, save_image=True):
     plt.tight_layout()
 
     if save_image:
-        save_path = os.path.join(output_dir, 'hertz_contact_pressure.png')
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        save_path = os.path.join(output_dir, 'hertz_contact_pressure.pdf')
+        plt.savefig(save_path)
         print(f"Image saved to: {save_path}")
 
     plt.show()
@@ -675,10 +679,9 @@ def compare_with_mpm(analytical_results, mpm_results, output_dir, save_image=Tru
     contact_width = calculate_contact_width(
         params['radius'], params['E'], params['nu'], params['applied_pressure'])
 
-    # 创建图形
-    _, ax = plt.subplots(1, 1, figsize=(12, 8))
+    _, ax = plt.subplots(1, 1, figsize=(5.5, 4.5))
 
-    # 解析解 - y=0位置的压力分布（基于理论质量计算）
+    # Analytical solution — pressure distribution at y=0
     x_coords = analytical_results['x_coords']
     stress_yy = analytical_results['stress_yy']  # 现在是1D数组
     center_x = params['center'][0]
@@ -702,29 +705,27 @@ def compare_with_mpm(analytical_results, mpm_results, output_dir, save_image=Tru
     mpm_pressure_contact = mpm_pressure[mpm_contact_mask]
 
     # 绘制结果
-    ax.plot(x_analytical, pressure_analytical, 'r-', linewidth=2,
-            label='Analytical (Hertz theory, theoretical mass)')
+    ax.plot(x_analytical, pressure_analytical, color='#b2182b', linewidth=2.0,
+            label='Analytical (Hertz theory)')
 
     if normalization_factor != 1.0:
-        ax.scatter(mpm_x_contact, mpm_pressure_contact, c='blue', s=20, alpha=0.7,
-                  label=f'MPM simulation (normalized by {normalization_factor:.3f})')
+        ax.scatter(mpm_x_contact, mpm_pressure_contact, c='#3182bd', s=15, alpha=0.7,
+                  label=f'MPM (normalized by {normalization_factor:.3f})')
     else:
-        ax.scatter(mpm_x_contact, mpm_pressure_contact, c='blue', s=20, alpha=0.7,
-                  label='MPM simulation (raw)')
+        ax.scatter(mpm_x_contact, mpm_pressure_contact, c='#3182bd', s=15, alpha=0.7,
+                  label='MPM simulation')
 
     print(f"应力归一化信息：")
     print(f"  归一化因子: {normalization_factor:.6f}")
     print(f"  MPM应力范围（原始）: {mpm_stress_yy_raw.min():.2e} - {mpm_stress_yy_raw.max():.2e} Pa")
     print(f"  MPM应力范围（归一化后）: {mpm_stress_yy_normalized.min():.2e} - {mpm_stress_yy_normalized.max():.2e} Pa")
 
-    # 标记接触边界
-    ax.axvline(x=center_x - contact_width, color='red', linestyle='--', alpha=0.7,
-              label=f'Contact boundary (±{contact_width:.3f}m)')
-    ax.axvline(x=center_x + contact_width, color='red', linestyle='--', alpha=0.7)
+    ax.axvline(x=center_x - contact_width, color='#636363', linestyle='--', alpha=0.7,
+              label=rf'Contact boundary ($\pm${contact_width:.3f}\,m)')
+    ax.axvline(x=center_x + contact_width, color='#636363', linestyle='--', alpha=0.7)
 
-    ax.set_xlabel('x (m)')
-    ax.set_ylabel('Pressure (kPa)')
-    ax.set_title('Hertz Contact Pressure: Analytical vs MPM Simulation')
+    ax.set_xlabel(r'$x$ (m)')
+    ax.set_ylabel(r'Contact pressure (kPa)')
     ax.grid(True, alpha=0.3)
     ax.legend()
     ax.set_xlim(center_x - contact_width*1.2, center_x + contact_width*1.2)
@@ -733,11 +734,11 @@ def compare_with_mpm(analytical_results, mpm_results, output_dir, save_image=Tru
 
     if save_image:
         if grid_size is not None:
-            filename = f'hertz_comparison_analytical_vs_mpm_grid{grid_size}.png'
+            filename = f'hertz_comparison_analytical_vs_mpm_grid{grid_size}.pdf'
         else:
-            filename = 'hertz_comparison_analytical_vs_mpm.png'
+            filename = 'hertz_comparison_analytical_vs_mpm.pdf'
         save_path = os.path.join(output_dir, filename)
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(save_path)
         print(f"Comparison image saved to: {save_path}")
 
     # 在批量模式下不显示图形窗口，避免资源问题
@@ -862,10 +863,9 @@ def create_grid_study_summary_plot(analytical_results, all_mpm_results, all_grid
     contact_width = calculate_contact_width(
         params['radius'], params['E'], params['nu'], params['applied_pressure'])
 
-    # 创建图形
-    fig, ax = plt.subplots(1, 1, figsize=(14, 10))
+    fig, ax = plt.subplots(1, 1, figsize=(10, 4.5))
 
-    # 解析解 - y=0位置的压力分布
+    # Analytical solution — pressure distribution at y=0
     x_coords = analytical_results['x_coords']
     stress_yy = analytical_results['stress_yy']
     center_x = params['center'][0]
@@ -875,12 +875,10 @@ def create_grid_study_summary_plot(analytical_results, all_mpm_results, all_grid
     x_analytical = x_coords[contact_indices]
     pressure_analytical = -stress_yy[contact_indices]/1000
 
-    # 绘制解析解
-    ax.plot(x_analytical, pressure_analytical, 'r-', linewidth=3,
+    ax.plot(x_analytical, pressure_analytical, color='#b2182b', linewidth=2.0,
             label='Analytical (Hertz theory)', zorder=10)
 
-    # 为不同网格大小定义颜色
-    colors = plt.cm.viridis(np.linspace(0, 1, len(all_mpm_results)))
+    colors = CMAME_COLORS
 
     # 绘制所有MPM结果
     for i, (mpm_results, grid_size) in enumerate(zip(all_mpm_results, all_grid_sizes)):
@@ -905,26 +903,23 @@ def create_grid_study_summary_plot(analytical_results, all_mpm_results, all_grid
 
         # 绘制MPM结果
         ax.scatter(mpm_x_contact, mpm_pressure_contact,
-                  c=[colors[i]], s=30, alpha=0.7,
+                  c=[colors[i % len(colors)]], s=15, alpha=0.7,
                   label=f'MPM (Grid {grid_size}){label_suffix}', zorder=5)
 
-    # 标记接触边界
-    ax.axvline(x=center_x - contact_width, color='red', linestyle='--', alpha=0.7,
-              label=f'Contact boundary (±{contact_width:.3f}m)', zorder=1)
-    ax.axvline(x=center_x + contact_width, color='red', linestyle='--', alpha=0.7, zorder=1)
+    ax.axvline(x=center_x - contact_width, color='#636363', linestyle='--', alpha=0.7,
+              label=rf'Contact boundary ($\pm${contact_width:.3f}\,m)', zorder=1)
+    ax.axvline(x=center_x + contact_width, color='#636363', linestyle='--', alpha=0.7, zorder=1)
 
-    ax.set_xlabel('x (m)', fontsize=12)
-    ax.set_ylabel('Pressure (kPa)', fontsize=12)
-    ax.set_title('Grid Study Summary: Hertz Contact Pressure\nAnalytical vs MPM Simulation', fontsize=14)
+    ax.set_xlabel(r'$x$ (m)')
+    ax.set_ylabel(r'Contact pressure (kPa)')
     ax.grid(True, alpha=0.3)
     ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     ax.set_xlim(center_x - contact_width*1.2, center_x + contact_width*1.2)
 
     plt.tight_layout()
 
-    # 保存图片
-    save_path = os.path.join(output_dir, 'grid_study_summary.png')
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    save_path = os.path.join(output_dir, 'grid_study_summary.pdf')
+    plt.savefig(save_path)
     print(f"Grid study summary plot saved to: {save_path}")
 
     # 在批量模式下不显示图形窗口，避免资源问题

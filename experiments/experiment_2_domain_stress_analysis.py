@@ -14,6 +14,10 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend to avoid segfault with Taichi
 import matplotlib.pyplot as plt
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tools.plot_style import apply_cmame_style
+apply_cmame_style()
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from simulators.implicit_mpm import ImplicitMPM
 from Util.Config import Config
@@ -392,9 +396,9 @@ def analyze_and_plot(positions_or_tuple, stresses_or_none, config, output_dir, g
     plt.title(f"Stress $\sigma_{{xx}}${title_suffix}")
     scatter = plt.scatter(positions[:, 0], positions[:, 1], c=stresses[:, 0, 0],
                          s=5, cmap='coolwarm', vmin=-1e5, vmax=1e5)
-    plt.colorbar(scatter, label='$\sigma_{xx}$ (Pa)')
-    plt.xlabel('X position')
-    plt.ylabel('Y position')
+    plt.colorbar(scatter, label=r'$\sigma_{xx}$ (Pa)')
+    plt.xlabel(r'$x$ (m)')
+    plt.ylabel(r'$y$ (m)')
     plt.axis('equal')
 
     # 中图: Sigma_YY
@@ -402,9 +406,9 @@ def analyze_and_plot(positions_or_tuple, stresses_or_none, config, output_dir, g
     plt.title(f"Stress $\sigma_{{yy}}${title_suffix}")
     scatter = plt.scatter(positions[:, 0], positions[:, 1], c=stresses[:, 1, 1],
                          s=5, cmap='coolwarm', vmin=-1e5, vmax=1e5)
-    plt.colorbar(scatter, label='$\sigma_{yy}$ (Pa)')
-    plt.xlabel('X position')
-    plt.ylabel('Y position')
+    plt.colorbar(scatter, label=r'$\sigma_{yy}$ (Pa)')
+    plt.xlabel(r'$x$ (m)')
+    plt.ylabel(r'$y$ (m)')
     plt.axis('equal')
 
     # 右图: Sigma_XY
@@ -412,9 +416,9 @@ def analyze_and_plot(positions_or_tuple, stresses_or_none, config, output_dir, g
     plt.title(f"Shear Stress $\sigma_{{xy}}${title_suffix}")
     scatter = plt.scatter(positions[:, 0], positions[:, 1], c=stresses[:, 0, 1],
                          s=5, cmap='coolwarm', vmin=-5e4, vmax=5e4)
-    plt.colorbar(scatter, label='$\sigma_{xy}$ (Pa)')
-    plt.xlabel('X position')
-    plt.ylabel('Y position')
+    plt.colorbar(scatter, label=r'$\sigma_{xy}$ (Pa)')
+    plt.xlabel(r'$x$ (m)')
+    plt.ylabel(r'$y$ (m)')
     plt.axis('equal')
 
     # 保存图形
@@ -486,49 +490,54 @@ def plot_cross_sections(cross_sections, output_dir, grid_size=None, use_schwarz=
     x_rel = x_axis['x'] - center[0]
 
     # σ_xx 沿X轴
-    axes[0, 0].plot(x_rel, x_axis['sig_xx'], 'o-', markersize=4, linewidth=1.5)
-    axes[0, 0].set_title(f"$\sigma_{{xx}}$ along X-axis (Y={center[1]:.3f}){title_suffix}")
-    axes[0, 0].set_xlabel('X position (relative to center)')
-    axes[0, 0].set_ylabel('$\sigma_{xx}$ (Pa)')
+    axes[0, 0].plot(x_rel, x_axis['sig_xx'], 'o-', markersize=4, linewidth=1.5,
+                    color='#b2182b', markerfacecolor='none', markeredgewidth=1.0)
+    axes[0, 0].set_title(rf"$\sigma_{{xx}}$ along $X$-axis (Y={center[1]:.3f}){title_suffix}")
+    axes[0, 0].set_xlabel(r'$X$ position relative to center (m)')
+    axes[0, 0].set_ylabel(r'$\sigma_{xx}$ (Pa)')
     axes[0, 0].grid(True, alpha=0.3)
 
-    # σ_yy 沿X轴
-    axes[0, 1].plot(x_rel, x_axis['sig_yy'], 'o-', markersize=4, linewidth=1.5, color='green')
-    axes[0, 1].set_title(f"$\sigma_{{yy}}$ along X-axis (Y={center[1]:.3f}){title_suffix}")
-    axes[0, 1].set_xlabel('X position (relative to center)')
-    axes[0, 1].set_ylabel('$\sigma_{yy}$ (Pa)')
+    # σ_yy along X-axis
+    axes[0, 1].plot(x_rel, x_axis['sig_yy'], 'o-', markersize=4, linewidth=1.5,
+                    color='#3182bd', markerfacecolor='none', markeredgewidth=1.0)
+    axes[0, 1].set_title(rf"$\sigma_{{yy}}$ along $X$-axis (Y={center[1]:.3f}){title_suffix}")
+    axes[0, 1].set_xlabel(r'$X$ position relative to center (m)')
+    axes[0, 1].set_ylabel(r'$\sigma_{yy}$ (Pa)')
     axes[0, 1].grid(True, alpha=0.3)
 
-    # σ_xy 沿X轴
-    axes[0, 2].plot(x_rel, x_axis['sig_xy'], 'o-', markersize=4, linewidth=1.5, color='orange')
-    axes[0, 2].set_title(f"$\sigma_{{xy}}$ along X-axis (Y={center[1]:.3f}){title_suffix}")
-    axes[0, 2].set_xlabel('X position (relative to center)')
-    axes[0, 2].set_ylabel('$\sigma_{xy}$ (Pa)')
+    # σ_xy along X-axis
+    axes[0, 2].plot(x_rel, x_axis['sig_xy'], 'o-', markersize=4, linewidth=1.5,
+                    color='#2ca02c', markerfacecolor='none', markeredgewidth=1.0)
+    axes[0, 2].set_title(rf"$\sigma_{{xy}}$ along $X$-axis (Y={center[1]:.3f}){title_suffix}")
+    axes[0, 2].set_xlabel(r'$X$ position relative to center (m)')
+    axes[0, 2].set_ylabel(r'$\sigma_{xy}$ (Pa)')
     axes[0, 2].grid(True, alpha=0.3)
 
-    # Y轴截面（垂直线，X=center_x）
-    # 相对于中心的Y坐标
+    # Y-axis cross-section
     y_rel = y_axis['y'] - center[1]
 
-    # σ_xx 沿Y轴
-    axes[1, 0].plot(y_rel, y_axis['sig_xx'], 's-', markersize=4, linewidth=1.5)
-    axes[1, 0].set_title(f"$\sigma_{{xx}}$ along Y-axis (X={center[0]:.3f}){title_suffix}")
-    axes[1, 0].set_xlabel('Y position (relative to center)')
-    axes[1, 0].set_ylabel('$\sigma_{xx}$ (Pa)')
+    # σ_xx along Y-axis
+    axes[1, 0].plot(y_rel, y_axis['sig_xx'], 's-', markersize=4, linewidth=1.5,
+                    color='#b2182b', markerfacecolor='none', markeredgewidth=1.0)
+    axes[1, 0].set_title(rf"$\sigma_{{xx}}$ along $Y$-axis (X={center[0]:.3f}){title_suffix}")
+    axes[1, 0].set_xlabel(r'$Y$ position relative to center (m)')
+    axes[1, 0].set_ylabel(r'$\sigma_{xx}$ (Pa)')
     axes[1, 0].grid(True, alpha=0.3)
 
-    # σ_yy 沿Y轴
-    axes[1, 1].plot(y_rel, y_axis['sig_yy'], 's-', markersize=4, linewidth=1.5, color='green')
-    axes[1, 1].set_title(f"$\sigma_{{yy}}$ along Y-axis (X={center[0]:.3f}){title_suffix}")
-    axes[1, 1].set_xlabel('Y position (relative to center)')
-    axes[1, 1].set_ylabel('$\sigma_{yy}$ (Pa)')
+    # σ_yy along Y-axis
+    axes[1, 1].plot(y_rel, y_axis['sig_yy'], 's-', markersize=4, linewidth=1.5,
+                    color='#3182bd', markerfacecolor='none', markeredgewidth=1.0)
+    axes[1, 1].set_title(rf"$\sigma_{{yy}}$ along $Y$-axis (X={center[0]:.3f}){title_suffix}")
+    axes[1, 1].set_xlabel(r'$Y$ position relative to center (m)')
+    axes[1, 1].set_ylabel(r'$\sigma_{yy}$ (Pa)')
     axes[1, 1].grid(True, alpha=0.3)
 
-    # σ_xy 沿Y轴
-    axes[1, 2].plot(y_rel, y_axis['sig_xy'], 's-', markersize=4, linewidth=1.5, color='orange')
-    axes[1, 2].set_title(f"$\sigma_{{xy}}$ along Y-axis (X={center[0]:.3f}){title_suffix}")
-    axes[1, 2].set_xlabel('Y position (relative to center)')
-    axes[1, 2].set_ylabel('$\sigma_{xy}$ (Pa)')
+    # σ_xy along Y-axis
+    axes[1, 2].plot(y_rel, y_axis['sig_xy'], 's-', markersize=4, linewidth=1.5,
+                    color='#2ca02c', markerfacecolor='none', markeredgewidth=1.0)
+    axes[1, 2].set_title(rf"$\sigma_{{xy}}$ along $Y$-axis (X={center[0]:.3f}){title_suffix}")
+    axes[1, 2].set_xlabel(r'$Y$ position relative to center (m)')
+    axes[1, 2].set_ylabel(r'$\sigma_{xy}$ (Pa)')
     axes[1, 2].grid(True, alpha=0.3)
 
     plt.tight_layout()
@@ -562,30 +571,33 @@ def plot_individual_cross_sections(cross_sections, output_dir, grid_size=None, u
     x_rel = x_axis['x'] - center[0]
 
     # σ_xx 沿X轴
-    axes_x[0].plot(x_rel, x_axis['sig_xx'], 'o-', markersize=5, linewidth=2, color='blue')
-    axes_x[0].set_title(f"$\sigma_{{xx}}$ along X-axis (Y={center[1]:.3f}){title_suffix}", fontsize=14)
-    axes_x[0].set_xlabel('X position (relative to center)', fontsize=12)
-    axes_x[0].set_ylabel('$\sigma_{xx}$ (Pa)', fontsize=12)
+    axes_x[0].plot(x_rel, x_axis['sig_xx'], 'o-', markersize=5, linewidth=2,
+                   color='#b2182b', markerfacecolor='none', markeredgewidth=1.2)
+    axes_x[0].set_title(rf"$\sigma_{{xx}}$ along $X$-axis (Y={center[1]:.3f}){title_suffix}")
+    axes_x[0].set_xlabel(r'$X$ position relative to center (m)')
+    axes_x[0].set_ylabel(r'$\sigma_{xx}$ (Pa)')
     axes_x[0].grid(True, alpha=0.3)
     axes_x[0].axhline(y=0, color='k', linestyle='--', alpha=0.3)
     axes_x[0].axvline(x=0, color='r', linestyle=':', alpha=0.3, label='Center')
     axes_x[0].legend()
 
     # σ_yy 沿X轴
-    axes_x[1].plot(x_rel, x_axis['sig_yy'], 'o-', markersize=5, linewidth=2, color='green')
-    axes_x[1].set_title(f"$\sigma_{{yy}}$ along X-axis (Y={center[1]:.3f}){title_suffix}", fontsize=14)
-    axes_x[1].set_xlabel('X position (relative to center)', fontsize=12)
-    axes_x[1].set_ylabel('$\sigma_{yy}$ (Pa)', fontsize=12)
+    axes_x[1].plot(x_rel, x_axis['sig_yy'], 'o-', markersize=5, linewidth=2,
+                   color='#3182bd', markerfacecolor='none', markeredgewidth=1.2)
+    axes_x[1].set_title(rf"$\sigma_{{yy}}$ along $X$-axis (Y={center[1]:.3f}){title_suffix}")
+    axes_x[1].set_xlabel(r'$X$ position relative to center (m)')
+    axes_x[1].set_ylabel(r'$\sigma_{yy}$ (Pa)')
     axes_x[1].grid(True, alpha=0.3)
     axes_x[1].axhline(y=0, color='k', linestyle='--', alpha=0.3)
     axes_x[1].axvline(x=0, color='r', linestyle=':', alpha=0.3, label='Center')
     axes_x[1].legend()
 
     # σ_xy 沿X轴
-    axes_x[2].plot(x_rel, x_axis['sig_xy'], 'o-', markersize=5, linewidth=2, color='orange')
-    axes_x[2].set_title(f"$\sigma_{{xy}}$ along X-axis (Y={center[1]:.3f}){title_suffix}", fontsize=14)
-    axes_x[2].set_xlabel('X position (relative to center)', fontsize=12)
-    axes_x[2].set_ylabel('$\sigma_{xy}$ (Pa)', fontsize=12)
+    axes_x[2].plot(x_rel, x_axis['sig_xy'], 'o-', markersize=5, linewidth=2,
+                   color='#2ca02c', markerfacecolor='none', markeredgewidth=1.2)
+    axes_x[2].set_title(rf"$\sigma_{{xy}}$ along $X$-axis (Y={center[1]:.3f}){title_suffix}")
+    axes_x[2].set_xlabel(r'$X$ position relative to center (m)')
+    axes_x[2].set_ylabel(r'$\sigma_{xy}$ (Pa)')
     axes_x[2].grid(True, alpha=0.3)
     axes_x[2].axhline(y=0, color='k', linestyle='--', alpha=0.3)
     axes_x[2].axvline(x=0, color='r', linestyle=':', alpha=0.3, label='Center')
@@ -606,30 +618,33 @@ def plot_individual_cross_sections(cross_sections, output_dir, grid_size=None, u
     y_rel = y_axis['y'] - center[1]
 
     # σ_xx 沿Y轴
-    axes_y[0].plot(y_rel, y_axis['sig_xx'], 's-', markersize=5, linewidth=2, color='blue')
-    axes_y[0].set_title(f"$\sigma_{{xx}}$ along Y-axis (X={center[0]:.3f}){title_suffix}", fontsize=14)
-    axes_y[0].set_xlabel('Y position (relative to center)', fontsize=12)
-    axes_y[0].set_ylabel('$\sigma_{xx}$ (Pa)', fontsize=12)
+    axes_y[0].plot(y_rel, y_axis['sig_xx'], 's-', markersize=5, linewidth=2,
+                   color='#b2182b', markerfacecolor='none', markeredgewidth=1.2)
+    axes_y[0].set_title(rf"$\sigma_{{xx}}$ along $Y$-axis (X={center[0]:.3f}){title_suffix}")
+    axes_y[0].set_xlabel(r'$Y$ position relative to center (m)')
+    axes_y[0].set_ylabel(r'$\sigma_{xx}$ (Pa)')
     axes_y[0].grid(True, alpha=0.3)
     axes_y[0].axhline(y=0, color='k', linestyle='--', alpha=0.3)
     axes_y[0].axvline(x=0, color='r', linestyle=':', alpha=0.3, label='Center')
     axes_y[0].legend()
 
     # σ_yy 沿Y轴
-    axes_y[1].plot(y_rel, y_axis['sig_yy'], 's-', markersize=5, linewidth=2, color='green')
-    axes_y[1].set_title(f"$\sigma_{{yy}}$ along Y-axis (X={center[0]:.3f}){title_suffix}", fontsize=14)
-    axes_y[1].set_xlabel('Y position (relative to center)', fontsize=12)
-    axes_y[1].set_ylabel('$\sigma_{yy}$ (Pa)', fontsize=12)
+    axes_y[1].plot(y_rel, y_axis['sig_yy'], 's-', markersize=5, linewidth=2,
+                   color='#3182bd', markerfacecolor='none', markeredgewidth=1.2)
+    axes_y[1].set_title(rf"$\sigma_{{yy}}$ along $Y$-axis (X={center[0]:.3f}){title_suffix}")
+    axes_y[1].set_xlabel(r'$Y$ position relative to center (m)')
+    axes_y[1].set_ylabel(r'$\sigma_{yy}$ (Pa)')
     axes_y[1].grid(True, alpha=0.3)
     axes_y[1].axhline(y=0, color='k', linestyle='--', alpha=0.3)
     axes_y[1].axvline(x=0, color='r', linestyle=':', alpha=0.3, label='Center')
     axes_y[1].legend()
 
     # σ_xy 沿Y轴
-    axes_y[2].plot(y_rel, y_axis['sig_xy'], 's-', markersize=5, linewidth=2, color='orange')
-    axes_y[2].set_title(f"$\sigma_{{xy}}$ along Y-axis (X={center[0]:.3f}){title_suffix}", fontsize=14)
-    axes_y[2].set_xlabel('Y position (relative to center)', fontsize=12)
-    axes_y[2].set_ylabel('$\sigma_{xy}$ (Pa)', fontsize=12)
+    axes_y[2].plot(y_rel, y_axis['sig_xy'], 's-', markersize=5, linewidth=2,
+                   color='#2ca02c', markerfacecolor='none', markeredgewidth=1.2)
+    axes_y[2].set_title(rf"$\sigma_{{xy}}$ along $Y$-axis (X={center[0]:.3f}){title_suffix}")
+    axes_y[2].set_xlabel(r'$Y$ position relative to center (m)')
+    axes_y[2].set_ylabel(r'$\sigma_{xy}$ (Pa)')
     axes_y[2].grid(True, alpha=0.3)
     axes_y[2].axhline(y=0, color='k', linestyle='--', alpha=0.3)
     axes_y[2].axvline(x=0, color='r', linestyle=':', alpha=0.3, label='Center')

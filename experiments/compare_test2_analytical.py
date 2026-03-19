@@ -9,10 +9,15 @@
 """
 
 import os
+import sys
 import json
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from tools.plot_style import apply_cmame_style
+apply_cmame_style()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -321,14 +326,14 @@ def load_grid_stress_xline(grid_dir, y_index=None, x_offset=None):
 # 主绘图逻辑
 # ─────────────────────────────────────────────────────────────────────────────
 
-COLORS = ['tab:blue', 'tab:green', 'tab:orange', 'tab:purple',
-          'tab:brown', 'tab:cyan', 'tab:olive']
+COLORS = ['#3182bd', '#2ca02c', '#8c510a', '#756bb1',
+          '#e5735c', '#636363', '#1f77b4']
 
 COMPONENT_CFG = [
-    # (key,      ylabel,        title_cn,       s11_col, s22_col, vm_col)
-    ('s11',      'σ₁₁ (Pa)',   'σ₁₁ 对比',    True,  False, False),
-    ('s22',      'σ₂₂ (Pa)',   'σ₂₂ 对比',    False, True,  False),
-    ('vonmises', 'von Mises (Pa)', 'von Mises 对比', False, False, True),
+    # (key,      ylabel,                    s11_col, s22_col, vm_col)
+    ('s11',      r'$\sigma_{11}$ (Pa)',    True,  False, False),
+    ('s22',      r'$\sigma_{22}$ (Pa)',    False, True,  False),
+    ('vonmises', r'von Mises stress (Pa)', False, False, True),
 ]
 
 
@@ -339,8 +344,7 @@ def plot_comparison(ax, analytical_x, analytical_y,
     mpm_data_list : list of (grid_size, x, s11, s22, vm)
     xlim : (x_min, x_max) | None  若提供则限制 bin 范围并设置坐标轴
     """
-    # 解析解
-    ax.plot(analytical_x, analytical_y, 'r-', linewidth=2.2, alpha=0.9,
+    ax.plot(analytical_x, analytical_y, color='#b2182b', linewidth=2.0, alpha=0.9,
             label='Analytical', zorder=10)
 
     for i, (gs, x, s11, s22, vm) in enumerate(mpm_data_list):
@@ -362,10 +366,12 @@ def plot_comparison(ax, analytical_x, analytical_y,
             bx, by, bc = bin_average(x, y_mpm, n_bins, x_range=x_range)
             valid = bc > 0
             ax.plot(bx[valid], by[valid], '-o', color=color,
-                    linewidth=1.4, markersize=3, alpha=0.8, label=label, zorder=5)
+                    linewidth=1.5, markersize=5, markerfacecolor='none',
+                    markeredgewidth=1.2, alpha=0.9, label=label, zorder=5)
         else:
             ax.plot(x, y_mpm, '-o', color=color,
-                    linewidth=1.4, markersize=3, alpha=0.8, label=label, zorder=5)
+                    linewidth=1.5, markersize=5, markerfacecolor='none',
+                    markeredgewidth=1.2, alpha=0.9, label=label, zorder=5)
 
     if xlim:
         ax.set_xlim(*xlim)
@@ -384,47 +390,44 @@ def make_plots(grid_data, ana, output_dir, n_bins, separate, xlim=None):
     os.makedirs(output_dir, exist_ok=True)
 
     components = [
-        ('s11',      'σ₁₁ (Pa)',      'Test2: σ₁₁ MPM vs Analytical'),
-        ('s22',      'σ₂₂ (Pa)',      'Test2: σ₂₂ MPM vs Analytical'),
-        ('vonmises', 'von Mises (Pa)','Test2: von Mises MPM vs Analytical'),
+        ('s11',      r'$\sigma_{11}$ (Pa)'),
+        ('s22',      r'$\sigma_{22}$ (Pa)'),
+        ('vonmises', r'von Mises stress (Pa)'),
     ]
 
     if separate:
-        for key, ylabel, title in components:
-            fig, ax = plt.subplots(figsize=(11, 7))
-            ax.set_title(title, fontsize=13)
-            ax.set_xlabel('x (m)', fontsize=11)
-            ax.set_ylabel(ylabel, fontsize=11)
+        for key, ylabel in components:
+            fig, ax = plt.subplots(figsize=(5.5, 4.5))
+            ax.set_xlabel(r'$x$ (m)')
+            ax.set_ylabel(ylabel)
             ax.grid(True, alpha=0.3)
 
             ax_x, ax_y = ana[key]
             plot_comparison(ax, ax_x, ax_y, grid_data, key, n_bins, xlim=xlim)
 
-            ax.legend(fontsize=9)
+            ax.legend()
             plt.tight_layout()
-            out = os.path.join(output_dir, f'test2_compare_{key}.png')
-            plt.savefig(out, dpi=300, bbox_inches='tight')
+            out = os.path.join(output_dir, f'test2_compare_{key}.pdf')
+            plt.savefig(out)
             plt.close()
-            print(f'已保存: {out}')
+            print(f'Saved: {out}')
     else:
-        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-        fig.suptitle('Test2: MPM vs Analytical', fontsize=14)
+        fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
 
-        for ax, (key, ylabel, _) in zip(axes, components):
-            ax.set_title(ylabel, fontsize=11)
-            ax.set_xlabel('x (m)', fontsize=10)
-            ax.set_ylabel(ylabel, fontsize=10)
+        for ax, (key, ylabel) in zip(axes, components):
+            ax.set_xlabel(r'$x$ (m)')
+            ax.set_ylabel(ylabel)
             ax.grid(True, alpha=0.3)
 
             ax_x, ax_y = ana[key]
             plot_comparison(ax, ax_x, ax_y, grid_data, key, n_bins, xlim=xlim)
-            ax.legend(fontsize=8)
+            ax.legend()
 
         plt.tight_layout()
-        out = os.path.join(output_dir, 'test2_compare_all.png')
-        plt.savefig(out, dpi=300, bbox_inches='tight')
+        out = os.path.join(output_dir, 'test2_compare_all.pdf')
+        plt.savefig(out)
         plt.close()
-        print(f'已保存: {out}')
+        print(f'Saved: {out}')
 
 
 def make_grid_stress_plots(grid_data, ana, output_dir, n_bins, separate, xlim=None):
@@ -440,50 +443,47 @@ def make_grid_stress_plots(grid_data, ana, output_dir, n_bins, separate, xlim=No
     os.makedirs(output_dir, exist_ok=True)
 
     components = [
-        ('s11',      'σ₁₁ (Pa)',       'Test2 Grid: σ₁₁ MPM vs Analytical'),
-        ('s22',      'σ₂₂ (Pa)',       'Test2 Grid: σ₂₂ MPM vs Analytical'),
-        ('vonmises', 'von Mises (Pa)', 'Test2 Grid: von Mises MPM vs Analytical'),
+        ('s11',      r'$\sigma_{11}$ (Pa)'),
+        ('s22',      r'$\sigma_{22}$ (Pa)'),
+        ('vonmises', r'von Mises stress (Pa)'),
     ]
 
     # Repack to the (gs, x, s11, s22, vm) format expected by plot_comparison
     plot_data = [(gs, x, s11, s22, vm) for gs, x, s11, s22, vm, _ in grid_data]
 
     if separate:
-        for key, ylabel, title in components:
-            fig, ax = plt.subplots(figsize=(11, 7))
-            ax.set_title(title, fontsize=13)
-            ax.set_xlabel('x (m)', fontsize=11)
-            ax.set_ylabel(ylabel, fontsize=11)
+        for key, ylabel in components:
+            fig, ax = plt.subplots(figsize=(5.5, 4.5))
+            ax.set_xlabel(r'$x$ (m)')
+            ax.set_ylabel(ylabel)
             ax.grid(True, alpha=0.3)
 
             ax_x, ax_y = ana[key]
             plot_comparison(ax, ax_x, ax_y, plot_data, key, n_bins, xlim=xlim)
 
-            ax.legend(fontsize=9)
+            ax.legend()
             plt.tight_layout()
-            out = os.path.join(output_dir, f'test2_grid_stress_compare_{key}.png')
-            plt.savefig(out, dpi=300, bbox_inches='tight')
+            out = os.path.join(output_dir, f'test2_grid_stress_compare_{key}.pdf')
+            plt.savefig(out)
             plt.close()
-            print(f'已保存: {out}')
+            print(f'Saved: {out}')
     else:
-        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-        fig.suptitle('Test2 Grid Stress: MPM vs Analytical', fontsize=14)
+        fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
 
-        for ax, (key, ylabel, _) in zip(axes, components):
-            ax.set_title(ylabel, fontsize=11)
-            ax.set_xlabel('x (m)', fontsize=10)
-            ax.set_ylabel(ylabel, fontsize=10)
+        for ax, (key, ylabel) in zip(axes, components):
+            ax.set_xlabel(r'$x$ (m)')
+            ax.set_ylabel(ylabel)
             ax.grid(True, alpha=0.3)
 
             ax_x, ax_y = ana[key]
             plot_comparison(ax, ax_x, ax_y, plot_data, key, n_bins, xlim=xlim)
-            ax.legend(fontsize=8)
+            ax.legend()
 
         plt.tight_layout()
-        out = os.path.join(output_dir, 'test2_grid_stress_compare_all.png')
-        plt.savefig(out, dpi=300, bbox_inches='tight')
+        out = os.path.join(output_dir, 'test2_grid_stress_compare_all.pdf')
+        plt.savefig(out)
         plt.close()
-        print(f'已保存: {out}')
+        print(f'Saved: {out}')
 
 
 # ─────────────────────────────────────────────────────────────────────────────

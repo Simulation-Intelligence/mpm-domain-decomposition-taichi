@@ -13,6 +13,10 @@ import sys
 import os
 import matplotlib.pyplot as plt
 import subprocess
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tools.plot_style import apply_cmame_style
+apply_cmame_style()
 import glob
 import shutil
 import gc
@@ -1159,31 +1163,21 @@ def plot_results(results, output_dir):
     gamma_values = [r['gamma'] for r in results_list]
     h_over_w_values = [r['h_over_w'] for r in results_list]
 
-    # 创建图形
-    plt.figure(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(5.5, 4.5))
 
-    # 绘制log-log图
-    plt.loglog(gamma_values, h_over_w_values, 'bo-', linewidth=2, markersize=8)
+    ax.loglog(gamma_values, h_over_w_values, 'o-', color='#b2182b', linewidth=2,
+              markersize=7, markerfacecolor='none', markeredgewidth=1.5)
 
-    plt.xlabel('γ = 12ρgL³(1-ν²)/(Eh²)', fontsize=12)
-    plt.ylabel('h/w', fontsize=12)
-    plt.title('cantilever\nlog(h/w) vs log(γ)', fontsize=14)
-    plt.grid(True, alpha=0.3)
-
-    # 添加数据点标注
-    for i, (gamma, h_w) in enumerate(zip(gamma_values, h_over_w_values)):
-        if i % max(1, len(gamma_values)//10) == 0:  # 只标注部分点避免重叠
-            plt.annotate(f'({gamma:.1e}, {h_w:.3f})',
-                        (gamma, h_w),
-                        xytext=(5, 5), textcoords='offset points',
-                        fontsize=8, alpha=0.7)
+    ax.set_xlabel(r'$\gamma = 12\rho g L^3(1-\nu^2)/(Eh^2)$')
+    ax.set_ylabel(r'$h/w$')
+    ax.minorticks_on()
+    ax.grid(True, alpha=0.3, which='both')
 
     plt.tight_layout()
 
-    # 保存图片
-    plot_file = os.path.join(output_dir, "cantilever_beam_analysis.png")
-    plt.savefig(plot_file, dpi=300, bbox_inches='tight')
-    plt.close()  # 关闭图形以释放内存
+    plot_file = os.path.join(output_dir, "cantilever_beam_analysis.pdf")
+    plt.savefig(plot_file)
+    plt.close()
 
     print(f"分析图保存到: {plot_file}")
 

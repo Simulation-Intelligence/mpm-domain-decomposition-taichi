@@ -307,6 +307,9 @@ class ParticleGenerator:
         avg_spacing = (dx + dy) / 2.0
         gauss_positions, gauss_weights = GaussQuadrature.get_2d_grid_points_and_weights(n_1d, avg_spacing)
 
+        # 设置 last_poisson_radius 为 gauss 点间距，供边界检测的 alpha 计算使用
+        self.last_poisson_radius = avg_spacing / n_1d
+
         # 遍历所有网格点
         for i in range(self.grid_nx):
             for j in range(self.grid_ny):
@@ -351,6 +354,22 @@ class ParticleGenerator:
         elif self.sampling_method == "regular":
             # 椭圆的规则采样
             particles = self._generate_regular_ellipse_particles(center, semi_axes, n_particles)
+        elif self.sampling_method == "gauss":
+            # 高斯积分点采样：在包围矩形内生成高斯点，过滤到椭圆内
+            rect_range = [
+                [center[0] - semi_axes[0], center[0] + semi_axes[0]],
+                [center[1] - semi_axes[1], center[1] + semi_axes[1]],
+            ]
+            all_particles, all_weights = self._generate_gauss_quadrature_particles(rect_range, n_particles)
+            particles = []
+            filtered_weights = []
+            for p, w in zip(all_particles, all_weights):
+                dx = (p[0] - center[0]) / semi_axes[0]
+                dy = (p[1] - center[1]) / semi_axes[1]
+                if dx * dx + dy * dy <= 1.0:
+                    particles.append(p)
+                    filtered_weights.append(w)
+            self.gauss_weights = filtered_weights
         else:
             # 传统随机采样方法 (uniform)
             particles = self._traditional_ellipse_sampling(center, semi_axes, n_particles)

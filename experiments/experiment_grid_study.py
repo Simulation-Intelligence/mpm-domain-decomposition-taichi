@@ -19,6 +19,9 @@ import matplotlib.pyplot as plt
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from tools.plot_style import apply_cmame_style, COLORS as CMAME_COLORS
+apply_cmame_style()
+
 # 不再需要导入质量计算函数，直接使用理论质量
 # try:
 #     from experiments.experiment_3_hertz_contact import get_actual_volume_force_mass
@@ -932,31 +935,26 @@ def compare_stress_with_analytical(analytical_results, mpm_results, grid_size, o
     params = analytical_results['params']
     contact_width = analytical_results['contact_width']
 
-    # 创建图形
-    _, ax = plt.subplots(1, 1, figsize=(12, 8))
+    _, ax = plt.subplots(1, 1, figsize=(5.5, 4.5))
 
-    # 解析解 - y=0位置的压力分布
     x_coords = analytical_results['x_coords']
     stress_yy = analytical_results['stress_yy']
     center_x = params['center'][0]
 
-    # 只在接触区域内显示
     contact_indices = (x_coords >= center_x - contact_width*2) & (x_coords <= center_x + contact_width*2)
     x_analytical = x_coords[contact_indices]
     pressure_analytical = -stress_yy[contact_indices]/1000
 
-    # MPM结果
     mpm_positions = mpm_results['positions']
     mpm_stress = mpm_results['stress']
 
-    # 只显示接触区域内的MPM数据
     mpm_x = mpm_positions[:, 0]
     mpm_contact_indices = (mpm_x >= center_x - contact_width*2) & (mpm_x <= center_x + contact_width*2)
     mpm_positions_contact = mpm_positions[mpm_contact_indices]
     mpm_stress_contact = mpm_stress[mpm_contact_indices]
 
-    # 绘制结果
-    ax.plot(x_analytical, pressure_analytical, 'r-', linewidth=2, label='Analytical (Hertz)', alpha=0.8)
+    ax.plot(x_analytical, pressure_analytical, color='#b2182b', linewidth=2.0,
+            label='Analytical (Hertz)', alpha=0.9)
 
     # 根据是否使用bin平均来选择绘图方式
     if n_bins is not None and n_bins > 0:
@@ -977,38 +975,32 @@ def compare_stress_with_analytical(analytical_results, mpm_results, grid_size, o
         particle_type = "all particles" if mpm_results.get('use_all_particles', False) else "boundary only"
         mpm_label = f'MPM (Grid {grid_size}, {n_bins} bins, {particle_type})'
         ax.plot(bin_centers[valid_bins], bin_avg_pressure[valid_bins],
-                'b-o', linewidth=1.5, markersize=4, alpha=0.7, label=mpm_label)
-
-        # 添加误差带（可选，显示每个bin内的粒子数）
-        # 可以通过颜色深浅或标记大小来表示bin内的粒子密度
+                '-o', color='#3182bd', linewidth=1.5, markersize=5,
+                markerfacecolor='none', markeredgewidth=1.2, alpha=0.9, label=mpm_label)
 
     else:
-        # 直接绘制所有粒子（原始方式）
         mpm_stress_yy = mpm_stress_contact[:, 1, 1]
         mpm_pressure = -mpm_stress_yy / 1000
         x_mpm_contact = mpm_positions_contact[:, 0]
 
         particle_type = "all particles" if mpm_results.get('use_all_particles', False) else "boundary only"
         mpm_label = f'MPM (Grid {grid_size}, {particle_type})'
-        ax.scatter(x_mpm_contact, mpm_pressure, c='blue', s=20, alpha=0.6, label=mpm_label)
+        ax.scatter(x_mpm_contact, mpm_pressure, c='#3182bd', s=15, alpha=0.7, label=mpm_label)
 
-    # 标记接触边界
-    ax.axvline(x=center_x - contact_width, color='red', linestyle='--', alpha=0.7,
-               label=f'Contact boundary (±{contact_width:.6f}m)')
-    ax.axvline(x=center_x + contact_width, color='red', linestyle='--', alpha=0.7)
+    ax.axvline(x=center_x - contact_width, color='#636363', linestyle='--', alpha=0.7,
+               label=rf'Contact boundary ($\pm${contact_width:.4g}\,m)')
+    ax.axvline(x=center_x + contact_width, color='#636363', linestyle='--', alpha=0.7)
 
-    ax.set_xlabel('x (m)')
-    ax.set_ylabel('Pressure (kPa)')
-    ax.set_title(f'Ellipse Contact: MPM vs Analytical Solution (Grid {grid_size})')
+    ax.set_xlabel(r'$x$ (m)')
+    ax.set_ylabel(r'Contact pressure (kPa)')
     ax.grid(True, alpha=0.3)
     ax.legend()
     ax.set_xlim(center_x - contact_width*2, center_x + contact_width*2)
 
     plt.tight_layout()
 
-    # 保存图片
     plot_file = os.path.join(output_dir, f"stress_comparison_grid{grid_size}.pdf")
-    plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+    plt.savefig(plot_file)
     plt.close()
 
     print(f"应力对比图保存到: {plot_file}")
@@ -1028,24 +1020,20 @@ def create_summary_plot(analytical_results, all_mpm_results, output_dir, n_bins=
     params = analytical_results['params']
     contact_width = analytical_results['contact_width']
 
-    # 创建大图形
-    _, ax = plt.subplots(1, 1, figsize=(14, 10))
+    _, ax = plt.subplots(1, 1, figsize=(10, 4.5))
 
-    # 解析解 - y=0位置的压力分布
     x_coords = analytical_results['x_coords']
     stress_yy = analytical_results['stress_yy']
     center_x = params['center'][0]
 
-    # 只在接触区域内显示
     contact_indices = (x_coords >= center_x - contact_width*2) & (x_coords <= center_x + contact_width*2)
     x_analytical = x_coords[contact_indices]
     pressure_analytical = -stress_yy[contact_indices]/1000
 
-    # 绘制解析解
-    ax.plot(x_analytical, pressure_analytical, 'r-', linewidth=3, label='Analytical (Hertz)', alpha=0.9, zorder=10)
+    ax.plot(x_analytical, pressure_analytical, color='#b2182b', linewidth=2.0,
+            label='Analytical (Hertz)', alpha=0.9, zorder=10)
 
-    # 定义颜色列表
-    colors = ['blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan', 'magenta']
+    colors = CMAME_COLORS
 
     # 绘制所有网格大小的MPM结果
     for i, (grid_size, mpm_results) in enumerate(all_mpm_results.items()):
@@ -1080,10 +1068,10 @@ def create_summary_plot(analytical_results, all_mpm_results, output_dir, n_bins=
 
             label = f'MPM (Grid {grid_size})'
             ax.plot(bin_centers[valid_bins], bin_avg_pressure[valid_bins],
-                   '-o', color=color, linewidth=1.5, markersize=3, alpha=0.7,
+                   '-o', color=color, linewidth=1.5, markersize=5,
+                   markerfacecolor='none', markeredgewidth=1.2, alpha=0.9,
                    label=label, zorder=5)
         else:
-            # 直接绘制所有粒子
             mpm_stress_yy = mpm_stress_contact[:, 1, 1]
             mpm_pressure = -mpm_stress_yy / 1000
             x_mpm_contact = mpm_positions_contact[:, 0]
@@ -1092,23 +1080,20 @@ def create_summary_plot(analytical_results, all_mpm_results, output_dir, n_bins=
             ax.scatter(x_mpm_contact, mpm_pressure, c=color, s=15, alpha=0.7,
                       label=label, zorder=5)
 
-    # 标记接触边界
-    ax.axvline(x=center_x - contact_width, color='red', linestyle='--', alpha=0.7,
-               label=f'Contact boundary (±{contact_width:.6f}m)', zorder=8)
-    ax.axvline(x=center_x + contact_width, color='red', linestyle='--', alpha=0.7, zorder=8)
+    ax.axvline(x=center_x - contact_width, color='#636363', linestyle='--', alpha=0.7,
+               label=rf'Contact boundary ($\pm${contact_width:.4g}\,m)', zorder=8)
+    ax.axvline(x=center_x + contact_width, color='#636363', linestyle='--', alpha=0.7, zorder=8)
 
-    ax.set_xlabel('x (m)', fontsize=12)
-    ax.set_ylabel('Pressure (kPa)', fontsize=12)
-    ax.set_title('Ellipse Contact: Grid Convergence Study\nMPM vs Analytical Solution (All Grid Sizes)', fontsize=14)
+    ax.set_xlabel(r'$x$ (m)')
+    ax.set_ylabel(r'Contact pressure (kPa)')
     ax.grid(True, alpha=0.3)
     ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     ax.set_xlim(center_x - contact_width*2, center_x + contact_width*2)
 
     plt.tight_layout()
 
-    # 保存汇总图
     summary_plot_file = os.path.join(output_dir, "stress_comparison_summary_all_grids.pdf")
-    plt.savefig(summary_plot_file, dpi=300, bbox_inches='tight')
+    plt.savefig(summary_plot_file)
     plt.close()
 
     print(f"汇总对比图保存到: {summary_plot_file}")
@@ -1127,9 +1112,9 @@ def plot_grid_stress_line_single(grid_line_data, grid_size, output_dir, analytic
         print(f"警告: 网格{grid_size}的有效grid点为0，跳过单图绘制")
         return None
 
-    _, ax = plt.subplots(1, 1, figsize=(12, 8))
-    ax.plot(x, pressure, "b-", linewidth=1.5, alpha=0.85, label=f"Grid {grid_size}")
-    ax.scatter(x, pressure, s=8, c="blue", alpha=0.5)
+    _, ax = plt.subplots(1, 1, figsize=(5.5, 4.5))
+    ax.plot(x, pressure, '-o', color='#3182bd', linewidth=1.5, markersize=5,
+            markerfacecolor='none', markeredgewidth=1.2, alpha=0.9, label=f"Grid {grid_size}")
 
     if analytical_results is not None:
         x_analytical = analytical_results["x_coords"]
@@ -1140,21 +1125,20 @@ def plot_grid_stress_line_single(grid_line_data, grid_size, output_dir, analytic
             ax.plot(
                 x_analytical[x_mask],
                 pressure_analytical[x_mask],
-                "r-",
+                color='#b2182b',
                 linewidth=2.0,
                 alpha=0.9,
                 label="Analytical (Hertz)"
             )
 
-    ax.set_xlabel("x (m)")
-    ax.set_ylabel("Pressure (kPa)")
-    ax.set_title(f"{mode_label}: Grid Stress Line (Grid {grid_size}, y_index={bound}, frame={frame_num})")
+    ax.set_xlabel(r"$x$ (m)")
+    ax.set_ylabel(r"Contact pressure (kPa)")
     ax.grid(True, alpha=0.3)
     ax.legend()
     plt.tight_layout()
 
     plot_file = os.path.join(output_dir, f"grid_stress_line_grid{grid_size}.pdf")
-    plt.savefig(plot_file, dpi=300, bbox_inches="tight")
+    plt.savefig(plot_file)
     plt.close()
 
     print(f"Grid stress单图保存到: {plot_file}")
@@ -1166,8 +1150,8 @@ def plot_grid_stress_line_summary(all_grid_line_results, output_dir, analytical_
         print("警告: 无可用grid stress行数据，跳过汇总图")
         return None
 
-    _, ax = plt.subplots(1, 1, figsize=(12, 8))
-    colors = ['blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan', 'magenta']
+    _, ax = plt.subplots(1, 1, figsize=(10, 4.5))
+    colors = CMAME_COLORS
 
     for i, (grid_size, grid_line_data) in enumerate(all_grid_line_results.items()):
         x = grid_line_data["x"]
@@ -1178,7 +1162,8 @@ def plot_grid_stress_line_summary(all_grid_line_results, output_dir, analytical_
 
         color = colors[i % len(colors)]
         label = f"{0.6 / grid_size:.4g}"
-        ax.plot(x, pressure, "-", color=color, linewidth=1.4, alpha=0.8, label=label)
+        ax.plot(x, pressure, "-o", color=color, linewidth=1.5, markersize=5,
+                markerfacecolor='none', markeredgewidth=1.2, alpha=0.9, label=label)
 
     if analytical_results is not None:
         x_analytical = analytical_results["x_coords"]
@@ -1186,12 +1171,11 @@ def plot_grid_stress_line_summary(all_grid_line_results, output_dir, analytical_
         ax.plot(
             x_analytical,
             pressure_analytical,
-            "r-",
-            linewidth=2.2,
+            color='#b2182b',
+            linewidth=2.0,
             alpha=0.9,
             label="Analytical"
         )
-        # 与粒子-解析解对比图一致：限制到接触区附近宽度
         params = analytical_results.get("params", {})
         center = params.get("center", [0.0, 0.0])
         contact_width = analytical_results.get("contact_width", None)
@@ -1200,14 +1184,14 @@ def plot_grid_stress_line_summary(all_grid_line_results, output_dir, analytical_
             contact_width = float(contact_width)
             ax.set_xlim(center_x - 3.0 * contact_width, center_x + 3.0 * contact_width)
 
-    ax.set_xlabel("x (m)", fontsize=12)
-    ax.set_ylabel("Pressure (kPa)", fontsize=12)
+    ax.set_xlabel(r"$x$ (m)")
+    ax.set_ylabel(r"Contact pressure (kPa)")
     ax.grid(True, alpha=0.3)
     ax.legend(loc='upper right')
     plt.tight_layout()
 
     plot_file = os.path.join(output_dir, "grid_stress_line_summary_all_grids.pdf")
-    plt.savefig(plot_file, dpi=300, bbox_inches="tight")
+    plt.savefig(plot_file)
     plt.close()
 
     print(f"Grid stress汇总图保存到: {plot_file}")

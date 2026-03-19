@@ -546,6 +546,9 @@ class MPMSolver:
             base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
             coeff = self.particles.p_vol * weight
 
+
+            dP_dF = ti.Matrix.zero(self.float_type, ti.static(self.dim * self.dim), ti.static(self.dim * self.dim))
+
             if ti.static(self.dim == 2):
                 # 确保行列式为正 (2D)
                 if U.determinant() < 0:
@@ -607,8 +610,6 @@ class MPMSolver:
                 M[3, 3] = B_11
                 M[2, 0] = d2Psi_dsigma2_01
                 M[2, 2] = d2Psi_dsigma2_11
-
-                dP_dF = ti.Matrix.zero(self.float_type, 4, 4)
                 for j in ti.static(range(2)):
                     for i in ti.static(range(2)):
                         ij = j * 2 + i
@@ -692,7 +693,6 @@ class MPMSolver:
                      [BLC_12 - rC_12, BLC_12 + rC_12]]))
 
                 # 构建9x9 dP_dF矩阵 (3D)
-                dP_dF = ti.Matrix.zero(self.float_type, 9, 9)
                 for j in ti.static(range(3)):
                     for i in ti.static(range(3)):
                         ij = j * 3 + i

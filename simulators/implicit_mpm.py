@@ -3,6 +3,7 @@ import time
 import gc
 import math
 import numpy as np
+import cv2
 
 import sys
 import os
@@ -14,7 +15,9 @@ from Geometry.Particles import Particles
 from simulators.mpm_solver import MPMSolver
 
 from Util.Config import Config
-
+from Util.Visualization import cv2_draw_particles, cv2_draw_particles_colored, FPSCounter
+from Util.ExperimentDir import create_experiment_directory
+from Util.StressIO import is_point_in_regions, compute_von_mises_stress, save_stress_frame, write_stress_stats_json
 from Util.Recorder import *
 
 from tools.performance_stats import SingleDomainPerformanceStats
@@ -124,10 +127,14 @@ class ImplicitMPM:
         self.render_scale = 1.0 / _max_side
 
         # 初始化GUI（如果不是no_gui模式）
+        self.gui = None  # ti.GUI 不再使用
+        self._win_name = "Implicit MPM"
+        self._fps_counter = FPSCounter()  # FPS 计数器
         if not self.no_gui:
-            self.gui = ti.GUI("Implicit MPM", res=(800, 800), fast_gui=True)
+            cv2.namedWindow(self._win_name, cv2.WINDOW_AUTOSIZE)
+            self._cv2_running = True
         else:
-            self.gui = None
+            self._cv2_running = False
 
         self._render_pos_np = None
         self._record_color_idx_np = None
@@ -533,7 +540,7 @@ class ImplicitMPM:
 
     def render(self):
         # 在无GUI模式下跳过渲染
-        if self.no_gui or self.gui is None:
+        if self.no_gui or not self._cv2_running:
             return
 
         self._ensure_render_buffers()
@@ -542,47 +549,22 @@ class ImplicitMPM:
         else:
             self._fill_render_pos_2d(self._render_pos_np)
 
-        # 使用ti.GUI的API（避免Vulkan依赖）
-        self.gui.clear(0x112F41)
-        self.gui.circles(self._render_pos_np, radius=3, color=0x66CCFF)
-        print(f"To Render frame {self.current_frame}")
-        self.gui.show()
-        print(f"Rendered frame {self.current_frame}")
+        # 用 cv2 渲染（非阻塞，避免 WSL2 XSync 卡死）
+        img = np.full((800, 800, 3), (65, 47, 17), dtype=np.uint8)  # 背景色 0x112F41
+        cv2_draw_particles(img, self._render_pos_np, radius=3, bgr_color=(255, 204, 102))  # 0x66CCFF
+        self._fps_counter.draw_on_image(img)  # 显示 FPS
+        cv2.imshow(self._win_name, img)
+        self._fps_counter.update()  # 更新 FPS 计数器
+        key = cv2.waitKey(1)
+        if key == ord('q') or key == 27:  # q 或 ESC 退出
+            self._cv2_running = False
+        elif cv2.getWindowProperty(self._win_name, cv2.WND_PROP_VISIBLE) < 1:
+            self._cv2_running = False
         if self.use_record and self.recorder is not None:
             print("Recording frame: ", len(self.recorder.frame_data) + 1)
             self._fill_boundary_flags(self._record_color_idx_np)
             self.recorder.capture(self._render_pos_np, self._record_color_idx_np)
     
-    def _is_point_in_single_region(self, point, region_config):
-        """检查点是否在单个区域内"""
-        region_type = region_config.get("type", "rectangle")
-        params = region_config.get("params", {})
-        
-        if region_type == "rectangle":
-            rect_range = params.get("range", [])
-            if len(rect_range) != self.dim:
-                return False
-            
-            for d in range(self.dim):
-                if point[d] < rect_range[d][0] or point[d] > rect_range[d][1]:
-                    return False
-            return True
-            
-        elif region_type == "ellipse":
-            center = params.get("center", [0.5] * self.dim)
-            semi_axes = params.get("semi_axes", [0.1] * self.dim)
-            
-            if len(center) != self.dim or len(semi_axes) != self.dim:
-                return False
-            
-            sum_normalized = 0.0
-            for d in range(self.dim):
-                diff = point[d] - center[d]
-                sum_normalized += (diff / semi_axes[d])**2
-            return sum_normalized <= 1.0
-        
-        return False
-
     def _weight_gauss_data_to_grid(self):
         """将高斯积分点的应力应变数据按权重加权到网格位置"""
         from Geometry.GaussQuadrature import GaussQuadrature
@@ -683,44 +665,9 @@ class ImplicitMPM:
 
         return result_stress, result_strain, result_positions
 
-    def _is_point_in_regions(self, point, regions_config):
-        """检查点是否在指定区域内（支持多个区域）"""
-        # 如果是单个区域配置（字典），转换为列表
-        if isinstance(regions_config, dict):
-            regions_config = [regions_config]
-        
-        # 检查点是否在任意一个区域内
-        for region in regions_config:
-            if self._is_point_in_single_region(point, region):
-                return True
-        
-        return False
-
     def _create_experiment_directory(self, config_path=None):
-        """创建实验目录并备份配置文件"""
-        import json
-        import os
-        import shutil
-        from datetime import datetime
-
-        # 创建带时间戳的主实验目录
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_output_dir = "experiment_results"
-        experiment_name = f"single_domain_{timestamp}"
-        experiment_dir = os.path.join(base_output_dir, experiment_name)
-        os.makedirs(experiment_dir, exist_ok=True)
-
-        # 备份配置文件
-        if config_path and os.path.exists(config_path):
-            config_backup_path = os.path.join(experiment_dir, "config_backup.json")
-            shutil.copy2(config_path, config_backup_path)
-            print(f"配置文件已备份到: {config_backup_path}")
-
-        # 创建stress_data子目录
-        stress_data_dir = os.path.join(experiment_dir, "stress_data")
-        os.makedirs(stress_data_dir, exist_ok=True)
-
-        return experiment_dir, stress_data_dir
+        """创建实验目录并备份配置文件（委托给 Util.ExperimentDir）"""
+        return create_experiment_directory("single_domain", config_path)
 
     def save_stress_data(self, frame_number):
         """保存指定帧的应力数据"""
@@ -754,7 +701,7 @@ class ImplicitMPM:
         if stress_output_regions is not None:
             print("应用应力输出区域过滤...")
             # 应用区域过滤
-            region_mask = np.array([self._is_point_in_regions(pos, stress_output_regions) for pos in positions])
+            region_mask = np.array([is_point_in_regions(pos, stress_output_regions, self.dim) for pos in positions])
             valid_mask = valid_mask & region_mask
             print(f"区域过滤后剩余 {np.sum(region_mask)} / {len(positions)} 个粒子")
 
@@ -772,19 +719,34 @@ class ImplicitMPM:
 
         # 为当前帧创建单独的子目录
         frame_dir = f"{self._stress_data_dir}/frame_{frame_number}"
-        os.makedirs(frame_dir, exist_ok=True)
 
-        # 保存为numpy文件（用于可视化）到该帧的子目录
-        np.save(f"{frame_dir}/stress.npy", filtered_stress_data)
-        np.save(f"{frame_dir}/positions.npy", filtered_positions)
-        np.save(f"{frame_dir}/boundary_flags.npy", filtered_boundary_flags)
-
-        # 保存网格应力（基于F_grid）及网格质量
+        # 获取网格应力（基于F_grid）及网格质量
         grid_stress, grid_mass, grid_meta = self.solver.get_grid_stress_from_F_grid_numpy()
-        np.save(f"{frame_dir}/grid_stress.npy", grid_stress)
-        np.save(f"{frame_dir}/grid_mass.npy", grid_mass)
-        with open(f"{frame_dir}/grid_stress_meta.json", 'w') as f:
-            json.dump(grid_meta, f, indent=2)
+
+        # 计算 von Mises 应力
+        von_mises_stress = compute_von_mises_stress(filtered_stress_data, self.dim)
+
+        # 保存 actual mass 信息
+        actual_masses = None
+        try:
+            actual_masses = self.solver.get_volume_force_masses()
+            if actual_masses:
+                print(f"Saved actual masses: {actual_masses}")
+        except Exception as e:
+            print(f"Warning: Could not save actual masses: {e}")
+
+        # 使用 Util 函数保存文件
+        save_stress_frame(
+            frame_dir,
+            filtered_stress_data,
+            filtered_positions,
+            filtered_boundary_flags,
+            grid_stress,
+            grid_mass,
+            grid_meta,
+            von_mises_stress,
+            actual_masses=actual_masses,
+        )
 
         print(
             f"网格应力已保存: shape={grid_stress.shape}, "
@@ -792,46 +754,17 @@ class ImplicitMPM:
             f"invalid_J网格数={grid_meta['invalid_j_count']}"
         )
 
-        # 保存actual mass信息到该帧的子目录
-        try:
-            actual_masses = self.solver.get_volume_force_masses()
-            if actual_masses:
-                np.save(f"{frame_dir}/actual_masses.npy", np.array(actual_masses))
-                print(f"Saved actual masses: {actual_masses}")
-        except Exception as e:
-            print(f"Warning: Could not save actual masses: {e}")
-        
-        # 计算应力标量值（von Mises应力）- 使用过滤后的数据
-        von_mises_stress = []
-        for i in range(filtered_stress_data.shape[0]):
-            if self.dim == 2:
-                s = filtered_stress_data[i]
-                # 2D von Mises应力
-                von_mises = np.sqrt(s[0,0]**2 + s[1,1]**2 - s[0,0]*s[1,1] + 3*s[0,1]**2)
-            else:
-                # 3D von Mises应力
-                s = filtered_stress_data[i]
-                von_mises = np.sqrt(0.5*((s[0,0]-s[1,1])**2 + (s[1,1]-s[2,2])**2 + (s[2,2]-s[0,0])**2) + 3*(s[0,1]**2 + s[1,2]**2 + s[2,0]**2))
-            von_mises_stress.append(von_mises)
-        
         # 保存统计信息
-        stats = {
-            "frame": frame_number,
-            "n_particles": int(filtered_stress_data.shape[0]),
-            "n_particles_total": int(stress_data.shape[0]),
-            "n_particles_filtered": int(np.sum(~valid_mask)),
-            "dimension": int(self.dim),
-            "stress_output_regions": stress_output_regions,
-            "von_mises_stress": {
-                "min": float(np.min(von_mises_stress)),
-                "max": float(np.max(von_mises_stress)),
-                "mean": float(np.mean(von_mises_stress)),
-                "std": float(np.std(von_mises_stress))
-            }
-        }
-        
-        with open(f"{frame_dir}/stress_stats.json", 'w') as f:
-            json.dump(stats, f, indent=2)
+        stats = write_stress_stats_json(
+            frame_dir,
+            frame_number,
+            filtered_stress_data.shape[0],
+            stress_data.shape[0],
+            int(np.sum(~valid_mask)),
+            self.dim,
+            von_mises_stress,
+            stress_output_regions=stress_output_regions,
+        )
 
         print(f"应力数据已保存到 {self._experiment_dir}/")
         print(f"stress数据保存在: {self._stress_data_dir}/")
@@ -905,7 +838,7 @@ if __name__ == "__main__":
         _last_render_t = 0.0
         gc.disable()  # 禁用GC以避免render中临时numpy数组触发周期性GC暂停
         try:
-            while (i < max_frames) and ((mpm.gui is not None and mpm.gui.running) or mpm.no_gui):
+            while (i < max_frames) and (mpm._cv2_running or mpm.no_gui):
                mpm.step()
                _now = time.perf_counter()
                if _now - _last_render_t >= _render_interval:
