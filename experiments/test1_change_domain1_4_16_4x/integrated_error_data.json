@@ -1,0 +1,18 @@
+{
+    "grid_sizes": [
+        100
+    ],
+    "dx_values": [
+        0.004
+    ],
+    "integrated_errors_xx": [
+        22.337162465267333
+    ],
+    "integrated_errors_yy": [
+        16.91634805392376
+    ],
+    "integrated_errors_total": [
+        19.626755259595548
+    ],
+    "convergence_rate": -0.26957482303441843
+}

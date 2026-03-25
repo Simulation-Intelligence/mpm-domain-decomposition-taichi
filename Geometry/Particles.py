@@ -97,7 +97,7 @@ class Particles:
         if self.sampling_method == "gauss":
             self.p_vol = self.grid_cell_volume / 4 / self.particles_per_grid  # gauss采样使用更小的体积
         self.boundary_size = config.get("boundary_size", None)
-        self.init_vel_y = config.get("initial_velocity_y", -1)
+        self.init_vel_y = config.get("initial_velocity_y", 0)
         
         # 材料参数表
         self.material_params = self._parse_material_params(config)
@@ -231,13 +231,55 @@ class Particles:
     @ti.func
     def get_material_params(self, particle_id):
         """获取指定粒子的材料参数(Taichi函数)"""
-        material_id = self.particle_material_id[particle_id]
-        mu, lam = 0.0, 0.0
-        if material_id == 0:
-            mu, lam = self.mu_1, self.lam_1
-        else:
-            mu, lam = self.mu_2, self.lam_2
-        return mu, lam
+        return self.particle_mu[particle_id], self.particle_lam[particle_id]
+
+    @ti.kernel
+    def _init_material_fields_from_id(self):
+        """从 material_id 系统初始化 per-particle mu/lam 字段（向后兼容）"""
+        for p in range(self.n_particles):
+            if self.particle_material_id[p] == 0:
+                self.particle_mu[p]  = self.mu_1
+                self.particle_lam[p] = self.lam_1
+            else:
+                self.particle_mu[p]  = self.mu_2
+                self.particle_lam[p] = self.lam_2
+
+    def setup_spatial_material(self, config):
+        """若 config 包含 material_distribution，按空间坐标覆盖 per-particle mu/lam"""
+        dist = config.get("material_distribution", None)
+        if dist is None:
+            return
+        if dist["type"] == "smoothstep_x":
+            self._apply_smoothstep_x(dist)
+
+    def _apply_smoothstep_x(self, dist):
+        """Smoothstep 插值：x 轴方向软区→硬区，更新 particle_mu / particle_lam"""
+        x_pos  = self.x.to_numpy()[:, 0]
+        mu_arr  = self.particle_mu.to_numpy().copy()
+        lam_arr = self.particle_lam.to_numpy().copy()
+        nu       = dist["nu"]
+        E_soft   = dist["E_soft"]
+        E_hard   = dist["E_hard"]
+        x_lo     = dist["x_soft_lo"]
+        x_hi     = dist["x_soft_hi"]
+        x_trans  = dist["x_trans"]
+        cx       = 0.5 * (x_lo + x_hi)
+        half_soft = 0.5 * (x_hi - x_lo)
+        for i in range(self.n_particles):
+            abs_dx = abs(x_pos[i] - cx)
+            if abs_dx <= half_soft:
+                E = E_soft
+            elif abs_dx >= half_soft + x_trans:
+                E = E_hard
+            else:
+                t = (abs_dx - half_soft) / x_trans
+                smooth = 3*t*t - 2*t*t*t
+                E = E_soft + (E_hard - E_soft) * smooth
+            mu_arr[i]  = E / (2.0 * (1.0 + nu))
+            lam_arr[i] = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
+        dtype = np.float32 if self.float_type == ti.f32 else np.float64
+        self.particle_mu.from_numpy(mu_arr.astype(dtype))
+        self.particle_lam.from_numpy(lam_arr.astype(dtype))
 
     @ti.func
     def get_particle_mass(self, particle_id):
@@ -401,6 +443,10 @@ class Particles:
         # 边界和材料ID字段
         self.is_boundary_particle = ti.field(ti.i32, self.n_particles)
         self.particle_material_id = ti.field(ti.i32, self.n_particles)
+
+        # per-particle 材料参数字段（支持空间变化材料）
+        self.particle_mu  = ti.field(self.float_type, self.n_particles)
+        self.particle_lam = ti.field(self.float_type, self.n_particles)
 
         # move_boundary相关字段
         self.is_move_boundary_particle = ti.field(ti.i32, self.n_particles)
@@ -579,25 +625,24 @@ class Particles:
     def mark_particles_in_region(self, start_region: ti.types.ndarray(), displacement: ti.types.ndarray()):
         """标记指定区域内的边界粒子用于移动"""
         for i in range(self.n_particles):
-            if self.is_boundary_particle[i]:
-                pos = self.x[i]
-                in_region = True
+            pos = self.x[i]
+            in_region = True
 
-                # 检查是否在起始区域内
+            # 检查是否在起始区域内
+            for d in ti.static(range(self.dim)):
+                if not (start_region[d, 0] <= pos[d] <= start_region[d, 1]):
+                    in_region = False
+
+            if in_region and self.is_boundary_particle[i]:
+                self.is_move_boundary_particle[i] = 1
+                # 计算目标位置
+                target_pos = pos
                 for d in ti.static(range(self.dim)):
-                    if not (start_region[d, 0] <= pos[d] <= start_region[d, 1]):
-                        in_region = False
-
-                if in_region:
-                    self.is_move_boundary_particle[i] = 1
-                    # 计算目标位置
-                    target_pos = pos
-                    for d in ti.static(range(self.dim)):
-                        if d < displacement.shape[0]:
-                            target_pos[d] += displacement[d]
-                    self.target_position[i] = target_pos
+                    if d < displacement.shape[0]:
+                        target_pos[d] += displacement[d]
+                self.target_position[i] = target_pos
             else:
-                    self.is_move_boundary_particle[i] = 0
+                self.is_move_boundary_particle[i] = 0
 
 
     def setup_move_boundary(self, grid):
@@ -605,10 +650,105 @@ class Particles:
         if not hasattr(grid, 'has_move_boundary') or not grid.has_move_boundary:
             return
 
-        # 将numpy数组转换为适当的格式
-        start_region_np = np.array(grid.move_start_region, dtype=np.float32 if grid.float_type == ti.f32 else np.float64)
-        displacement_np = np.array(grid.move_displacement, dtype=np.float32 if grid.float_type == ti.f32 else np.float64)
+        dtype = np.float32 if grid.float_type == ti.f32 else np.float64
+        start_region = list(grid.move_start_region)  # [[x0,x1],[y0,y1],...]
+
+        # select_x_max：找到区域内边界粒子中 x 最大值，收窄到最右一列（宽度 = 0.1 dx）
+        if getattr(grid, 'move_select_x_max', False):
+            positions = self.x.to_numpy()
+            is_boundary = self.is_boundary_particle.to_numpy()
+            sr = start_region
+            mask = np.ones(len(positions), dtype=bool)
+            for d in range(self.dim):
+                mask &= (positions[:, d] >= sr[d][0]) & (positions[:, d] <= sr[d][1])
+            mask &= is_boundary.astype(bool)
+            if mask.any():
+                x_max = positions[mask, 0].max()
+                half_width = 0.05 * grid.dx_x  # ±0.05 dx，总宽约 0.1 dx
+                start_region = list(start_region)
+                start_region[0] = [x_max - half_width, x_max + half_width]
+                print(f"[move_boundary] select_x_max: x 范围收窄到 [{start_region[0][0]:.6f}, {start_region[0][1]:.6f}]")
+            else:
+                print("[move_boundary] select_x_max: 区域内未找到边界粒子，跳过收窄")
+
+        start_region_np = np.array(start_region, dtype=dtype)
+        displacement_np = np.array(grid.move_displacement, dtype=dtype)
 
         # 标记移动边界粒子
         self.mark_move_boundary_particles(start_region_np, displacement_np)
 
+    @ti.kernel
+    def mark_particles_arc_2d(self, start_region: ti.types.ndarray(),
+                               center: ti.types.ndarray(),
+                               trig: ti.types.ndarray()):
+        """标记2D弧形边界粒子，计算旋转后的目标位置。trig = [cos(angle), sin(angle)]"""
+        for i in range(self.n_particles):
+            if self.is_boundary_particle[i]:
+                pos = self.x[i]
+                in_region = True
+                for d in ti.static(range(self.dim)):
+                    if not (start_region[d, 0] <= pos[d] <= start_region[d, 1]):
+                        in_region = False
+                if in_region:
+                    self.is_move_boundary_particle[i] = 1
+                    dx = pos[0] - center[0]
+                    dy = pos[1] - center[1]
+                    self.target_position[i] = ti.Vector([
+                        trig[0] * dx - trig[1] * dy + center[0],
+                        trig[1] * dx + trig[0] * dy + center[1]
+                    ])
+            else:
+                self.is_move_boundary_particle[i] = 0
+
+    @ti.kernel
+    def mark_particles_arc_3d(self, start_region: ti.types.ndarray(),
+                               center: ti.types.ndarray(),
+                               axis: ti.types.ndarray(),
+                               trig: ti.types.ndarray()):
+        """标记3D弧形边界粒子，使用Rodrigues旋转公式。trig = [cos(angle), sin(angle)]"""
+        for i in range(self.n_particles):
+            if self.is_boundary_particle[i]:
+                pos = self.x[i]
+                in_region = True
+                for d in ti.static(range(self.dim)):
+                    if not (start_region[d, 0] <= pos[d] <= start_region[d, 1]):
+                        in_region = False
+                if in_region:
+                    self.is_move_boundary_particle[i] = 1
+                    vx = pos[0] - center[0]
+                    vy = pos[1] - center[1]
+                    vz = pos[2] - center[2]
+                    kx, ky, kz = axis[0], axis[1], axis[2]
+                    kdotv = kx * vx + ky * vy + kz * vz
+                    cos_a, sin_a = trig[0], trig[1]
+                    self.target_position[i] = ti.Vector([
+                        vx * cos_a + (ky * vz - kz * vy) * sin_a + kx * kdotv * (1.0 - cos_a) + center[0],
+                        vy * cos_a + (kz * vx - kx * vz) * sin_a + ky * kdotv * (1.0 - cos_a) + center[1],
+                        vz * cos_a + (kx * vy - ky * vx) * sin_a + kz * kdotv * (1.0 - cos_a) + center[2]
+                    ])
+            else:
+                self.is_move_boundary_particle[i] = 0
+
+    def setup_arc_boundary(self, grid):
+        """设置弧形边界（支持多个），将各start_region内的边界粒子目标位置设为旋转后的位置"""
+        import math
+        if not hasattr(grid, 'has_arc_boundary') or not grid.has_arc_boundary:
+            return
+
+        dtype = np.float32 if grid.float_type == ti.f32 else np.float64
+
+        for cfg in grid.arc_boundary_configs:
+            start_region = cfg.get("start_region", [[0.0, 1.0]] * grid.dim)
+            center = cfg.get("center", [0.5] * grid.dim)
+            angle = cfg.get("angle", 0.1)
+            sr_np = np.array(start_region, dtype=dtype)       # shape (dim, 2)
+            center_np = np.array(center, dtype=dtype)
+            trig_np = np.array([math.cos(angle), math.sin(angle)], dtype=dtype)
+
+            if grid.dim == 2:
+                self.mark_particles_arc_2d(sr_np, center_np, trig_np)
+            else:
+                axis = cfg.get("axis", [0.0, 0.0, 1.0])
+                norm = math.sqrt(sum(a * a for a in axis))
+                axis_np = np.array([a / norm for a in axis], dtype=dtype)
+                self.mark_particles_arc_3d(sr_np, center_np, axis_np, trig_np)

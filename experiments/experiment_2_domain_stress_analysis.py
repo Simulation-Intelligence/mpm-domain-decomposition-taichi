@@ -10,6 +10,8 @@ import numpy as np
 import sys
 import os
 import gc
+import signal
+import subprocess
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend to avoid segfault with Taichi
 import matplotlib.pyplot as plt
@@ -22,6 +24,31 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from simulators.implicit_mpm import ImplicitMPM
 from Util.Config import Config
 import taichi as ti
+
+class SimulationInterrupted(Exception):
+    """子进程被中断（用户 kill 或 Ctrl+C）"""
+    pass
+
+
+# 当前运行的子进程，供信号处理器访问
+_current_proc: subprocess.Popen = None
+
+
+def _sigint_handler(signum, frame):
+    """收到 SIGINT 时终止当前子进程，然后让批量循环跳过该实验"""
+    global _current_proc
+    if _current_proc is not None and _current_proc.poll() is None:
+        print("\n[信号] 收到中断，终止当前模拟子进程...")
+        _current_proc.terminate()
+        try:
+            _current_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _current_proc.kill()
+    raise SimulationInterrupted("用户中断")
+
+
+signal.signal(signal.SIGINT, _sigint_handler)
+
 
 def load_config(config_path):
     with open(config_path, 'r') as f:
@@ -92,7 +119,7 @@ def run_simulation(config_path, use_schwarz=False):
     """
     通过subprocess运行模拟，避免Taichi和matplotlib冲突
     """
-    import subprocess
+    global _current_proc
     import glob
 
     print(f"运行模拟: {config_path}")
@@ -106,18 +133,25 @@ def run_simulation(config_path, use_schwarz=False):
         ]
         print(f"执行命令: {' '.join(cmd)}")
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        _current_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout, stderr = _current_proc.communicate()
+        returncode = _current_proc.returncode
+        _current_proc = None
+
+        # 被信号杀死（用户 kill）
+        if returncode < 0:
+            raise SimulationInterrupted(f"子进程被信号 {-returncode} 终止")
 
         # 退出码-11是segfault，通常发生在模拟完成、数据保存后的绘图阶段
         # 只要数据保存成功就继续
-        if result.returncode == -11:
+        if returncode == -11:
             print("警告: 进程以segfault结束（退出码-11），这通常发生在性能统计绘图时")
             print("检查数据文件是否已保存...")
-        elif result.returncode != 0:
+        elif returncode != 0:
             print("模拟失败！")
-            print("STDOUT:", result.stdout)
-            print("STDERR:", result.stderr)
-            raise RuntimeError(f"Schwarz simulation failed with code {result.returncode}")
+            print("STDOUT:", stdout)
+            print("STDERR:", stderr)
+            raise RuntimeError(f"Schwarz simulation failed with code {returncode}")
 
         print("加载结果数据...")
 
@@ -158,7 +192,7 @@ def run_simulation(config_path, use_schwarz=False):
         # 验证一下positions2的范围是否合理
         print(f"Domain2位置范围: x=[{positions2[:, 0].min():.3f}, {positions2[:, 0].max():.3f}], y=[{positions2[:, 1].min():.3f}, {positions2[:, 1].max():.3f}]")
 
-        return (positions1, stresses1, positions2, stresses2)
+        return (positions1, stresses1, positions2, stresses2), latest_dir
     else:
         # 单域模式：调用 implicit_mpm.py
         cmd = [
@@ -168,13 +202,20 @@ def run_simulation(config_path, use_schwarz=False):
         ]
         print(f"执行命令: {' '.join(cmd)}")
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        _current_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout, stderr = _current_proc.communicate()
+        returncode = _current_proc.returncode
+        _current_proc = None
 
-        if result.returncode != 0:
+        # 被信号杀死（用户 kill）
+        if returncode < 0:
+            raise SimulationInterrupted(f"子进程被信号 {-returncode} 终止")
+
+        if returncode != 0:
             print("模拟失败！")
-            print("STDOUT:", result.stdout)
-            print("STDERR:", result.stderr)
-            raise RuntimeError(f"Simulation failed with code {result.returncode}")
+            print("STDOUT:", stdout)
+            print("STDERR:", stderr)
+            raise RuntimeError(f"Simulation failed with code {returncode}")
 
         print("模拟完成，加载结果数据...")
 
@@ -219,7 +260,7 @@ def run_simulation(config_path, use_schwarz=False):
 
         print(f"加载了 {len(positions)} 个粒子的数据")
 
-        return (positions, stresses)
+        return (positions, stresses), latest_exp_dir
 
 def merge_schwarz_domains(positions1, stresses1, positions2, stresses2, config):
     """
@@ -684,7 +725,7 @@ def run_single_experiment(config_path, grid_size, output_dir, use_schwarz=False)
     config = load_config(config_path)
 
     # 运行模拟
-    sim_results = run_simulation(config_path, use_schwarz)
+    sim_results, sim_result_dir = run_simulation(config_path, use_schwarz)
 
     # 分析和绘图
     if use_schwarz:
@@ -696,6 +737,15 @@ def run_single_experiment(config_path, grid_size, output_dir, use_schwarz=False)
     # 保存配置备份
     config_backup_path = os.path.join(output_dir, 'config_backup.json')
     save_config(config, config_backup_path)
+
+    # 拷贝模拟结果目录到 grid_** 下
+    import shutil
+    dest = os.path.join(output_dir, os.path.basename(sim_result_dir))
+    if os.path.exists(sim_result_dir) and not os.path.exists(dest):
+        print(f"拷贝结果目录: {sim_result_dir} → {dest}")
+        shutil.copytree(sim_result_dir, dest)
+    elif os.path.exists(dest):
+        print(f"目标目录已存在，跳过拷贝: {dest}")
 
     print(f"实验完成! 结果保存到: {output_dir}")
 
@@ -716,8 +766,25 @@ def run_batch_experiments(args):
     print("=" * 80)
 
     # 生成网格大小列表
-    grid_sizes = list(range(args.grid_start, args.grid_end + 1, args.grid_step))
-    print(f"网格大小列表: {grid_sizes}")
+    if args.dx_start is not None and args.dx_end is not None and args.dx_step is not None:
+        # 从 dx 范围推导 grid_size
+        base_config_for_dx = load_config(args.config)
+        if args.schwarz:
+            domain_w = base_config_for_dx.get('Domain2', {}).get('domain_width', 1.0)
+        else:
+            domain_w = base_config_for_dx.get('domain_width', 1.0)
+        dx_values = []
+        dx = args.dx_start
+        while dx <= args.dx_end + 1e-12:
+            dx_values.append(dx)
+            dx += args.dx_step
+        dx_values = list(reversed(dx_values))  # 从大 dx（粗网格）到小 dx（细网格）
+        grid_sizes = [max(1, round(domain_w / d)) for d in dx_values]
+        print(f"dx 列表:     {[round(d, 6) for d in dx_values]}")
+        print(f"网格大小列表: {grid_sizes}")
+    else:
+        grid_sizes = list(range(args.grid_start, args.grid_end + 1, args.grid_step))
+        print(f"网格大小列表: {grid_sizes}")
     print(f"总共 {len(grid_sizes)} 个实验")
 
     # 加载基础配置
@@ -773,6 +840,13 @@ def run_batch_experiments(args):
             del modified_config
             gc.collect()
 
+        except SimulationInterrupted as e:
+            print(f"⚠ 实验 {i+1} 被中断（grid_{grid_size}）: {e}")
+            print("跳过该实验，继续下一个...")
+            results['failed_runs'].append(grid_size)
+            if os.path.exists(temp_config_path):
+                os.remove(temp_config_path)
+
         except Exception as e:
             print(f"✗ 实验 {i+1} 失败: {e}")
             import traceback
@@ -818,11 +892,17 @@ def main():
     parser.add_argument('--batch-mode', action='store_true',
                        help='启用批量模式：运行多个不同网格分辨率的实验')
     parser.add_argument('--grid-start', type=int, default=40,
-                       help='批量模式：起始网格大小 (默认: 20)')
+                       help='批量模式：起始网格大小 (默认: 40)')
     parser.add_argument('--grid-end', type=int, default=100,
-                       help='批量模式：结束网格大小 (默认: 80)')
+                       help='批量模式：结束网格大小 (默认: 100)')
     parser.add_argument('--grid-step', type=int, default=20,
                        help='批量模式：网格大小步长 (默认: 20)')
+    parser.add_argument('--dx-start', type=float, default=None,
+                       help='批量模式：起始 dx（与 --dx-end/--dx-step 配合使用，优先于 --grid-* 参数）')
+    parser.add_argument('--dx-end', type=float, default=None,
+                       help='批量模式：结束 dx')
+    parser.add_argument('--dx-step', type=float, default=None,
+                       help='批量模式：dx 步长')
 
     args = parser.parse_args()
 

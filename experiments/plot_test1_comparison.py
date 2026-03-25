@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import sys
@@ -9,13 +10,46 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from tools.plot_style import apply_cmame_style
 apply_cmame_style()
 
-# ── Load data ────────────────────────────────────────────────────────────────
-with open('useful_results/test1_batch/integrated_error_data.json') as f:
-    single = json.load(f)
-with open('useful_results/test1_schwarz_2/integrated_error_data.json') as f:
-    dual = json.load(f)
 
-output_dir = 'useful_results/test1_comparison'
+def load_experiment_data(exp_dir):
+    """Load error + timing data from an experiment directory.
+
+    Error data comes from integrated_error_data.json.
+    Timing data is loaded per-grid from grid_<N>/timing.json,
+    iterated in grid_sizes order.
+    """
+    with open(os.path.join(exp_dir, 'integrated_error_data.json')) as f:
+        data = json.load(f)
+
+    for gs in data['grid_sizes']:
+        t_path = os.path.join(exp_dir, f'grid_{gs}', 'timing.json')
+        if not os.path.exists(t_path):
+            continue
+        with open(t_path) as f:
+            t = json.load(f)
+        for key in ('solve_time', 'other_time', 'total_time',
+                    'big_domain_solve_time', 'small_domain_solve_time'):
+            if key in t:
+                data.setdefault(key, []).append(t[key])
+
+    return data
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+parser = argparse.ArgumentParser(description='Plot single vs dual domain comparison')
+parser.add_argument('--single-dir', default='useful_results/test1_batch',
+                    help='Single-domain experiment directory')
+parser.add_argument('--dual-dir',   default='useful_results/test1_schwarz_2',
+                    help='Dual-domain experiment directory')
+parser.add_argument('--output-dir', default='useful_results/test1_comparison',
+                    help='Output directory for PDFs')
+args = parser.parse_args()
+
+# ── Load data ────────────────────────────────────────────────────────────────
+single = load_experiment_data(args.single_dir)
+dual   = load_experiment_data(args.dual_dir)
+
+output_dir = args.output_dir
 os.makedirs(output_dir, exist_ok=True)
 
 dx_values = np.array(single['dx_values'])   # same for both: [0.02, 0.01, 0.00667, 0.005]
@@ -98,7 +132,7 @@ ax2.set_ylabel(r'Normalized integrated error (Pa)')
 # Combined legend
 lines1, labels1 = ax1.get_legend_handles_labels()
 lines2, labels2 = ax2.get_legend_handles_labels()
-ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', bbox_to_anchor=(0.0, 0.85))
 
 plt.savefig(os.path.join(output_dir, 'time_error_comparison.pdf'))
 plt.close()

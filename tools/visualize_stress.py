@@ -707,8 +707,8 @@ def visualize_stress_2d(positions, von_mises, frame_number, save_path=None, use_
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Image saved to: {save_path}")
-
-    plt.show()
+    else:
+        plt.show()
     plt.close()  # 显式关闭figure以释放内存
 
 
@@ -825,8 +825,8 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Dual domain stress image saved to: {save_path}")
-
-    plt.show()
+    else:
+        plt.show()
     plt.close()  # 显式关闭figure以释放内存
 
 def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=False, stress_cmap=None, max_stress=None, particle_size=None, averaging_radius=None, use_discrete=True, n_levels=10):
@@ -935,8 +935,8 @@ def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=Fals
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Dual domain combined stress image saved to: {save_path}")
-
-    plt.show()
+    else:
+        plt.show()
     plt.close()  # 显式关闭figure以释放内存
 
 
@@ -997,8 +997,8 @@ def visualize_stress_3d(positions, von_mises, frame_number, save_path=None, use_
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Image saved to: {save_path}")
-
-    plt.show()
+    else:
+        plt.show()
     plt.close()
 
 
@@ -1099,8 +1099,8 @@ def visualize_schwarz_stress_3d(data_dict, save_path=None, use_log=False, stress
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Dual domain stress image saved to: {save_path}")
-
-    plt.show()
+    else:
+        plt.show()
     plt.close()
 
 
@@ -1196,8 +1196,8 @@ def visualize_schwarz_stress_combined_3d(data_dict, save_path=None, use_log=Fals
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Dual domain combined stress image saved to: {save_path}")
-
-    plt.show()
+    else:
+        plt.show()
     plt.close()
 
 

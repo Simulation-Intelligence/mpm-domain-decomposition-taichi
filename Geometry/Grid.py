@@ -136,11 +136,17 @@ class Grid:
         # move_boundary功能配置
         self.move_boundary_config = config.get("move_boundary", None)
         self.has_move_boundary = self.move_boundary_config is not None
+        self.has_arc_boundary = False  # 默认值，后面arc_boundary块可能覆盖
         if self.has_move_boundary:
             # 解析move_boundary配置
             self.move_start_region = self.move_boundary_config.get("start_region", [[0.0, 0.1], [0.0, 0.1]])
             self.move_displacement = self.move_boundary_config.get("displacement", [0.1, 0.0])
             self.move_speed = self.move_boundary_config.get("speed", 1.0)
+            # select_x_max=true：自动收窄到区域内 x 最大的一列粒子
+            self.move_select_x_max = bool(self.move_boundary_config.get("select_x_max", False))
+
+            # 根据配置的displacement确定哪些轴需要约束（只在配置displacement非零的轴上施加边界条件）
+            self.move_constrain_axes = [abs(float(d)) > 1e-10 for d in self.move_displacement]
 
             # 新的位移插值字段
             self.move_displacement_field = ti.Vector.field(self.dim, self.float_type, shape=grid_shape)
@@ -151,6 +157,32 @@ class Grid:
 
             # 初始化状态
             self.move_boundary_active[None] = 1
+
+        # arc_boundary功能配置（复用move_boundary的grid字段）
+        # 支持单个 dict 或 list of dicts，统一存为列表
+        raw_arc = config.get("arc_boundary", None)
+        if raw_arc is None:
+            self.arc_boundary_configs = []
+        elif isinstance(raw_arc, dict):
+            self.arc_boundary_configs = [raw_arc]
+        else:
+            self.arc_boundary_configs = list(raw_arc)
+        self.arc_boundary_config = self.arc_boundary_configs[0] if self.arc_boundary_configs else None
+        self.has_arc_boundary = len(self.arc_boundary_configs) > 0
+
+        if self.has_arc_boundary:
+            if not self.has_move_boundary:
+                # 仅在没有move_boundary时分配字段（否则字段已由move_boundary分配）
+                # speed 取第一个 arc 配置的值
+                self.move_speed = self.arc_boundary_configs[0].get("speed", 1.0)
+                self.move_displacement_field = ti.Vector.field(self.dim, self.float_type, shape=grid_shape)
+                self.move_mass_field = ti.field(self.float_type, shape=grid_shape)
+                self.move_boundary_active = ti.field(ti.i32, shape=())
+                self.move_boundary_active[None] = 1
+                self.has_move_boundary = True  # 触发现有static分支
+            # arc_boundary：约束所有轴（无法从配置推断方向）
+            if not hasattr(self, 'move_constrain_axes'):
+                self.move_constrain_axes = [True] * self.dim
 
         # Mapping功能：压缩有质量的grid节点
         max_grid_points = self.get_total_grid_points()
@@ -387,22 +419,23 @@ class Grid:
                 if self.move_boundary_active[None] and self.move_mass_field[I] > 0:
                     # 计算归一化的位移向量
                     displacement = self.move_displacement_field[I]
-                    displacement_magnitude = displacement.norm()
 
                     # 计算网格间距
                     dx_min = ti.min(self.dx_x, self.dx_y)
                     if ti.static(self.dim == 3):
                         dx_min = ti.min(dx_min, self.dx_z)
 
-                    # if displacement_magnitude > dx_min:  # 只有当位移大于网格间距时才设置边界速度
-                        # 位移方向作为边界速度方向
-                    direction = displacement.normalized()
-                    # 使用配置的speed作为速度大小
-                    boundary_velocity = direction * self.move_speed *displacement_magnitude / dx_min
-
-                        # 设置为边界网格
-                    self.is_boundary_grid[I] = ti.Vector([1] * self.dim)
-                    self.boundary_v[I] = boundary_velocity
+                    # 只在配置displacement非零的轴上施加边界条件，其他轴保持自由。
+                    # move_constrain_axes 在初始化时从配置的displacement确定，避免粒子运动
+                    # 过程中产生的其他方向位移误判约束轴。
+                    for d in ti.static(range(self.dim)):
+                        if ti.static(self.move_constrain_axes[d]):
+                            self.is_boundary_grid[I][d] = 1
+                            disp_d = displacement[d] / dx_min
+                            sign_d = ti.math.sign(disp_d)
+                            self.boundary_v[I][d] = self.move_speed * sign_d * ti.abs(disp_d) ** (1.0 / 3.0)
+                        else:
+                            self.is_boundary_grid[I][d] = 0
 
             self.is_boundary_grid[I] = ti.max(self.is_boundary_grid[I], self.is_schwarz_boundary_grid[I])
 

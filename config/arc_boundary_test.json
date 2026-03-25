@@ -1,0 +1,59 @@
+{
+    "arch": "cpu",
+    "float_type": "f64",
+    "dim": 2,
+    "grid_nx": 100,
+    "grid_ny": 100,
+    "domain_width": 1.0,
+    "domain_height": 1.0,
+    "particles_per_grid": 4,
+    "sampling_method": "regular",
+    "elasticity_model": "neohookean",
+
+    "arc_boundary": [
+        {
+            "start_region": [[0.08, 0.12], [0.46, 0.54]],
+            "center": [0.48, 0.5],
+            "angle": -1.5708,
+            "speed": 0.01
+        },
+        {
+            "start_region": [[0.88, 0.92], [0.46, 0.54]],
+            "center": [0.52, 0.5],
+            "angle": 1.5708,
+            "speed": 0.001
+        }
+    ],
+    "boundary_size": 0.001,
+    "material_params": [
+        {
+            "id": 0,
+            "name": "beam",
+            "E": 1e4,
+            "nu": 0.3,
+            "rho": 1e3
+        }
+    ],
+
+    "shapes": [
+        {
+            "type": "rectangle",
+            "params": {"range": [[0.1, 0.9], [0.48, 0.52]]},
+            "operation": "add",
+            "material_id": 0
+        }
+    ],
+
+    "use_auto_diff": false,
+    "implicit": true,
+    "implicit_solver": "Newton",
+    "dt": 1e-3,
+    "max_iter": 1,
+    "solve_max_iter": 1000,
+    "gravity": [0.0, 0.0],
+    "bound": 3,
+    "eta": 1e-4,
+    "damping": 0.8,
+    "particle_damping": 0.99,
+    "max_frames": 5000
+}

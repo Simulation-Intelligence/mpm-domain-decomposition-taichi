@@ -85,9 +85,22 @@ class ImplicitMPM:
         # 初始化粒子体积力（在粒子数据生成后）
         self.solver.initialize_volume_forces()
 
-        # 设置移动边界（如果配置了move_boundary）
+        # 初始化 per-particle mu/lam 字段（必须在粒子生成之后、边界设置之前）
+        self.particles._init_material_fields_from_id()
+        self.particles.setup_spatial_material(config)
+
+        # 设置移动边界（如果配置了move_boundary或arc_boundary）
         if self.grid.has_move_boundary:
-            self.particles.setup_move_boundary(self.grid)
+            has_move = bool(self.grid.move_boundary_config)
+            has_arc  = self.grid.has_arc_boundary
+            if has_move and has_arc:
+                self._check_boundary_region_overlap()
+                self.particles.setup_move_boundary(self.grid)
+                self.particles.setup_arc_boundary(self.grid)
+            elif has_arc:
+                self.particles.setup_arc_boundary(self.grid)
+            else:
+                self.particles.setup_move_boundary(self.grid)
             self.grid.setup_move_boundary(self.particles)
 
         # 其他公共参数初始化
@@ -147,6 +160,7 @@ class ImplicitMPM:
         if self._render_pos_np is None or self._render_pos_np.shape[0] != n_particles:
             self._render_pos_np = np.zeros((n_particles, 2), dtype=np.float32)
             self._record_color_idx_np = np.zeros((n_particles,), dtype=np.uint32)
+            self._render_move_boundary_np = np.zeros((n_particles,), dtype=np.int32)
 
     def _apply_config_overrides(self, config: Config, overrides: dict = None):
         """
@@ -223,6 +237,25 @@ class ImplicitMPM:
         if ti.static(self.grid.dim == 3):
             result[2] = I[2] % self.grid.nz
         return result
+
+    @staticmethod
+    def _regions_overlap(r1, r2, dim):
+        for d in range(dim):
+            if max(r1[d][0], r2[d][0]) >= min(r1[d][1], r2[d][1]):
+                return False
+        return True
+
+    def _check_boundary_region_overlap(self):
+        """检查move_boundary和所有arc_boundary的start_region是否重叠，重叠则报错"""
+        move_region = self.grid.move_boundary_config.get("start_region")
+        for arc_cfg in self.grid.arc_boundary_configs:
+            arc_region = arc_cfg.get("start_region")
+            if self._regions_overlap(move_region, arc_region, self.grid.dim):
+                raise ValueError(
+                    f"move_boundary start_region {move_region} and "
+                    f"arc_boundary start_region {arc_region} overlap. "
+                    "Each particle can only belong to one boundary condition."
+                )
 
     def solve(self):
         if self.implicit:
@@ -538,6 +571,11 @@ class ImplicitMPM:
         for i in range(self.particles.is_boundary_particle.shape[0]):
             out[i] = ti.cast(self.particles.is_boundary_particle[i], ti.u32)
 
+    @ti.kernel
+    def _fill_move_boundary_flags(self, out: ti.types.ndarray()):
+        for i in range(self.particles.is_move_boundary_particle.shape[0]):
+            out[i] = self.particles.is_move_boundary_particle[i]
+
     def render(self):
         # 在无GUI模式下跳过渲染
         if self.no_gui or not self._cv2_running:
@@ -551,7 +589,15 @@ class ImplicitMPM:
 
         # 用 cv2 渲染（非阻塞，避免 WSL2 XSync 卡死）
         img = np.full((800, 800, 3), (65, 47, 17), dtype=np.uint8)  # 背景色 0x112F41
-        cv2_draw_particles(img, self._render_pos_np, radius=3, bgr_color=(255, 204, 102))  # 0x66CCFF
+        # 先画普通粒子，再叠加 move boundary 粒子（红色）
+        if hasattr(self.grid, 'has_move_boundary') and self.grid.has_move_boundary:
+            self._fill_move_boundary_flags(self._render_move_boundary_np)
+            mask_mb = self._render_move_boundary_np.astype(bool)
+            cv2_draw_particles(img, self._render_pos_np[~mask_mb], radius=3, bgr_color=(255, 204, 102))
+            if mask_mb.any():
+                cv2_draw_particles(img, self._render_pos_np[mask_mb], radius=4, bgr_color=(0, 0, 255))  # 红色
+        else:
+            cv2_draw_particles(img, self._render_pos_np, radius=3, bgr_color=(255, 204, 102))
         self._fps_counter.draw_on_image(img)  # 显示 FPS
         cv2.imshow(self._win_name, img)
         self._fps_counter.update()  # 更新 FPS 计数器

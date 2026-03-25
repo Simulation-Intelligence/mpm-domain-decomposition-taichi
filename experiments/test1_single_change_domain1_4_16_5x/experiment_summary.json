@@ -1,0 +1,23 @@
+{
+    "base_config": "config/config_2d_test1.json",
+    "grid_sizes": [
+        250,
+        125,
+        83,
+        62
+    ],
+    "successful_runs": [
+        250,
+        125,
+        83,
+        62
+    ],
+    "failed_runs": [],
+    "result_dirs": {
+        "250": "experiments/test1_single_change_domain1_4_16_5x/grid_250",
+        "125": "experiments/test1_single_change_domain1_4_16_5x/grid_125",
+        "83": "experiments/test1_single_change_domain1_4_16_5x/grid_83",
+        "62": "experiments/test1_single_change_domain1_4_16_5x/grid_62"
+    },
+    "completed_time": "2026-03-21T02:51:39.865021"
+}

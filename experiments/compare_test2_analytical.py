@@ -51,8 +51,8 @@ def read_rpt_file(filepath):
             except ValueError:
                 continue
 
-    x_arr = np.array(x_vals) / 1000.0   # mm → m
-    v_arr = np.array(v_vals) * 1e6 /10      # MPa → Pa
+    x_arr = np.array(x_vals) / 1000.0 +0.0055555556  # mm → m
+    v_arr = np.array(v_vals) * 1e6       # MPa → Pa
     return x_arr, v_arr
 
 
@@ -180,11 +180,14 @@ def bin_average(x, y, n_bins, x_range=None):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_domain2_xlim(grid_dir, x_offset=0.0):
-    """从 config_backup.json 读取 Domain2 的 x 坐标范围（减去 x_offset）。
+    """从 config_backup.json 读取 x 显示范围（减去 x_offset）。
+
+    双域：取 Domain2 的 offset + domain_width。
+    单域：无 Domain2 配置，返回 None（让绘图自动用解析解范围）。
 
     Returns
     -------
-    (x_min, x_max) or None if config not found
+    (x_min, x_max) or None if config not found / single domain
     """
     cfg_path = os.path.join(grid_dir, 'config_backup.json')
     if not os.path.exists(cfg_path):
@@ -194,18 +197,43 @@ def get_domain2_xlim(grid_dir, x_offset=0.0):
     d2 = cfg.get('Domain2', {})
     off_x = d2.get('offset', [0.0, 0.0])[0]
     width = d2.get('domain_width', 0.0)
+    if width == 0.0:
+        # 单域：无 Domain2，返回 None
+        return None
     return (off_x - x_offset, off_x + width - x_offset)
 
 
-def find_latest_frame_dir(grid_dir):
-    """在 grid_dir/schwarz_*/stress_data/ 中找到编号最大的 frame_* 目录。
+def detect_domain_mode(grid_dir):
+    """检测 grid_dir 是单域还是双域结果。
 
     Returns
     -------
-    (frame_num, frame_path) or (None, None) if not found
+    'single' | 'dual' | None (无法判断)
+    """
+    if not os.path.isdir(grid_dir):
+        return None
+    for entry in os.listdir(grid_dir):
+        if entry.startswith('single_domain_'):
+            return 'single'
+        if entry.startswith('schwarz_'):
+            return 'dual'
+    return None
+
+
+def find_latest_frame_dir(grid_dir):
+    """在 grid_dir/schwarz_* 或 single_domain_*/stress_data/ 中找到编号最大的 frame_* 目录。
+
+    Returns
+    -------
+    (frame_num, frame_path, is_single) or (None, None, None) if not found
+      is_single: True 表示单域（single_domain_*），False 表示双域（schwarz_*）
     """
     for entry in sorted(os.listdir(grid_dir)):
-        if not entry.startswith('schwarz_'):
+        if entry.startswith('single_domain_'):
+            is_single = True
+        elif entry.startswith('schwarz_'):
+            is_single = False
+        else:
             continue
         stress_data_dir = os.path.join(grid_dir, entry, 'stress_data')
         if not os.path.isdir(stress_data_dir):
@@ -219,8 +247,9 @@ def find_latest_frame_dir(grid_dir):
                 except ValueError:
                     pass
         if frames:
-            return max(frames, key=lambda t: t[0])
-    return None, None
+            frame_num, frame_path = max(frames, key=lambda t: t[0])
+            return frame_num, frame_path, is_single
+    return None, None, None
 
 
 def load_grid_stress_xline(grid_dir, y_index=None, x_offset=None):
@@ -244,10 +273,13 @@ def load_grid_stress_xline(grid_dir, y_index=None, x_offset=None):
     vm  : ndarray (M,)   von Mises
     frame_num : int
     """
-    frame_num, frame_dir = find_latest_frame_dir(grid_dir)
+    frame_num, frame_dir, is_single = find_latest_frame_dir(grid_dir)
     if frame_dir is None:
         print(f'  警告: {grid_dir} 中未找到 stress_data/frame_* 目录')
         return None, None, None, None, None
+
+    domain_type = '单域' if is_single else '双域'
+    print(f'  检测到{domain_type}结果')
 
     # 自动从 positions.npy 推断 x_offset（与粒子模式行为一致）
     if x_offset is None:
@@ -261,15 +293,23 @@ def load_grid_stress_xline(grid_dir, y_index=None, x_offset=None):
 
     all_x, all_s11, all_s22, all_vm = [], [], [], []
 
-    for domain_prefix in ('domain2',):
-        meta_file   = os.path.join(frame_dir, f'{domain_prefix}_grid_stress_meta.json')
-        stress_file = os.path.join(frame_dir, f'{domain_prefix}_grid_stress.npy')
-        mass_file   = os.path.join(frame_dir, f'{domain_prefix}_grid_mass.npy')
+    # 单域：文件无 domain 前缀；双域：只取 domain2（对应解析解 x 范围）
+    domain_prefixes = [None] if is_single else ['domain2']
+    for domain_prefix in domain_prefixes:
+        if domain_prefix is None:
+            meta_file   = os.path.join(frame_dir, 'grid_stress_meta.json')
+            stress_file = os.path.join(frame_dir, 'grid_stress.npy')
+            mass_file   = os.path.join(frame_dir, 'grid_mass.npy')
+        else:
+            meta_file   = os.path.join(frame_dir, f'{domain_prefix}_grid_stress_meta.json')
+            stress_file = os.path.join(frame_dir, f'{domain_prefix}_grid_stress.npy')
+            mass_file   = os.path.join(frame_dir, f'{domain_prefix}_grid_mass.npy')
 
         if not os.path.exists(stress_file):
             continue
         if not os.path.exists(meta_file):
-            print(f'  警告: 找不到 {meta_file}，跳过 {domain_prefix}')
+            label = domain_prefix if domain_prefix else '单域'
+            print(f'  警告: 找不到 {meta_file}，跳过 {label}')
             continue
 
         with open(meta_file) as f:
@@ -281,8 +321,9 @@ def load_grid_stress_xline(grid_dir, y_index=None, x_offset=None):
         dx_x   = meta['dx_x']
 
         j = (ny // 2) if y_index is None else int(y_index)
+        label = domain_prefix if domain_prefix else '单域'
         if j < 0 or j >= ny:
-            print(f'  警告: y_index={j} 超出 {domain_prefix} 范围 [0, {ny-1}]，跳过')
+            print(f'  警告: y_index={j} 超出 {label} 范围 [0, {ny-1}]，跳过')
             continue
 
         grid_stress = np.load(stress_file)    # (nx, ny, 2, 2)
@@ -306,7 +347,7 @@ def load_grid_stress_xline(grid_dir, y_index=None, x_offset=None):
         all_s22.append(s_v[:, 1, 1])
         all_vm.append(compute_von_mises_2d(s_v))
 
-        print(f'  {domain_prefix}: nx={nx}, ny={ny}, j={j}, '
+        print(f'  {label}: nx={nx}, ny={ny}, j={j}, '
               f'有效点 {valid_mask.sum()}/{nx}, '
               f'x=[{x_v.min():.5f}, {x_v.max():.5f}]')
 
@@ -395,8 +436,10 @@ def make_plots(grid_data, ana, output_dir, n_bins, separate, xlim=None):
         ('vonmises', r'von Mises stress (Pa)'),
     ]
 
+    available = [(key, ylabel) for key, ylabel in components if key in ana]
+
     if separate:
-        for key, ylabel in components:
+        for key, ylabel in available:
             fig, ax = plt.subplots(figsize=(5.5, 4.5))
             ax.set_xlabel(r'$x$ (m)')
             ax.set_ylabel(ylabel)
@@ -412,9 +455,14 @@ def make_plots(grid_data, ana, output_dir, n_bins, separate, xlim=None):
             plt.close()
             print(f'Saved: {out}')
     else:
-        fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
+        n = len(available)
+        if n == 0:
+            return
+        fig, axes = plt.subplots(1, n, figsize=(4.5 * n + 1, 4.5))
+        if n == 1:
+            axes = [axes]
 
-        for ax, (key, ylabel) in zip(axes, components):
+        for ax, (key, ylabel) in zip(axes, available):
             ax.set_xlabel(r'$x$ (m)')
             ax.set_ylabel(ylabel)
             ax.grid(True, alpha=0.3)
@@ -451,8 +499,10 @@ def make_grid_stress_plots(grid_data, ana, output_dir, n_bins, separate, xlim=No
     # Repack to the (gs, x, s11, s22, vm) format expected by plot_comparison
     plot_data = [(gs, x, s11, s22, vm) for gs, x, s11, s22, vm, _ in grid_data]
 
+    available = [(key, ylabel) for key, ylabel in components if key in ana]
+
     if separate:
-        for key, ylabel in components:
+        for key, ylabel in available:
             fig, ax = plt.subplots(figsize=(5.5, 4.5))
             ax.set_xlabel(r'$x$ (m)')
             ax.set_ylabel(ylabel)
@@ -468,9 +518,14 @@ def make_grid_stress_plots(grid_data, ana, output_dir, n_bins, separate, xlim=No
             plt.close()
             print(f'Saved: {out}')
     else:
-        fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
+        n = len(available)
+        if n == 0:
+            return
+        fig, axes = plt.subplots(1, n, figsize=(4.5 * n + 1, 4.5))
+        if n == 1:
+            axes = [axes]
 
-        for ax, (key, ylabel) in zip(axes, components):
+        for ax, (key, ylabel) in zip(axes, available):
             ax.set_xlabel(r'$x$ (m)')
             ax.set_ylabel(ylabel)
             ax.grid(True, alpha=0.3)
@@ -497,7 +552,9 @@ def main():
     parser.add_argument('--results-dir', default='useful_results/test2_40-100',
                         help='MPM 结果根目录，包含 grid_40/ grid_60/ 等子目录')
     parser.add_argument('--analytical-dir', default='useful_results/test2_analytical',
-                        help='理论值目录，含 s11.rpt / s22.rpt / vonmises.rpt')
+                        help='双域理论值目录，含 s11.rpt / s22.rpt / vonmises.rpt')
+    parser.add_argument('--analytical-dir-single', default=None,
+                        help='单域理论值目录（未指定则与 --analytical-dir 相同）')
     parser.add_argument('--output-dir', default='experiments/test2_comparison',
                         help='图像输出目录')
 
@@ -526,19 +583,6 @@ def main():
                              '默认取各 domain 的 ny//2（中线行）')
 
     args = parser.parse_args()
-
-    # ── 读取理论值 ──────────────────────────────────────────────────────────
-    ana_dir = args.analytical_dir
-    print('读取理论值...')
-    ana = {}
-    for key, fname in [('s11', 's11.rpt'), ('s22', 's22.rpt'), ('vonmises', 'vonmises.rpt')]:
-        fpath = os.path.join(ana_dir, fname)
-        if not os.path.exists(fpath):
-            raise FileNotFoundError(f'找不到理论值文件: {fpath}')
-        x_a, y_a = read_rpt_file(fpath)
-        ana[key] = (x_a, y_a)
-        print(f'  {fname}: {len(x_a)} 个点, x=[{x_a.min():.4f}, {x_a.max():.4f}] m, '
-              f'val=[{y_a.min():.2e}, {y_a.max():.2e}] Pa')
 
     # ── 发现网格目录 ────────────────────────────────────────────────────────
     results_dir = args.results_dir
@@ -570,8 +614,33 @@ def main():
         else:
             x_offset = 0.0
 
-    # ── 确定 Domain2 x 显示范围 ──────────────────────────────────────────────
+    # ── 检测单/双域，选择对应解析解目录 ─────────────────────────────────────
     first_dir = grid_dirs[sorted(grid_dirs.keys())[0]]
+    domain_mode = detect_domain_mode(first_dir)
+    if domain_mode == 'single':
+        ana_dir = args.analytical_dir_single or args.analytical_dir
+        print(f'检测到单域结果，使用解析解目录: {ana_dir}')
+    else:
+        ana_dir = args.analytical_dir
+        if domain_mode == 'dual':
+            print(f'检测到双域结果，使用解析解目录: {ana_dir}')
+        else:
+            print(f'无法检测域类型，使用默认解析解目录: {ana_dir}')
+
+    # ── 读取理论值 ──────────────────────────────────────────────────────────
+    print('读取理论值...')
+    ana = {}
+    for key, fname in [('s11', 's11.rpt'), ('s22', 's22.rpt'), ('vonmises', 'vonmises.rpt')]:
+        fpath = os.path.join(ana_dir, fname)
+        if not os.path.exists(fpath):
+            print(f'  跳过 {fname}（文件不存在）')
+            continue
+        x_a, y_a = read_rpt_file(fpath)
+        ana[key] = (x_a, y_a)
+        print(f'  {fname}: {len(x_a)} 个点, x=[{x_a.min():.4f}, {x_a.max():.4f}] m, '
+              f'val=[{y_a.min():.2e}, {y_a.max():.2e}] Pa')
+
+    # ── 确定 Domain2 x 显示范围 ──────────────────────────────────────────────
     domain2_xlim = get_domain2_xlim(first_dir, x_offset)
     if domain2_xlim:
         print(f'Domain2 x 范围（xlim）: [{domain2_xlim[0]:.5f}, {domain2_xlim[1]:.5f}] m')

@@ -55,6 +55,7 @@ class MPMSolver:
         # 使用 ti.Vector.field 以支持运行时修改
         self.gravity = ti.Vector.field(self.dim, dtype=self.float_type, shape=())
         self.gravity[None] = gravity
+        print(f"[DEBUG] gravity from config: {gravity}, stored: {self.gravity[None]}")
 
         # 重力调度配置
         self.gravity_schedule = config.get("gravity_schedule", None)

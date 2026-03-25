@@ -9,9 +9,11 @@ import json
 import numpy as np
 import sys
 import os
+import shutil
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend to avoid segfault with Taichi
 import matplotlib.pyplot as plt
+from scipy.spatial import KDTree
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -46,6 +48,17 @@ def modify_config_grid_size(config, grid_size, use_schwarz=False, modify_domain1
     import copy
     new_config = copy.deepcopy(config)
 
+    def _scale_dt(cfg, old_grid_nx, new_grid_nx, label):
+        """按网格分辨率反比例缩放 dt。"""
+        if old_grid_nx <= 0 or new_grid_nx <= 0:
+            return
+        old_dt = cfg.get('dt', None)
+        if old_dt is None:
+            return
+        new_dt = old_dt * (old_grid_nx / new_grid_nx)
+        cfg['dt'] = new_dt
+        print(f"  {label} dt 调整: {old_dt:g} -> {new_dt:g} (按 {old_grid_nx}/{new_grid_nx})")
+
     if use_schwarz:
         # Schwarz模式：修改 Domain2；可选同步缩放 Domain1
         if 'Domain2' in new_config:
@@ -55,6 +68,7 @@ def modify_config_grid_size(config, grid_size, use_schwarz=False, modify_domain1
 
             new_config['Domain2']['grid_nx'] = grid_size
             new_config['Domain2']['grid_ny'] = int(grid_size * d2_aspect)
+            _scale_dt(new_config['Domain2'], orig_d2_nx, grid_size, 'Domain2')
 
             print(f"修改Schwarz配置: Domain2网格大小设为 {grid_size}x{int(grid_size * d2_aspect)} (比例: {d2_aspect:.3f})")
 
@@ -68,6 +82,15 @@ def modify_config_grid_size(config, grid_size, use_schwarz=False, modify_domain1
                 new_d1_ny = max(1, round(orig_d1_ny * scale))
                 new_config['Domain1']['grid_nx'] = new_d1_nx
                 new_config['Domain1']['grid_ny'] = new_d1_ny
+                d2_new_dt = new_config['Domain2'].get('dt', None)
+                d2_old_dt = config.get('Domain2', {}).get('dt', None)
+                d1_old_dt = new_config['Domain1'].get('dt', None)
+                if d2_new_dt is not None and d2_old_dt and d1_old_dt is not None:
+                    d1_dt_ratio = d1_old_dt / d2_old_dt if d2_old_dt > 0 else 1.0
+                    new_config['Domain1']['dt'] = d2_new_dt * d1_dt_ratio
+                    print(f"  Domain1 dt 调整: {d1_old_dt:g} -> {new_config['Domain1']['dt']:g} (保持与Domain2的{d1_dt_ratio:g}倍比例)")
+                else:
+                    _scale_dt(new_config['Domain1'], orig_d1_nx, new_d1_nx, 'Domain1')
                 print(f"修改Schwarz配置: Domain1网格大小设为 {new_d1_nx}x{new_d1_ny} (缩放比例: {scale:.3f})")
             elif modify_domain1:
                 print("警告: Schwarz配置中未找到Domain1，跳过Domain1分辨率修改")
@@ -83,6 +106,7 @@ def modify_config_grid_size(config, grid_size, use_schwarz=False, modify_domain1
         # 设置新的网格大小
         new_config['grid_nx'] = grid_size
         new_config['grid_ny'] = int(grid_size * aspect_ratio)
+        _scale_dt(new_config, original_nx, grid_size, 'Single')
 
         print(f"修改配置: 网格大小设为 {grid_size}x{int(grid_size * aspect_ratio)} (比例: {aspect_ratio:.3f})")
 
@@ -234,9 +258,18 @@ def run_simulation(config_path, use_schwarz=False):
         cmd = [
             sys.executable,
             "simulators/implicit_mpm.py",
-            "--config", config_path
+            "--config", config_path,
+            # "--no-gui",
         ]
         print(f"执行命令: {' '.join(cmd)}")
+
+        # 记录子进程启动前已有的目录，避免误 pick 旧结果
+        exp_results_dir = "experiment_results"
+        existing_dirs = set(
+            d for d in os.listdir(exp_results_dir)
+            if d.startswith("single_domain_") and
+            os.path.isdir(os.path.join(exp_results_dir, d))
+        )
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
@@ -248,19 +281,20 @@ def run_simulation(config_path, use_schwarz=False):
 
         print("模拟完成，加载结果数据...")
 
-        # 单域模式需要从experiment_results/single_domain_<timestamp>加载
-        # 找到最新的实验目录
-        exp_results_dir = "experiment_results"
-        single_domain_dirs = [d for d in os.listdir(exp_results_dir)
-                             if d.startswith("single_domain_") and
-                             os.path.isdir(os.path.join(exp_results_dir, d))]
-
-        if not single_domain_dirs:
-            raise RuntimeError("未找到单域模式的实验结果目录")
-
-        # 按时间戳排序，获取最新的
-        single_domain_dirs.sort()
-        latest_exp_dir = os.path.join(exp_results_dir, single_domain_dirs[-1])
+        # 找子进程运行后新出现的目录
+        all_dirs = set(
+            d for d in os.listdir(exp_results_dir)
+            if d.startswith("single_domain_") and
+            os.path.isdir(os.path.join(exp_results_dir, d))
+        )
+        new_dirs = sorted(all_dirs - existing_dirs)
+        if not new_dirs:
+            raise RuntimeError(
+                "子进程未创建新的实验结果目录（可能崩溃或未正常保存数据）\n"
+                f"STDOUT: {result.stdout[-500:] if result.stdout else ''}\n"
+                f"STDERR: {result.stderr[-500:] if result.stderr else ''}"
+            )
+        latest_exp_dir = os.path.join(exp_results_dir, new_dirs[-1])
         print(f"加载实验结果: {latest_exp_dir}")
 
         # 查找stress_data目录中的最后一帧
@@ -306,6 +340,211 @@ def run_simulation(config_path, use_schwarz=False):
         except Exception as _e:
             print(f"警告: 无法加载计时数据: {_e}")
         return (positions, stresses, timing_dict)
+
+
+def _grid_positions_from_meta(grid_meta):
+    """根据网格元数据重建网格节点位置。"""
+    nx = int(grid_meta["nx"])
+    ny = int(grid_meta["ny"])
+    offset = np.array(grid_meta.get("offset", [0.0, 0.0]), dtype=float)
+    dx_x = float(grid_meta["dx_x"])
+    dx_y = float(grid_meta["dx_y"])
+
+    xs = offset[0] + np.arange(nx) * dx_x
+    ys = offset[1] + np.arange(ny) * dx_y
+    xx, yy = np.meshgrid(xs, ys, indexing='ij')
+    return np.column_stack([xx.ravel(), yy.ravel()])
+
+
+def _load_grid_stress_from_frame(frame_dir, config, use_schwarz=False):
+    """从 stress_data/frame_* 目录加载网格应力，并返回 positions/stresses。"""
+    def _load_single(prefix=None, domain_cfg=None):
+        if prefix is None:
+            stress_file = os.path.join(frame_dir, "grid_stress.npy")
+            mass_file = os.path.join(frame_dir, "grid_mass.npy")
+            meta_file = os.path.join(frame_dir, "grid_stress_meta.json")
+        else:
+            stress_file = os.path.join(frame_dir, f"{prefix}_grid_stress.npy")
+            mass_file = os.path.join(frame_dir, f"{prefix}_grid_mass.npy")
+            meta_file = os.path.join(frame_dir, f"{prefix}_grid_stress_meta.json")
+
+        if not os.path.exists(stress_file) or not os.path.exists(meta_file):
+            return None
+
+        grid_stress = np.load(stress_file)
+        with open(meta_file, "r") as f:
+            grid_meta = json.load(f)
+
+        positions = _grid_positions_from_meta(grid_meta)
+        stresses = grid_stress.reshape(-1, grid_stress.shape[-2], grid_stress.shape[-1])
+
+        if os.path.exists(mass_file):
+            grid_mass = np.load(mass_file)
+            valid_mask = grid_mass.reshape(-1) > 1e-10
+            positions = positions[valid_mask]
+            stresses = stresses[valid_mask]
+
+        return positions, stresses, grid_meta
+
+    if use_schwarz:
+        d1 = _load_single("domain1")
+        d2 = _load_single("domain2")
+        if d1 is None or d2 is None:
+            return None
+        positions1, stresses1, meta1 = d1
+        positions2, stresses2, meta2 = d2
+        positions, stresses = merge_schwarz_domains(positions1, stresses1, positions2, stresses2, config)
+        return {
+            "positions": positions,
+            "stresses": stresses,
+            "positions1": positions1,
+            "stresses1": stresses1,
+            "positions2": positions2,
+            "stresses2": stresses2,
+            "grid_meta1": meta1,
+            "grid_meta2": meta2,
+        }
+
+    single = _load_single()
+    if single is None:
+        return None
+    positions, stresses, meta = single
+    return {
+        "positions": positions,
+        "stresses": stresses,
+        "grid_meta": meta,
+    }
+
+
+def _load_grid_stress_from_result_dir(result_dir, config, use_schwarz=False):
+    """从 grid_xxx 结果目录加载已复制出来的网格应力。"""
+    def _load_single(prefix=None):
+        if prefix is None:
+            stress_file = os.path.join(result_dir, "grid_stress.npy")
+            mass_file = os.path.join(result_dir, "grid_mass.npy")
+            meta_file = os.path.join(result_dir, "grid_stress_meta.json")
+        else:
+            stress_file = os.path.join(result_dir, f"{prefix}_grid_stress.npy")
+            mass_file = os.path.join(result_dir, f"{prefix}_grid_mass.npy")
+            meta_file = os.path.join(result_dir, f"{prefix}_grid_stress_meta.json")
+
+        if not os.path.exists(stress_file) or not os.path.exists(meta_file):
+            return None
+
+        grid_stress = np.load(stress_file)
+        with open(meta_file, "r") as f:
+            grid_meta = json.load(f)
+
+        positions = _grid_positions_from_meta(grid_meta)
+        stresses = grid_stress.reshape(-1, grid_stress.shape[-2], grid_stress.shape[-1])
+
+        if os.path.exists(mass_file):
+            grid_mass = np.load(mass_file)
+            valid_mask = grid_mass.reshape(-1) > 1e-10
+            positions = positions[valid_mask]
+            stresses = stresses[valid_mask]
+
+        return positions, stresses, grid_meta
+
+    if use_schwarz:
+        d1 = _load_single("domain1")
+        d2 = _load_single("domain2")
+        if d1 is None or d2 is None:
+            frame_dir = _find_latest_frame_dir(result_dir)
+            if frame_dir is None:
+                return None
+            return _load_grid_stress_from_frame(frame_dir, config, use_schwarz=True)
+        positions1, stresses1, meta1 = d1
+        positions2, stresses2, meta2 = d2
+        positions, stresses = merge_schwarz_domains(positions1, stresses1, positions2, stresses2, config)
+        return {
+            "positions": positions,
+            "stresses": stresses,
+            "positions1": positions1,
+            "stresses1": stresses1,
+            "positions2": positions2,
+            "stresses2": stresses2,
+            "grid_meta1": meta1,
+            "grid_meta2": meta2,
+        }
+
+    single = _load_single()
+    if single is None:
+        frame_dir = _find_latest_frame_dir(result_dir)
+        if frame_dir is None:
+            return None
+        return _load_grid_stress_from_frame(frame_dir, config, use_schwarz=False)
+    positions, stresses, meta = single
+    return {
+        "positions": positions,
+        "stresses": stresses,
+        "grid_meta": meta,
+    }
+
+
+def _copy_grid_stress_files(latest_frame_dir, output_dir, use_schwarz=False):
+    """把最新帧的 grid_stress 文件复制到 grid_xxx 结果目录。"""
+    os.makedirs(output_dir, exist_ok=True)
+
+    if use_schwarz:
+        filenames = [
+            "domain1_grid_stress.npy",
+            "domain1_grid_mass.npy",
+            "domain1_grid_stress_meta.json",
+            "domain2_grid_stress.npy",
+            "domain2_grid_mass.npy",
+            "domain2_grid_stress_meta.json",
+        ]
+    else:
+        filenames = [
+            "grid_stress.npy",
+            "grid_mass.npy",
+            "grid_stress_meta.json",
+        ]
+
+    copied = []
+    for name in filenames:
+        src = os.path.join(latest_frame_dir, name)
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(output_dir, name))
+            copied.append(name)
+
+    if copied:
+        print(f"已复制 grid stress 文件到结果目录: {output_dir} ({', '.join(copied)})")
+    else:
+        print(f"警告: 未找到可复制的 grid stress 文件: {latest_frame_dir}")
+
+
+def _find_latest_simulation_result_dir(use_schwarz=False):
+    """找到 experiment_results 下最新的单域/双域实验目录。"""
+    import glob
+
+    pattern = "experiment_results/schwarz_*" if use_schwarz else "experiment_results/single_domain_*"
+    dirs = [d for d in glob.glob(pattern) if os.path.isdir(d)]
+    if not dirs:
+        return None
+    return max(dirs, key=os.path.getmtime)
+
+
+def _find_latest_frame_dir(exp_dir):
+    """找到实验目录中最新的 stress_data/frame_* 目录。"""
+    stress_data_dir = os.path.join(exp_dir, "stress_data")
+    if not os.path.exists(stress_data_dir):
+        return None
+
+    frame_dirs = [
+        os.path.join(stress_data_dir, d)
+        for d in os.listdir(stress_data_dir)
+        if d.startswith("frame_") and os.path.isdir(os.path.join(stress_data_dir, d))
+    ]
+    if not frame_dirs:
+        return None
+    return max(frame_dirs, key=os.path.getmtime)
+
+
+def _stress_source_suffix(stress_source):
+    """返回文件名后缀。"""
+    return '' if stress_source == 'particle' else '_grid'
 
 def calculate_strip_width(config, grid_size=None, use_schwarz=False):
     """
@@ -468,12 +707,28 @@ def merge_schwarz_domains(positions1, stresses1, positions2, stresses2, config):
     d2_xmin, d2_xmax = domain2_offset[0], domain2_offset[0] + domain2_width
     d2_ymin, d2_ymax = domain2_offset[1], domain2_offset[1] + domain2_height
 
-    # 从Domain1中排除Domain2范围内的粒子
-    mask_outside_d2 = ~((positions1[:, 0] >= d2_xmin) & (positions1[:, 0] <= d2_xmax) &
-                        (positions1[:, 1] >= d2_ymin) & (positions1[:, 1] <= d2_ymax))
-    
-    positions1_filtered = positions1[mask_outside_d2]
-    stresses1_filtered = stresses1[mask_outside_d2]
+    # 从Domain1中排除Domain2范围内的粒子（基于KD-tree邻近过滤，保留D2空洞中的D1粒子）
+    mask_inside_d2 = ((positions1[:, 0] >= d2_xmin) & (positions1[:, 0] <= d2_xmax) &
+                      (positions1[:, 1] >= d2_ymin) & (positions1[:, 1] <= d2_ymax))
+
+    positions1_inside = positions1[mask_inside_d2]
+    stresses1_inside = stresses1[mask_inside_d2]
+
+    if len(positions1_inside) > 0 and len(positions2) > 0:
+        # 估计Domain2的格间距
+        grid_nx2 = domain2_config.get('grid_nx', 30)
+        dx2 = domain2_width / grid_nx2
+        # KD-tree：只去掉D2边界附近的D1粒子，保留D2空洞中的D1粒子
+        tree2 = KDTree(positions2)
+        dist, _ = tree2.query(positions1_inside, k=1)
+        keep_in_hole = dist > dx2 * 0.8
+        positions1_filtered = np.vstack([positions1[~mask_inside_d2],
+                                         positions1_inside[keep_in_hole]])
+        stresses1_filtered = np.vstack([stresses1[~mask_inside_d2],
+                                        stresses1_inside[keep_in_hole]])
+    else:
+        positions1_filtered = positions1[~mask_inside_d2]
+        stresses1_filtered = stresses1[~mask_inside_d2]
 
     # 合并Domain1(过滤后) + Domain2
     positions = np.vstack([positions1_filtered, positions2])
@@ -499,6 +754,11 @@ def analyze_and_plot(positions_or_tuple, stresses_or_none, config, output_dir, g
     # 处理Schwarz双域数据
     if use_schwarz:
         positions1, stresses1, positions2, stresses2 = positions_or_tuple
+        # 保存双域原始数据，供后续 --analyze-only 可视化使用
+        np.save(os.path.join(output_dir, 'domain1_positions.npy'), positions1)
+        np.save(os.path.join(output_dir, 'domain1_stresses.npy'), stresses1)
+        np.save(os.path.join(output_dir, 'domain2_positions.npy'), positions2)
+        np.save(os.path.join(output_dir, 'domain2_stresses.npy'), stresses2)
         positions, stresses = merge_schwarz_domains(positions1, stresses1, positions2, stresses2, config)
     else:
         positions = positions_or_tuple
@@ -541,31 +801,25 @@ def analyze_and_plot(positions_or_tuple, stresses_or_none, config, output_dir, g
     mpm_sig_yy_s = mpm_sig_yy[sort_idx]
 
     # Left: Sigma_XX
-    ax_xx.plot(mpm_x_s, mpm_sig_xx_s, color='#3182bd', lw=1.5,
-               marker='o', markersize=4, markerfacecolor='none', markeredgewidth=1.0,
-               label='MPM')
+    ax_xx.plot(mpm_x_s, mpm_sig_xx_s, color='#3182bd', lw=1.0, label='MPM')
     ax_xx.plot(line_x - center[0], ana_sig_xx, color='#b2182b', linestyle='--',
-               lw=2.0, label='Analytical')
+               lw=1.2, label='Analytical')
     ax_xx.axvline(-radius, color='k', linestyle=':', alpha=0.3, label='Inclusion boundary')
     ax_xx.axvline(radius, color='k', linestyle=':', alpha=0.3)
     ax_xx.set_xlabel(r'Radial position (m)')
     ax_xx.set_ylabel(r'$\sigma_{xx}$ (Pa)')
     ax_xx.set_xlim(-3*radius, 3*radius)
-    ax_xx.legend()
     ax_xx.grid(True, alpha=0.3)
 
     # Right: Sigma_YY
-    ax_yy.plot(mpm_x_s, mpm_sig_yy_s, color='#2ca02c', lw=1.5,
-               marker='s', markersize=4, markerfacecolor='none', markeredgewidth=1.0,
-               label='MPM')
+    ax_yy.plot(mpm_x_s, mpm_sig_yy_s, color='#2ca02c', lw=1.0, label='MPM')
     ax_yy.plot(line_x - center[0], ana_sig_yy, color='#b2182b', linestyle='--',
-               lw=2.0, label='Analytical')
+               lw=1.2, label='Analytical')
     ax_yy.axvline(-radius, color='k', linestyle=':', alpha=0.3, label='Inclusion boundary')
     ax_yy.axvline(radius, color='k', linestyle=':', alpha=0.3)
     ax_yy.set_xlabel(r'Radial position (m)')
     ax_yy.set_ylabel(r'$\sigma_{yy}$ (Pa)')
     ax_yy.set_xlim(-3*radius, 3*radius)
-    ax_yy.legend()
     ax_yy.grid(True, alpha=0.3)
 
     save_path = os.path.join(output_dir, 'result_v3_cartesian.pdf')
@@ -601,7 +855,7 @@ def analyze_and_plot(positions_or_tuple, stresses_or_none, config, output_dir, g
         }
     }
 
-def run_single_experiment(config_path, grid_size, output_dir, use_schwarz=False):
+def run_single_experiment(config_path, grid_size, output_dir, use_schwarz=False, stress_source='particle'):
     """
     运行单个实验
 
@@ -610,6 +864,7 @@ def run_single_experiment(config_path, grid_size, output_dir, use_schwarz=False)
         grid_size: 网格大小（可选，None表示使用配置文件中的值）
         output_dir: 输出目录
         use_schwarz: 是否使用Schwarz求解器
+        stress_source: 'particle' 或 'grid'，决定比较时使用哪类应力数据
 
     返回:
         dict: 实验结果
@@ -630,9 +885,32 @@ def run_single_experiment(config_path, grid_size, output_dir, use_schwarz=False)
     timing_dict = sim_results[-1]   # 最后一个元素是 timing_dict (or None)
     sim_data = sim_results[:-1]     # 前面是 positions/stresses
 
+    latest_exp_dir = _find_latest_simulation_result_dir(use_schwarz=use_schwarz)
+    latest_frame_dir = _find_latest_frame_dir(latest_exp_dir) if latest_exp_dir else None
+    if latest_frame_dir is not None:
+        _copy_grid_stress_files(latest_frame_dir, output_dir, use_schwarz=use_schwarz)
+    else:
+        print("警告: 未找到最新的 stress_data/frame_* 目录，无法复制 grid stress 文件")
+
     if timing_dict is not None:
         with open(os.path.join(output_dir, 'timing.json'), 'w') as _f:
             json.dump(timing_dict, _f, indent=4)
+
+    if stress_source == 'grid':
+        if latest_frame_dir is None:
+            raise RuntimeError("选择了 grid stress，但未找到可用的 grid_stress 数据")
+        grid_payload = _load_grid_stress_from_frame(latest_frame_dir, config, use_schwarz=use_schwarz)
+        if grid_payload is None:
+            raise RuntimeError("选择了 grid stress，但无法从最新结果帧加载 grid_stress")
+        if use_schwarz:
+            sim_data = (
+                grid_payload['positions1'],
+                grid_payload['stresses1'],
+                grid_payload['positions2'],
+                grid_payload['stresses2'],
+            )
+        else:
+            sim_data = (grid_payload['positions'], grid_payload['stresses'])
 
     # 分析和绘图
     if use_schwarz:
@@ -664,8 +942,28 @@ def run_batch_experiments(args):
     print("=" * 80)
 
     # 生成网格大小列表
-    grid_sizes = list(range(args.grid_start, args.grid_end + 1, args.grid_step))
-    print(f"网格大小列表: {grid_sizes}")
+    if args.dx_start is not None and args.dx_end is not None and args.dx_step is not None:
+        # 从 dx 范围推导 grid_size：需要先读 domain_width
+        base_config_for_dx = load_config(args.config)
+        if args.schwarz:
+            domain_w = base_config_for_dx.get('Domain2', {}).get('domain_width', 1.0)
+        else:
+            domain_w = base_config_for_dx.get('domain_width', 1.0)
+        dx_low = min(args.dx_start, args.dx_end)
+        dx_high = max(args.dx_start, args.dx_end)
+        dx_step = abs(args.dx_step)
+        dx_values = []
+        # 按从大到小的顺序执行：先粗网格，后细网格
+        dx = dx_high
+        while dx >= dx_low - 1e-12:
+            dx_values.append(dx)
+            dx -= dx_step
+        grid_sizes = [max(1, round(domain_w / d)) for d in dx_values]
+        print(f"dx 列表:     {[round(d, 6) for d in dx_values]}")
+        print(f"网格大小列表: {grid_sizes}")
+    else:
+        grid_sizes = list(range(args.grid_start, args.grid_end + 1, args.grid_step))
+        print(f"网格大小列表: {grid_sizes}")
     print(f"总共 {len(grid_sizes)} 个实验")
 
     # 加载基础配置
@@ -702,7 +1000,13 @@ def run_batch_experiments(args):
             grid_output_dir = os.path.join(args.output_dir, f"grid_{grid_size}")
 
             # 4. 运行单个实验
-            exp_results = run_single_experiment(temp_config_path, grid_size, grid_output_dir, use_schwarz=args.schwarz)
+            exp_results = run_single_experiment(
+                temp_config_path,
+                grid_size,
+                grid_output_dir,
+                use_schwarz=args.schwarz,
+                stress_source=args.stress_source,
+            )
 
             # 5. 记录结果
             results['successful_runs'].append(grid_size)
@@ -742,13 +1046,100 @@ def run_batch_experiments(args):
 
     return results
 
-def create_summary_plot(results, output_dir):
+def _save_legend_pdf(handles, labels, path):
+    """将 legend 单独保存为 PDF。"""
+    fig_leg = plt.figure(figsize=(2.5, max(len(labels) * 0.28 + 0.2, 0.6)))
+    fig_leg.legend(handles, labels, loc='center', frameon=True, fontsize='x-small')
+    fig_leg.tight_layout()
+    plt.savefig(path, bbox_inches='tight')
+    plt.close(fig_leg)
+
+
+def _draw_summary_axes(ax1, ax2, experiment_data, params, analytical,
+                       yy_only, colors, boundary_exclusion=None, xx_only=False):
     """
-    创建汇总图，将所有网格大小的结果绘制在一张图上
+    在 ax1 (σ_xx) 和/或 ax2 (σ_yy) 上绘制解析解 + 各网格 MPM 结果。
+    yy_only=True: 只画 σ_yy (ax2)。xx_only=True: 只画 σ_xx (ax1)。
+    返回 (handles, labels) 供外部保存 legend。
+    """
+    line_x = analytical['line_x']
+    ana_sig_xx = analytical['ana_sig_xx']
+    ana_sig_yy = analytical['ana_sig_yy']
+    center = params['center']
+    radius = params['radius']
+
+    draw_xx = not yy_only
+    draw_yy = not xx_only
+
+    if draw_xx:
+        ax1.plot(line_x - center[0], ana_sig_xx, color='#b2182b', linestyle='--',
+                 lw=1.2, label='Analytical', zorder=10, alpha=0.9)
+    if draw_yy:
+        ax2.plot(line_x - center[0], ana_sig_yy, color='#b2182b', linestyle='--',
+                 lw=1.2, label='Analytical', zorder=10, alpha=0.9)
+
+    for i, (grid_size, exp_data) in enumerate(sorted(experiment_data.items())):
+        color = colors[i % len(colors)]
+
+        positions = exp_data['positions']
+        stresses = exp_data['stresses']
+
+        strip_width = get_strip_width_from_params(params['domain_h'], grid_size, radius)
+        mask_strip = np.abs(positions[:, 1] - center[1]) < strip_width
+
+        pos_s = positions[mask_strip]
+        str_s = stresses[mask_strip]
+
+        if boundary_exclusion is not None:
+            dx = params['domain_w'] / grid_size
+            excl = boundary_exclusion * dx
+            x_rel = pos_s[:, 0] - center[0]
+            y_rel = pos_s[:, 1] - center[1]
+            r = np.sqrt(x_rel**2 + y_rel**2)
+            mask_excl = np.abs(r - radius) > excl
+            pos_s = pos_s[mask_excl]
+            str_s = str_s[mask_excl]
+
+        mpm_x = pos_s[:, 0]
+        mpm_sig_xx = str_s[:, 0, 0]
+        mpm_sig_yy = str_s[:, 1, 1]
+
+        label = f'{params["domain_h"]/grid_size:.2g}'
+        idx = np.argsort(mpm_x)
+
+        if draw_xx:
+            ax1.plot(mpm_x[idx] - center[0], mpm_sig_xx[idx], '-', color=color,
+                     linewidth=1.0, alpha=0.9, label=label)
+        if draw_yy:
+            ax2.plot(mpm_x[idx] - center[0], mpm_sig_yy[idx], '-', color=color,
+                     linewidth=1.0, alpha=0.9, label=label)
+
+    ref_ax = ax1 if draw_xx else ax2
+    active_axes = ([ax1] if xx_only else []) + ([ax2] if not xx_only else [])
+    for ax in active_axes:
+        ax.axvline(-radius, color='k', linestyle=':', alpha=0.3, label='Inclusion boundary')
+        ax.axvline(radius, color='k', linestyle=':', alpha=0.3)
+        ax.set_xlabel(r'Radial position (m)')
+        ax.set_xlim(-3*radius, 3*radius)
+        ax.grid(True, alpha=0.3)
+    if draw_xx:
+        ax1.set_ylabel(r'$\sigma_{xx}$ (Pa)')
+    if draw_yy:
+        ax2.set_ylabel(r'$\sigma_{yy}$ (Pa)')
+    handles, labels = ref_ax.get_legend_handles_labels()
+    return handles, labels
+
+
+def create_summary_plot(results, output_dir, yy_only=False, boundary_exclusion=1.0, file_suffix=''):
+    """
+    创建汇总图，将所有网格大小的结果绘制在一张图上。
+    额外生成一张排除 inclusion 边界附近粒子的版本 (summary_all_grids_excl.pdf)。
 
     参数:
         results: 批量实验结果字典
         output_dir: 输出目录
+        yy_only: 仅绘制yy方向应力
+        boundary_exclusion: 排除宽度，单位为 grid size 倍数
     """
     print("\n创建汇总对比图...")
 
@@ -759,77 +1150,85 @@ def create_summary_plot(results, output_dir):
 
     colors = CMAME_COLORS
 
-    _, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5))
-
-    # 获取第一个实验的解析解和参数（所有实验的解析解应该相同）
     first_grid = list(experiment_data.keys())[0]
     first_exp = experiment_data[first_grid]
     analytical = first_exp['analytical']
     params = first_exp['params']
 
-    line_x = analytical['line_x']
-    ana_sig_xx = analytical['ana_sig_xx']
-    ana_sig_yy = analytical['ana_sig_yy']
-    center = params['center']
-    radius = params['radius']
+    print(f"网格数据粒子数统计:")
+    for grid_size, exp_data in sorted(experiment_data.items()):
+        strip_width = get_strip_width_from_params(params['domain_h'], grid_size, params['radius'])
+        n = np.sum(np.abs(exp_data['positions'][:, 1] - params['center'][1]) < strip_width)
+        print(f"网格 {grid_size}x{grid_size}: 提取截面数据: {n} 个粒子")
 
-    ax1.plot(line_x - center[0], ana_sig_xx, color='#b2182b', linestyle='--',
-             lw=2.0, label='Analytical', zorder=10, alpha=0.9)
-    ax2.plot(line_x - center[0], ana_sig_yy, color='#b2182b', linestyle='--',
-             lw=2.0, label='Analytical', zorder=10, alpha=0.9)
+    # ── 图1: 全部粒子 ────────────────────────────────────────────────────────
+    if yy_only:
+        fig, ax2 = plt.subplots(1, 1, figsize=(8.0, 4.5))
+        ax1 = None
+    else:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5))
 
-    # 绘制所有网格大小的MPM结果
-    for i, (grid_size, exp_data) in enumerate(sorted(experiment_data.items())):
-        color = colors[i % len(colors)]
-
-        # 提取截面数据
-        positions = exp_data['positions']
-        stresses = exp_data['stresses']
-        
-        # 使用统一的strip_width计算函数
-        strip_width = get_strip_width_from_params(params['domain_h'], grid_size, radius)
-        mask_strip = np.abs(positions[:, 1] - center[1]) < strip_width
-
-        print(f"网格 {grid_size}x{grid_size}: 提取截面数据: {np.sum(mask_strip)} 个粒子")
-        mpm_x = positions[mask_strip, 0]
-        mpm_sig_xx = stresses[mask_strip, 0, 0]
-        mpm_sig_yy = stresses[mask_strip, 1, 1]
-
-        label = f'{1.0/grid_size:.4g}'
-        idx = np.argsort(mpm_x)
-
-        # Sigma_XX (坐标平移：使中心点变为0)
-        ax1.plot(mpm_x[idx] - center[0], mpm_sig_xx[idx], '-o', color=color,
-                 linewidth=1.5, markersize=5, markerfacecolor='none',
-                 markeredgewidth=1.2, alpha=0.9, label=label)
-        ax2.plot(mpm_x[idx] - center[0], mpm_sig_yy[idx], '-o', color=color,
-                 linewidth=1.5, markersize=5, markerfacecolor='none',
-                 markeredgewidth=1.2, alpha=0.9, label=label)
-
-    # 添加辅助线（相对坐标）
-    for ax in [ax1, ax2]:
-        ax.axvline(-radius, color='k', linestyle=':', alpha=0.3,
-                   label='Inclusion boundary' if ax == ax2 else '')
-        ax.axvline(radius, color='k', linestyle=':', alpha=0.3)
-        ax.set_xlabel(r'Radial position (m)')
-        ax.set_ylabel(r'Stress (Pa)')
-        ax.set_xlim(-3*radius, 3*radius)
-        ax.grid(True, alpha=0.3)
-    ax1.set_ylabel(r'$\sigma_{xx}$ (Pa)')
-    ax2.set_ylabel(r'$\sigma_{yy}$ (Pa)')
-    ax2.legend(loc='upper center')
-
-    plt.tight_layout()
-
-    summary_plot_path = os.path.join(output_dir, "summary_all_grids.pdf")
+    handles, labels = _draw_summary_axes(ax1, ax2, experiment_data, params, analytical,
+                                          yy_only, colors, boundary_exclusion=None)
+    fig.tight_layout()
+    summary_plot_path = os.path.join(output_dir, f"summary_all_grids{file_suffix}.pdf")
     plt.savefig(summary_plot_path)
     plt.close()
-
+    legend_path = os.path.join(output_dir, f"summary_legend{file_suffix}.pdf")
+    _save_legend_pdf(handles, labels, legend_path)
     print(f"汇总对比图已保存到: {summary_plot_path}")
+    print(f"Legend 已保存到: {legend_path}")
+
+    # ── 单独保存 σ_xx 和 σ_yy（全部粒子版）─────────────────────────────────
+    for component, xx_only_flag, yy_only_flag, ylabel, fname in [
+        ('xx', True,  False, r'$\sigma_{xx}$ (Pa)', f'summary_xx{file_suffix}.pdf'),
+        ('yy', False, True,  r'$\sigma_{yy}$ (Pa)', f'summary_yy{file_suffix}.pdf'),
+    ]:
+        fig_c, ax_c = plt.subplots(1, 1, figsize=(5.5, 4.5))
+        ax1_c = ax_c if not yy_only_flag else None
+        ax2_c = ax_c if not xx_only_flag else None
+        _draw_summary_axes(ax1_c, ax2_c, experiment_data, params, analytical,
+                           yy_only_flag, colors, boundary_exclusion=None,
+                           xx_only=xx_only_flag)
+        fig_c.tight_layout()
+        plt.savefig(os.path.join(output_dir, fname))
+        plt.close()
+        print(f"单独保存 {component} 图: {fname}")
+
+    # ── 图2: 排除 inclusion 边界附近粒子 ─────────────────────────────────────
+    if yy_only:
+        fig2, ax2b = plt.subplots(1, 1, figsize=(8.0, 4.5))
+        ax1b = None
+    else:
+        fig2, (ax1b, ax2b) = plt.subplots(1, 2, figsize=(10, 4.5))
+
+    _draw_summary_axes(ax1b, ax2b, experiment_data, params, analytical,
+                       yy_only, colors, boundary_exclusion=boundary_exclusion)
+    fig2.tight_layout()
+    excl_plot_path = os.path.join(output_dir, f"summary_all_grids_excl{file_suffix}.pdf")
+    plt.savefig(excl_plot_path)
+    plt.close()
+    print(f"排除边界版汇总图已保存到: {excl_plot_path} (排除宽度={boundary_exclusion}×dx)")
+
+    # ── 单独保存 σ_xx 和 σ_yy（排除边界版）─────────────────────────────────
+    for component, xx_only_flag, yy_only_flag, fname in [
+        ('xx', True,  False, f'summary_excl_xx{file_suffix}.pdf'),
+        ('yy', False, True,  f'summary_excl_yy{file_suffix}.pdf'),
+    ]:
+        fig_c, ax_c = plt.subplots(1, 1, figsize=(5.5, 4.5))
+        ax1_c = ax_c if not yy_only_flag else None
+        ax2_c = ax_c if not xx_only_flag else None
+        _draw_summary_axes(ax1_c, ax2_c, experiment_data, params, analytical,
+                           yy_only_flag, colors, boundary_exclusion=boundary_exclusion,
+                           xx_only=xx_only_flag)
+        fig_c.tight_layout()
+        plt.savefig(os.path.join(output_dir, fname))
+        plt.close()
+        print(f"单独保存 {component} 排除边界版: {fname}")
 
     return summary_plot_path
 
-def create_integrated_error_plot(results, output_dir):
+def create_integrated_error_plot(results, output_dir, boundary_exclusion=1.0, file_suffix=''):
     """
     创建积分误差对比图，显示不同网格大小下的归一化积分误差
 
@@ -884,14 +1283,24 @@ def create_integrated_error_plot(results, output_dir):
         # 进一步限制在x方向±3倍半径范围内（与汇总图范围一致）
         x_rel_all = positions_strip[:, 0] - center[0]
         mask_x_range = np.abs(x_rel_all) <= 1 * radius
-        
+
         positions_strip = positions_strip[mask_x_range]
         stresses_strip = stresses_strip[mask_x_range]
-        n_particles = len(positions_strip)
 
-        # 计算这些位置对应的解析解
+        # 排除距离 inclusion 边界 ±boundary_exclusion 个 grid size 以内的粒子
+        dx = params['domain_w'] / grid_size
+        excl_width = boundary_exclusion * dx
         x_rel = positions_strip[:, 0] - center[0]
         y_rel = positions_strip[:, 1] - center[1]
+        r = np.sqrt(x_rel**2 + y_rel**2)
+        mask_exclude_boundary = np.abs(r - radius) > excl_width
+        positions_strip = positions_strip[mask_exclude_boundary]
+        stresses_strip  = stresses_strip[mask_exclude_boundary]
+        x_rel = x_rel[mask_exclude_boundary]
+        y_rel = y_rel[mask_exclude_boundary]
+
+        n_particles = len(positions_strip)
+        print(f"  排除 inclusion 边界附近粒子后剩余: {n_particles} (dx={dx:.4f}, 排除带宽=±{excl_width:.4f} [{boundary_exclusion}×dx])")
 
         ana_sig_xx, ana_sig_yy = get_analytical_stress_cartesian(
             x_rel, y_rel, radius, delta,
@@ -923,30 +1332,25 @@ def create_integrated_error_plot(results, output_dir):
 
     _, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4.5))
 
-    ax1.plot(grid_sizes, integrated_errors_xx, 'o-', linewidth=2, markersize=7,
-             markerfacecolor='none', markeredgewidth=1.5,
+    ax1.plot(grid_sizes, integrated_errors_xx, '-', linewidth=1.0,
              label=r'$\sigma_{xx}$', color='#3182bd')
-    ax1.plot(grid_sizes, integrated_errors_yy, 's-', linewidth=2, markersize=7,
-             markerfacecolor='none', markeredgewidth=1.5,
+    ax1.plot(grid_sizes, integrated_errors_yy, '-', linewidth=1.0,
              label=r'$\sigma_{yy}$', color='#2ca02c')
     ax1.set_xlabel(r'Grid size')
     ax1.set_ylabel(r'Normalized integrated error (Pa)')
-    ax1.legend()
     ax1.grid(True, alpha=0.3)
     ax1.set_yscale('log')
 
-    ax2.plot(grid_sizes, integrated_errors_total, 'o-', linewidth=2, markersize=7,
-             markerfacecolor='none', markeredgewidth=1.5,
+    ax2.plot(grid_sizes, integrated_errors_total, '-', linewidth=1.0,
              color='#b2182b', label='Average error')
     ax2.set_xlabel(r'Grid size')
     ax2.set_ylabel(r'Normalized integrated error (Pa)')
-    ax2.legend()
     ax2.grid(True, alpha=0.3)
     ax2.set_yscale('log')
 
     plt.tight_layout()
 
-    error_plot_path = os.path.join(output_dir, "integrated_error_comparison.pdf")
+    error_plot_path = os.path.join(output_dir, f"integrated_error_comparison{file_suffix}.pdf")
     plt.savefig(error_plot_path)
     plt.close()
 
@@ -958,8 +1362,7 @@ def create_integrated_error_plot(results, output_dir):
     
     _, ax_conv = plt.subplots(1, 1, figsize=(5.5, 4.5))
 
-    ax_conv.loglog(dx_values, integrated_errors_total, 'o-', linewidth=2, markersize=7,
-                   markerfacecolor='none', markeredgewidth=1.5,
+    ax_conv.loglog(dx_values, integrated_errors_total, '-', linewidth=1.0,
                    color='#b2182b', label='Total error')
 
     log_dx = np.log(dx_values)
@@ -976,12 +1379,11 @@ def create_integrated_error_plot(results, output_dir):
     ax_conv.set_xlabel(r'Grid spacing $dx$ (m)')
     ax_conv.set_ylabel(r'Normalized integrated error (Pa)')
     ax_conv.minorticks_on()
-    ax_conv.legend()
     ax_conv.grid(True, alpha=0.3, which='both')
 
     plt.tight_layout()
 
-    convergence_plot_path = os.path.join(output_dir, "convergence_rate.pdf")
+    convergence_plot_path = os.path.join(output_dir, f"convergence_rate{file_suffix}.pdf")
     plt.savefig(convergence_plot_path)
     plt.close()
     
@@ -998,7 +1400,7 @@ def create_integrated_error_plot(results, output_dir):
         'convergence_rate': float(slope)
     }
 
-    error_data_path = os.path.join(output_dir, "integrated_error_data.json")
+    error_data_path = os.path.join(output_dir, f"integrated_error_data{file_suffix}.json")
     with open(error_data_path, 'w') as f:
         json.dump(error_data, f, indent=4)
 
@@ -1025,6 +1427,160 @@ def create_integrated_error_plot(results, output_dir):
                         timing_list, _use_schwarz)
 
     return error_plot_path
+
+
+def create_stress_distribution_plots(results, output_dir, file_suffix=''):
+    """
+    画最细网格的全域应力分布图（σ_xx, σ_yy, σ_xy），CMAME 风格。
+    """
+    experiment_data = results['experiment_data']
+    if not experiment_data:
+        return
+
+    finest_grid = max(experiment_data.keys())
+    exp_data = experiment_data[finest_grid]
+    params    = exp_data['params']
+
+    # 应力分布图优先使用双域原始叠加数据（避免合并时D2空洞出现空白）
+    has_two_domains = (exp_data.get('positions1') is not None and
+                       exp_data.get('positions2') is not None)
+
+    domain_w = params['domain_w']
+
+    # 只显示 [0.3, 0.7] × [0.3, 0.7] 区域
+    plot_xmin, plot_xmax = 0.3, 0.7
+    plot_ymin, plot_ymax = 0.3, 0.7
+    plot_span = plot_xmax - plot_xmin
+    pts_per_unit_crop = 5.5 * 72.0 / plot_span
+
+    def _crop(pos):
+        return ((pos[:, 0] >= plot_xmin) & (pos[:, 0] <= plot_xmax) &
+                (pos[:, 1] >= plot_ymin) & (pos[:, 1] <= plot_ymax))
+
+    def _scatter(ax, pos, vals, vmin, vmax, particle_pitch):
+        # 用每个粒子的实际覆盖尺度来设定方形 marker，减少双域不同分辨率叠加时的锯齿感。
+        side_pts = max(1.0, particle_pitch * pts_per_unit_crop * 1.05)
+        s = side_pts ** 2
+        return ax.scatter(pos[:, 0], pos[:, 1], c=vals, cmap='turbo',
+                          vmin=vmin, vmax=vmax, s=s, linewidths=0,
+                          marker='s', rasterized=True)
+
+    components = [
+        ((0, 0), r'$\sigma_{xx}$ (Pa)', f'stress_dist_xx{file_suffix}.pdf'),
+        ((1, 1), r'$\sigma_{yy}$ (Pa)', f'stress_dist_yy{file_suffix}.pdf'),
+        ((0, 1), r'$\sigma_{xy}$ (Pa)', f'stress_dist_xy{file_suffix}.pdf'),
+    ]
+
+    if has_two_domains:
+        positions1 = exp_data['positions1']
+        stresses1  = exp_data['stresses1']
+        positions2 = exp_data['positions2']
+        stresses2  = exp_data['stresses2']
+        d1_pitch = params.get('d1_particle_pitch')
+        d2_pitch = params.get('d2_particle_pitch')
+        if d1_pitch is None:
+            d1_pitch = params['domain_h'] / finest_grid
+        if d2_pitch is None:
+            d2_pitch = domain_w / finest_grid
+        mask1 = _crop(positions1)
+        mask2 = _crop(positions2)
+    else:
+        positions_all = exp_data['positions']
+        stresses_all  = exp_data['stresses']
+        particle_pitch = params.get('particle_pitch', domain_w / finest_grid)
+        mask_all = _crop(positions_all)
+
+    def _draw_boundary_labels(ax):
+        """在两层虚线圆附近标注 Domain1 / intersection / Domain2。"""
+        if params.get('d1_hole_center') is None or params.get('d2_boundary_center') is None:
+            return
+
+        import matplotlib.patheffects as pe
+
+        cx, cy = params['d2_boundary_center']
+        r_outer = params['d2_boundary_radius']
+        r_inner = params['d1_hole_radius']
+        text_kwargs = dict(
+            ha='center',
+            va='center',
+            fontsize=8.5,
+            color='black',
+            path_effects=[pe.withStroke(linewidth=3.5, foreground='white')],
+            zorder=8,
+        )
+        # 三行都放在图内，沿着中心线向下排列
+        ax.text(cx, cy - r_inner + 0.010, 'domain1 boundary', **text_kwargs)
+        ax.text(cx, cy - 0.5 * (r_inner + r_outer), 'intersection', **text_kwargs)
+        ax.text(cx, cy - r_outer - 0.007, 'domain2 boundary', **text_kwargs)
+
+    print(f"\n创建应力分布图 (finest grid={finest_grid})...")
+    for (i, j), clabel, fname in components:
+        fig, ax = plt.subplots(1, 1, figsize=(5.5, 5.5 + 0.8))
+        sc = None
+
+        if has_two_domains:
+            vals1_crop = stresses1[mask1, i, j]
+            vals2_crop = stresses2[mask2, i, j]
+            vmax = float(np.max(np.abs(np.concatenate([vals1_crop, vals2_crop])))) if (mask1.any() or mask2.any()) else 1.0
+            # D1 底层，D2 覆盖
+            if mask1.any():
+                sc = _scatter(ax, positions1[mask1], vals1_crop, -vmax, vmax, d1_pitch)
+            if mask2.any():
+                sc = _scatter(ax, positions2[mask2], vals2_crop, -vmax, vmax, d2_pitch)
+        else:
+            vals_crop = stresses_all[mask_all, i, j]
+            vmax = float(np.max(np.abs(vals_crop))) if mask_all.any() else 1.0
+            sc = _scatter(ax, positions_all[mask_all], vals_crop, -vmax, vmax, particle_pitch)
+        if sc is None:
+            sc = matplotlib.cm.ScalarMappable(
+                norm=matplotlib.colors.Normalize(vmin=-vmax, vmax=vmax),
+                cmap='turbo'
+            )
+        cbar = plt.colorbar(sc, ax=ax, shrink=0.6, aspect=20)
+        cbar.set_label(clabel)
+        # 画两层虚线圆：Domain1 空洞边界和 Domain2 外边界
+        if params.get('d1_hole_center') is not None:
+            circle1 = plt.Circle(params['d1_hole_center'], params['d1_hole_radius'],
+                                 fill=False, linestyle='--', linewidth=1.0,
+                                 edgecolor='black', zorder=6)
+            ax.add_patch(circle1)
+        if params.get('d2_boundary_center') is not None:
+            circle2 = plt.Circle(params['d2_boundary_center'], params['d2_boundary_radius'],
+                                 fill=False, linestyle='--', linewidth=1.0,
+                                 edgecolor='black', zorder=6)
+            ax.add_patch(circle2)
+        _draw_boundary_labels(ax)
+        ax.set_xlim(plot_xmin, plot_xmax)
+        ax.set_ylim(plot_ymin, plot_ymax)
+        ax.set_aspect('equal')
+        ax.set_xlabel(r'$x$ (m)')
+        ax.set_ylabel(r'$y$ (m)')
+        # 统一 x/y 刻度间距
+        import matplotlib.ticker as ticker
+        raw = plot_span / 4.0
+        mag = 10 ** np.floor(np.log10(raw))
+        tick_interval = round(raw / mag) * mag
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
+        ax.yaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, fname))
+        plt.close()
+        print(f"  已保存: {fname}")
+
+
+def generate_comparison_plots(results, output_dir, stress_source='particle',
+                              yy_only=False, boundary_exclusion=1.0):
+    """生成某一种应力来源对应的一整套比较图。"""
+    file_suffix = _stress_source_suffix(stress_source)
+    source_label = '粒子应力' if stress_source == 'particle' else '网格应力'
+    print(f"\n生成 {source_label} 对应的比较图...")
+    create_summary_plot(results, output_dir, yy_only=yy_only,
+                        boundary_exclusion=boundary_exclusion, file_suffix=file_suffix)
+    create_integrated_error_plot(results, output_dir,
+                                 boundary_exclusion=boundary_exclusion,
+                                 file_suffix=file_suffix)
+    create_stress_distribution_plots(results, output_dir, file_suffix=file_suffix)
+
 
 def print_results_table(grid_sizes, dx_values, integrated_errors_xx,
                         integrated_errors_yy, integrated_errors_total,
@@ -1064,12 +1620,13 @@ def print_results_table(grid_sizes, dx_values, integrated_errors_xx,
     print(f"  收敛率 (log-log Total vs dx): {convergence_rate:.3f}")
     print("=" * W + "\n")
 
-def load_experiment_results(output_dir):
+def load_experiment_results(output_dir, stress_source='particle'):
     """
     从已有的实验输出目录加载结果数据
     
     参数:
         output_dir: 之前运行实验创建的输出目录
+        stress_source: 'particle' 或 'grid'，决定读取哪类 stress 数据
     
     返回:
         dict: 实验结果字典，格式与run_batch_experiments返回的results相同
@@ -1107,22 +1664,60 @@ def load_experiment_results(output_dir):
         print(f"加载网格大小 {grid_size} 的数据...")
         
         try:
+            source_for_grid = stress_source
+            grid_meta = grid_meta1 = grid_meta2 = None
             # 加载保存的数据
-            positions = np.load(os.path.join(grid_path, 'positions.npy'))
-            stresses = np.load(os.path.join(grid_path, 'stresses.npy'))
             config = load_config(os.path.join(grid_path, 'config_backup.json'))
-            
-            # 提取参数（与analyze_and_plot中的逻辑一致）
+
             # 检测是否为Schwarz配置
             use_schwarz = 'Domain2' in config
+
+            # 对于 Schwarz 配置，可优先加载 grid stress；否则回退到粒子 stress
+            positions1 = positions2 = stresses1 = stresses2 = None
+            if source_for_grid == 'grid':
+                grid_payload = _load_grid_stress_from_result_dir(grid_path, config, use_schwarz=use_schwarz)
+                if grid_payload is not None:
+                    positions = grid_payload['positions']
+                    stresses = grid_payload['stresses']
+                    positions1 = grid_payload.get('positions1')
+                    stresses1 = grid_payload.get('stresses1')
+                    positions2 = grid_payload.get('positions2')
+                    stresses2 = grid_payload.get('stresses2')
+                    grid_meta = grid_payload.get('grid_meta')
+                    grid_meta1 = grid_payload.get('grid_meta1')
+                    grid_meta2 = grid_payload.get('grid_meta2')
+                    if use_schwarz:
+                        print(f"  网格应力文件已加载 (D1:{len(positions1)}, D2:{len(positions2)}，用于比较)")
+                    else:
+                        print(f"  网格应力文件已加载 (N:{len(positions)}，用于比较)")
+                else:
+                    print(f"  警告: 未找到 grid stress 文件，回退到粒子 stress: {grid_path}")
+                    source_for_grid = 'particle'
+
+            if source_for_grid == 'particle':
+                # 对于Schwarz配置：若有domain1/domain2分域文件，用KD-tree重新合并（保留D2空洞中的D1粒子）
+                d1_path = os.path.join(grid_path, 'domain1_positions.npy')
+                d2_path = os.path.join(grid_path, 'domain2_positions.npy')
+                positions = np.load(os.path.join(grid_path, 'positions.npy'))
+                stresses = np.load(os.path.join(grid_path, 'stresses.npy'))
+
+                # 额外加载分域文件（仅用于应力分布图可视化）
+                if use_schwarz and os.path.exists(d1_path) and os.path.exists(d2_path):
+                    positions1 = np.load(d1_path)
+                    stresses1 = np.load(os.path.join(grid_path, 'domain1_stresses.npy'))
+                    positions2 = np.load(d2_path)
+                    stresses2 = np.load(os.path.join(grid_path, 'domain2_stresses.npy'))
+                    print(f"  分域文件已加载 (D1:{len(positions1)}, D2:{len(positions2)}，仅用于应力分布图)")
             
             if use_schwarz:
                 domain_config = config.get('Domain2', {})
+                domain1_config = config.get('Domain1', {})
                 domain_w = domain_config.get('domain_width', 0.3)
                 domain_h = domain_config.get('domain_height', 0.3)
                 offset = np.array(domain_config.get('offset', [0.35, 0.35]))
             else:
                 domain_config = config
+                domain1_config = None
                 domain_w = config.get('domain_width', 1.0)
                 domain_h = config.get('domain_height', 1.0)
                 offset = np.array([0.0, 0.0])
@@ -1130,8 +1725,14 @@ def load_experiment_results(output_dir):
             # 查找inclusion
             center = None
             radius = 0.15
+            d2_boundary_center = None
+            d2_boundary_radius = None
             
             for shape in domain_config.get('shapes', []):
+                if shape['type'] == 'ellipse' and shape['operation'] == 'add' and d2_boundary_center is None:
+                    local_center = np.array(shape['params']['center'])
+                    d2_boundary_center = local_center + offset
+                    d2_boundary_radius = shape['params']['semi_axes'][0]
                 if shape['type'] == 'ellipse' and shape['operation'] == 'change':
                     local_center = np.array(shape['params']['center'])
                     center = local_center + offset
@@ -1140,7 +1741,19 @@ def load_experiment_results(output_dir):
             
             if center is None:
                 center = np.array([domain_w/2.0, domain_h/2.0]) + offset
-            
+
+            # 查找Domain1中被减去的圆（空洞边界）
+            d1_hole_center = None
+            d1_hole_radius = None
+            if use_schwarz:
+                d1_config = config.get('Domain1', {})
+                d1_offset = np.array(d1_config.get('offset', [0.0, 0.0]))
+                for shape in d1_config.get('shapes', []):
+                    if shape['type'] == 'ellipse' and shape['operation'] == 'subtract':
+                        d1_hole_center = np.array(shape['params']['center']) + d1_offset
+                        d1_hole_radius = shape['params']['semi_axes'][0]
+                        break
+
             # 提取材料参数
             mat_params = domain_config.get('material_params', config.get('material_params', []))
             matrix_mat = next(m for m in mat_params if m['id'] == 0)
@@ -1153,6 +1766,33 @@ def load_experiment_results(output_dir):
             
             initial_F = inclusion_mat.get('initial_F', [[1.0, 0],[0, 1.0]])
             delta = 1.0 - initial_F[0][0]
+
+            # 根据数据源设置应力图标记粒度
+            if source_for_grid == 'grid':
+                if use_schwarz and grid_meta1 is not None and grid_meta2 is not None:
+                    d1_particle_pitch = float(grid_meta1['dx_x'])
+                    d2_particle_pitch = float(grid_meta2['dx_x'])
+                    particle_pitch = None
+                elif grid_meta is not None:
+                    particle_pitch = float(grid_meta['dx_x'])
+                    d1_particle_pitch = None
+                    d2_particle_pitch = None
+                else:
+                    particle_pitch = domain_w / domain_config.get('grid_nx', grid_size) / \
+                                     np.sqrt(domain_config.get('particles_per_grid', 1))
+                    d1_particle_pitch = None
+                    d2_particle_pitch = None
+            else:
+                particle_pitch = domain_w / domain_config.get('grid_nx', grid_size) / \
+                                 np.sqrt(domain_config.get('particles_per_grid', 1))
+                d1_particle_pitch = (
+                    domain1_config.get('domain_width', 1.0) / domain1_config.get('grid_nx', 1) /
+                    np.sqrt(domain1_config.get('particles_per_grid', 1))
+                ) if use_schwarz and domain1_config is not None else None
+                d2_particle_pitch = (
+                    domain_config.get('domain_width', domain_w) / domain_config.get('grid_nx', grid_size) /
+                    np.sqrt(domain_config.get('particles_per_grid', 1))
+                ) if use_schwarz else None
             
             # 计算解析解（用于生成汇总图）
             line_x = np.linspace(center[0] - 3*radius, center[0] + 3*radius, 500)
@@ -1169,6 +1809,10 @@ def load_experiment_results(output_dir):
             exp_data = {
                 'positions': positions,
                 'stresses': stresses,
+                'positions1': positions1,
+                'stresses1': stresses1,
+                'positions2': positions2,
+                'stresses2': stresses2,
                 'analytical': {
                     'line_x': line_x,
                     'line_y': line_y,
@@ -1184,7 +1828,17 @@ def load_experiment_results(output_dir):
                     'E_out': E_out,
                     'nu_out': nu_out,
                     'domain_w': domain_w,
-                    'domain_h': domain_h
+                    'domain_h': domain_h,
+                    'use_schwarz': use_schwarz,
+                    'offset': offset,
+                    'd1_hole_center': d1_hole_center,
+                    'd1_hole_radius': d1_hole_radius,
+                    'd2_boundary_center': d2_boundary_center,
+                    'd2_boundary_radius': d2_boundary_radius,
+                    'stress_source': source_for_grid,
+                    'particle_pitch': particle_pitch,
+                    'd1_particle_pitch': d1_particle_pitch,
+                    'd2_particle_pitch': d2_particle_pitch,
                 }
             }
             
@@ -1225,16 +1879,28 @@ def main():
     # 分析模式参数
     parser.add_argument('--analyze-only', action='store_true',
                        help='仅分析模式：不运行模拟，只从现有结果目录生成汇总图和误差图')
+    parser.add_argument('--summary-yy-only', action='store_true',
+                       help='汇总对比图仅绘制yy方向应力')
+    parser.add_argument('--boundary-exclusion', type=float, default=0.0,
+                       help='排除 inclusion 边界附近粒子的宽度，单位为 grid size 倍数 (默认: 0.0)')
+    parser.add_argument('--stress-source', choices=['particle', 'grid', 'both'], default='both',
+                       help='比较时使用粒子应力、网格应力或两者都生成 (默认: both)')
 
     # 批量模式参数
     parser.add_argument('--batch-mode', action='store_true',
                        help='启用批量模式：运行多个不同网格分辨率的实验')
     parser.add_argument('--grid-start', type=int, default=30,
-                       help='批量模式：起始网格大小 (默认: 30)')
-    parser.add_argument('--grid-end', type=int, default=120,
-                       help='批量模式：结束网格大小 (默认: 120)')
-    parser.add_argument('--grid-step', type=int, default=30,
-                       help='批量模式：网格大小步长 (默认: 30)')
+                       help='批量模式（grid）：起始网格大小 (默认: 30)')
+    parser.add_argument('--grid-end', type=int, default=90,
+                       help='批量模式（grid）：结束网格大小 (默认: 90)')
+    parser.add_argument('--grid-step', type=int, default=15,
+                       help='批量模式（grid）：网格大小步长 (默认: 15)')
+    parser.add_argument('--dx-start', type=float, default=None,
+                       help='批量模式（dx）：起始网格间距，提供后优先于 --grid-* 参数')
+    parser.add_argument('--dx-end', type=float, default=None,
+                       help='批量模式（dx）：结束网格间距（含）')
+    parser.add_argument('--dx-step', type=float, default=None,
+                       help='批量模式（dx）：网格间距步长')
 
     args = parser.parse_args()
 
@@ -1250,19 +1916,21 @@ def main():
         print(f"结果目录: {args.output_dir}")
         print("="*80)
         
-        # 加载已有的实验结果
-        results = load_experiment_results(args.output_dir)
-        
-        if results['successful_runs']:
-            # 创建汇总图
-            create_summary_plot(results, args.output_dir)
-            
-            # 创建积分误差对比图
-            create_integrated_error_plot(results, args.output_dir)
-            
-            print(f"\n分析完成！图表已保存到: {args.output_dir}")
-        else:
-            print("错误：没有可用的实验数据")
+        sources = ['particle', 'grid'] if args.stress_source == 'both' else [args.stress_source]
+        for source in sources:
+            results = load_experiment_results(args.output_dir, stress_source=source)
+            if results['successful_runs']:
+                generate_comparison_plots(
+                    results,
+                    args.output_dir,
+                    stress_source=source,
+                    yy_only=args.summary_yy_only,
+                    boundary_exclusion=args.boundary_exclusion,
+                )
+            else:
+                print(f"错误：{source} 来源没有可用的实验数据")
+
+        print(f"\n分析完成！图表已保存到: {args.output_dir}")
         
         return
 
@@ -1276,12 +1944,19 @@ def main():
 
         results = run_batch_experiments(args)
 
-        # 创建汇总图
-        # if results['successful_runs']:
-        create_summary_plot(results, args.output_dir)
-
-        # 创建积分误差对比图
-        create_integrated_error_plot(results, args.output_dir)
+        sources = ['particle', 'grid'] if args.stress_source == 'both' else [args.stress_source]
+        for source in sources:
+            loaded_results = load_experiment_results(args.output_dir, stress_source=source)
+            if loaded_results['successful_runs']:
+                generate_comparison_plots(
+                    loaded_results,
+                    args.output_dir,
+                    stress_source=source,
+                    yy_only=args.summary_yy_only,
+                    boundary_exclusion=args.boundary_exclusion,
+                )
+            else:
+                print(f"警告: {source} 来源没有可用数据，跳过对应图表")
 
         print(f"\n批量实验全部完成!")
         print(f"结果目录: {args.output_dir}")
@@ -1293,7 +1968,13 @@ def main():
         print(f"{mode_str}单次实验模式")
         print("=" * 80)
 
-        run_single_experiment(args.config, None, args.output_dir, use_schwarz=args.schwarz)
+        run_single_experiment(
+            args.config,
+            None,
+            args.output_dir,
+            use_schwarz=args.schwarz,
+            stress_source=args.stress_source,
+        )
 
 if __name__ == "__main__":
     main()

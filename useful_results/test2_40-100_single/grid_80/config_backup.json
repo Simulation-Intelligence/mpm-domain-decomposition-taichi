@@ -1,0 +1,248 @@
+{
+    "arch": "cpu",
+    "float_type": "f64",
+    "dim": 2,
+    "grid_nx": 80,
+    "grid_ny": 32,
+    "domain_width": 0.111111,
+    "domain_height": 0.044444,
+    "particles_per_grid": 9,
+    "sampling_method": "gauss",
+    "use_mapping": false,
+    "elasticity_model": "linear",
+    "constrain_x_velocity": false,
+    "DBC_range": [
+        [
+            [
+                0.005,
+                0.006111
+            ],
+            [
+                0,
+                0.111111
+            ]
+        ]
+    ],
+    "auto_boundary": false,
+    "boundary_particle_range": [
+        [
+            0.0,
+            1.0
+        ],
+        [
+            0.0,
+            1.0
+        ]
+    ],
+    "move_boundary": {
+        "start_region": [
+            [
+                0.102,
+                0.106111
+            ],
+            [
+                0.0,
+                0.044444
+            ]
+        ],
+        "displacement": [
+            0.0001,
+            0.0
+        ],
+        "speed": 0.1
+    },
+    "dt": 0.0005,
+    "max_iter": 1,
+    "solve_max_iter": 10,
+    "gravity": [
+        0.0,
+        -0.0
+    ],
+    "material_params": [
+        {
+            "id": 0,
+            "name": "default",
+            "E": 100000.0,
+            "nu": 0.3,
+            "rho": 1000.0
+        }
+    ],
+    "implicit": true,
+    "static_solve": false,
+    "use_auto_diff": false,
+    "compare_diff": false,
+    "bound": 1,
+    "boundary_size": 1.11111e-05,
+    "damping": 0.6,
+    "particle_damping": 0.99,
+    "initial_velocity_y": -0.0,
+    "shapes": [
+        {
+            "type": "rectangle",
+            "params": {
+                "range": [
+                    [
+                        0.005556,
+                        0.105556
+                    ],
+                    [
+                        0.002222,
+                        0.042222
+                    ]
+                ]
+            },
+            "operation": "add",
+            "material_id": 0
+        },
+        {
+            "type": "rectangle",
+            "params": {
+                "range": [
+                    [
+                        0.045556,
+                        0.065556
+                    ],
+                    [
+                        0.032222,
+                        0.044444
+                    ]
+                ]
+            },
+            "operation": "subtract",
+            "material_id": 0
+        },
+        {
+            "type": "rectangle",
+            "params": {
+                "range": [
+                    [
+                        0.045556,
+                        0.065556
+                    ],
+                    [
+                        0.0,
+                        0.012222
+                    ]
+                ]
+            },
+            "operation": "subtract",
+            "material_id": 0
+        },
+        {
+            "type": "rectangle",
+            "params": {
+                "range": [
+                    [
+                        0.051111,
+                        0.06
+                    ],
+                    [
+                        0.027222,
+                        0.044444
+                    ]
+                ]
+            },
+            "operation": "subtract",
+            "material_id": 0
+        },
+        {
+            "type": "rectangle",
+            "params": {
+                "range": [
+                    [
+                        0.051111,
+                        0.06
+                    ],
+                    [
+                        0.0,
+                        0.017222
+                    ]
+                ]
+            },
+            "operation": "subtract",
+            "material_id": 0
+        },
+        {
+            "type": "ellipse",
+            "params": {
+                "center": [
+                    0.050556,
+                    0.032222
+                ],
+                "semi_axes": [
+                    0.005,
+                    0.005
+                ]
+            },
+            "operation": "subtract"
+        },
+        {
+            "type": "ellipse",
+            "params": {
+                "center": [
+                    0.060556,
+                    0.032222
+                ],
+                "semi_axes": [
+                    0.005,
+                    0.005
+                ]
+            },
+            "operation": "subtract"
+        },
+        {
+            "type": "ellipse",
+            "params": {
+                "center": [
+                    0.050556,
+                    0.012222
+                ],
+                "semi_axes": [
+                    0.005,
+                    0.005
+                ]
+            },
+            "operation": "subtract"
+        },
+        {
+            "type": "ellipse",
+            "params": {
+                "center": [
+                    0.060556,
+                    0.012222
+                ],
+                "semi_axes": [
+                    0.005,
+                    0.005
+                ]
+            },
+            "operation": "subtract"
+        }
+    ],
+    "stress_output_regions": [
+        {
+            "type": "rectangle",
+            "params": {
+                "range": [
+                    [
+                        0.0,
+                        1.0
+                    ],
+                    [
+                        0.0,
+                        1.0
+                    ]
+                ]
+            }
+        }
+    ],
+    "implicit_solver": "Newton",
+    "eta": 1e-05,
+    "max_frames": 5000,
+    "last_frames_count": 100,
+    "velocity_convergence_threshold": 1e-06,
+    "velocity_convergence_check_interval": 10,
+    "use_record": false,
+    "no_gui": false,
+    "stress_save_interval": 500
+}
