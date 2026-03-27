@@ -1,7 +1,7 @@
 {
     "mode": "schwarz",
-    "big_domain_solve_time": 7.7957728789733665,
-    "small_domain_solve_time": 25.277307354976074,
-    "other_time": 4.288018255032512,
-    "total_time": 37.36109848898195
+    "big_domain_solve_time": 41.35580215298978,
+    "small_domain_solve_time": 98.72761549897132,
+    "other_time": 10.30114897704243,
+    "total_time": 150.38456662900353
 }

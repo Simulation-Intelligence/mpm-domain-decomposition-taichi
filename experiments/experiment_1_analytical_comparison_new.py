@@ -774,8 +774,8 @@ def analyze_and_plot(positions_or_tuple, stresses_or_none, config, output_dir, g
 
     # 提取截面数据 (沿中心水平线)
     strip_width = calculate_strip_width(config, grid_size, use_schwarz)
-    mask_strip = np.abs(positions[:, 1] - center[1]) < strip_width
-    
+    mask_strip = np.abs(positions[:, 1] - center[1]) <= strip_width
+
     mpm_x = positions[mask_strip, 0]
     mpm_y = positions[mask_strip, 1]
     mpm_sig_xx = stresses[mask_strip, 0, 0]
@@ -1085,7 +1085,7 @@ def _draw_summary_axes(ax1, ax2, experiment_data, params, analytical,
         stresses = exp_data['stresses']
 
         strip_width = get_strip_width_from_params(params['domain_h'], grid_size, radius)
-        mask_strip = np.abs(positions[:, 1] - center[1]) < strip_width
+        mask_strip = np.abs(positions[:, 1] - center[1]) <= strip_width
 
         pos_s = positions[mask_strip]
         str_s = stresses[mask_strip]
@@ -1275,14 +1275,14 @@ def create_integrated_error_plot(results, output_dir, boundary_exclusion=1.0, fi
         # 只提取水平截面上的粒子（与create_summary_plot一致）
         # 使用统一的strip_width计算函数
         strip_width = get_strip_width_from_params(params['domain_h'], grid_size, radius)
-        mask_strip = np.abs(positions[:, 1] - center[1]) < strip_width
-        
+        mask_strip = np.abs(positions[:, 1] - center[1]) <= strip_width
+
         positions_strip = positions[mask_strip]
         stresses_strip = stresses[mask_strip]
         
         # 进一步限制在x方向±3倍半径范围内（与汇总图范围一致）
         x_rel_all = positions_strip[:, 0] - center[0]
-        mask_x_range = np.abs(x_rel_all) <= 1 * radius
+        mask_x_range = np.abs(x_rel_all) <= 3 * radius
 
         positions_strip = positions_strip[mask_x_range]
         stresses_strip = stresses_strip[mask_x_range]
@@ -1367,14 +1367,16 @@ def create_integrated_error_plot(results, output_dir, boundary_exclusion=1.0, fi
 
     log_dx = np.log(dx_values)
     log_error = np.log(integrated_errors_total)
-    coeffs = np.polyfit(log_dx, log_error, 1)
-    slope = coeffs[0]
-    intercept = coeffs[1]
-
-    dx_fit = np.array([min(dx_values), max(dx_values)])
-    error_fit = np.exp(intercept) * dx_fit**slope
-    ax_conv.loglog(dx_fit, error_fit, '--', linewidth=1.5, color='gray',
-                   label=rf'Slope $= {slope:.2f}$')
+    valid_mask = np.isfinite(log_dx) & np.isfinite(log_error)
+    if np.sum(valid_mask) >= 2:
+        coeffs = np.polyfit(log_dx[valid_mask], log_error[valid_mask], 1)
+        slope, intercept = coeffs[0], coeffs[1]
+        dx_fit = np.array([min(dx_values), max(dx_values)])
+        error_fit = np.exp(intercept) * dx_fit**slope
+        ax_conv.loglog(dx_fit, error_fit, '--', linewidth=1.5, color='gray',
+                       label=rf'Slope $= {slope:.2f}$')
+    else:
+        slope = float('nan')
 
     ax_conv.set_xlabel(r'Grid spacing $dx$ (m)')
     ax_conv.set_ylabel(r'Normalized integrated error (Pa)')
@@ -1431,141 +1433,87 @@ def create_integrated_error_plot(results, output_dir, boundary_exclusion=1.0, fi
 
 def create_stress_distribution_plots(results, output_dir, file_suffix=''):
     """
-    画最细网格的全域应力分布图（σ_xx, σ_yy, σ_xy），CMAME 风格。
+    画每个分辨率的全域应力分布图（σ_xx, σ_yy, σ_xy），CMAME 风格。
     """
     experiment_data = results['experiment_data']
     if not experiment_data:
         return
 
-    finest_grid = max(experiment_data.keys())
-    exp_data = experiment_data[finest_grid]
-    params    = exp_data['params']
-
-    # 应力分布图优先使用双域原始叠加数据（避免合并时D2空洞出现空白）
-    has_two_domains = (exp_data.get('positions1') is not None and
-                       exp_data.get('positions2') is not None)
-
-    domain_w = params['domain_w']
-
     # 只显示 [0.3, 0.7] × [0.3, 0.7] 区域
     plot_xmin, plot_xmax = 0.3, 0.7
     plot_ymin, plot_ymax = 0.3, 0.7
     plot_span = plot_xmax - plot_xmin
-    pts_per_unit_crop = 5.5 * 72.0 / plot_span
-
     def _crop(pos):
         return ((pos[:, 0] >= plot_xmin) & (pos[:, 0] <= plot_xmax) &
                 (pos[:, 1] >= plot_ymin) & (pos[:, 1] <= plot_ymax))
 
-    def _scatter(ax, pos, vals, vmin, vmax, particle_pitch):
-        # 用每个粒子的实际覆盖尺度来设定方形 marker，减少双域不同分辨率叠加时的锯齿感。
-        side_pts = max(1.0, particle_pitch * pts_per_unit_crop * 1.05)
-        s = side_pts ** 2
-        return ax.scatter(pos[:, 0], pos[:, 1], c=vals, cmap='turbo',
-                          vmin=vmin, vmax=vmax, s=s, linewidths=0,
-                          marker='s', rasterized=True)
-
     components = [
-        ((0, 0), r'$\sigma_{xx}$ (Pa)', f'stress_dist_xx{file_suffix}.pdf'),
-        ((1, 1), r'$\sigma_{yy}$ (Pa)', f'stress_dist_yy{file_suffix}.pdf'),
-        ((0, 1), r'$\sigma_{xy}$ (Pa)', f'stress_dist_xy{file_suffix}.pdf'),
+        ((0, 0), r'$\sigma_{xx}$ (Pa)', f'stress_dist_xx{file_suffix}'),
+        ((1, 1), r'$\sigma_{yy}$ (Pa)', f'stress_dist_yy{file_suffix}'),
+        ((0, 1), r'$\sigma_{xy}$ (Pa)', f'stress_dist_xy{file_suffix}'),
     ]
 
-    if has_two_domains:
-        positions1 = exp_data['positions1']
-        stresses1  = exp_data['stresses1']
-        positions2 = exp_data['positions2']
-        stresses2  = exp_data['stresses2']
-        d1_pitch = params.get('d1_particle_pitch')
-        d2_pitch = params.get('d2_particle_pitch')
-        if d1_pitch is None:
-            d1_pitch = params['domain_h'] / finest_grid
-        if d2_pitch is None:
-            d2_pitch = domain_w / finest_grid
-        mask1 = _crop(positions1)
-        mask2 = _crop(positions2)
-    else:
-        positions_all = exp_data['positions']
-        stresses_all  = exp_data['stresses']
-        particle_pitch = params.get('particle_pitch', domain_w / finest_grid)
-        mask_all = _crop(positions_all)
+    print(f"\n创建应力分布图 (所有分辨率)...")
+    for grid_size, exp_data in sorted(experiment_data.items()):
+        params   = exp_data['params']
 
-    def _draw_boundary_labels(ax):
-        """在两层虚线圆附近标注 Domain1 / intersection / Domain2。"""
-        if params.get('d1_hole_center') is None or params.get('d2_boundary_center') is None:
-            return
-
-        import matplotlib.patheffects as pe
-
-        cx, cy = params['d2_boundary_center']
-        r_outer = params['d2_boundary_radius']
-        r_inner = params['d1_hole_radius']
-        text_kwargs = dict(
-            ha='center',
-            va='center',
-            fontsize=8.5,
-            color='black',
-            path_effects=[pe.withStroke(linewidth=3.5, foreground='white')],
-            zorder=8,
-        )
-        # 三行都放在图内，沿着中心线向下排列
-        ax.text(cx, cy - r_inner + 0.010, 'domain1 boundary', **text_kwargs)
-        ax.text(cx, cy - 0.5 * (r_inner + r_outer), 'intersection', **text_kwargs)
-        ax.text(cx, cy - r_outer - 0.007, 'domain2 boundary', **text_kwargs)
-
-    print(f"\n创建应力分布图 (finest grid={finest_grid})...")
-    for (i, j), clabel, fname in components:
-        fig, ax = plt.subplots(1, 1, figsize=(5.5, 5.5 + 0.8))
-        sc = None
+        has_two_domains = (exp_data.get('positions1') is not None and
+                           exp_data.get('positions2') is not None)
 
         if has_two_domains:
-            vals1_crop = stresses1[mask1, i, j]
-            vals2_crop = stresses2[mask2, i, j]
-            vmax = float(np.max(np.abs(np.concatenate([vals1_crop, vals2_crop])))) if (mask1.any() or mask2.any()) else 1.0
-            # D1 底层，D2 覆盖
-            if mask1.any():
-                sc = _scatter(ax, positions1[mask1], vals1_crop, -vmax, vmax, d1_pitch)
-            if mask2.any():
-                sc = _scatter(ax, positions2[mask2], vals2_crop, -vmax, vmax, d2_pitch)
+            mask1 = _crop(exp_data['positions1'])
+            mask2 = _crop(exp_data['positions2'])
+            pos_all = np.concatenate([exp_data['positions1'][mask1],
+                                      exp_data['positions2'][mask2]], axis=0)
+            stress_all = np.concatenate([exp_data['stresses1'][mask1],
+                                         exp_data['stresses2'][mask2]], axis=0)
         else:
-            vals_crop = stresses_all[mask_all, i, j]
-            vmax = float(np.max(np.abs(vals_crop))) if mask_all.any() else 1.0
-            sc = _scatter(ax, positions_all[mask_all], vals_crop, -vmax, vmax, particle_pitch)
-        if sc is None:
-            sc = matplotlib.cm.ScalarMappable(
-                norm=matplotlib.colors.Normalize(vmin=-vmax, vmax=vmax),
-                cmap='turbo'
-            )
-        cbar = plt.colorbar(sc, ax=ax, shrink=0.6, aspect=20)
-        cbar.set_label(clabel)
-        # 画两层虚线圆：Domain1 空洞边界和 Domain2 外边界
-        if params.get('d1_hole_center') is not None:
-            circle1 = plt.Circle(params['d1_hole_center'], params['d1_hole_radius'],
-                                 fill=False, linestyle='--', linewidth=1.0,
-                                 edgecolor='black', zorder=6)
-            ax.add_patch(circle1)
-        if params.get('d2_boundary_center') is not None:
-            circle2 = plt.Circle(params['d2_boundary_center'], params['d2_boundary_radius'],
-                                 fill=False, linestyle='--', linewidth=1.0,
-                                 edgecolor='black', zorder=6)
-            ax.add_patch(circle2)
-        _draw_boundary_labels(ax)
-        ax.set_xlim(plot_xmin, plot_xmax)
-        ax.set_ylim(plot_ymin, plot_ymax)
-        ax.set_aspect('equal')
-        ax.set_xlabel(r'$x$ (m)')
-        ax.set_ylabel(r'$y$ (m)')
-        # 统一 x/y 刻度间距
-        import matplotlib.ticker as ticker
-        raw = plot_span / 4.0
-        mag = 10 ** np.floor(np.log10(raw))
-        tick_interval = round(raw / mag) * mag
-        ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
-        ax.yaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, fname))
-        plt.close()
-        print(f"  已保存: {fname}")
+            mask_all = _crop(exp_data['positions'])
+            pos_all    = exp_data['positions'][mask_all]
+            stress_all = exp_data['stresses'][mask_all]
+
+        for (i, j), clabel, fname_base in components:
+            fname = f'{fname_base}_grid{grid_size}.pdf'
+            fig, ax = plt.subplots(1, 1, figsize=(6.0, 6.0 + 0.8))
+
+            vals = stress_all[:, i, j]
+            vmax = float(np.max(np.abs(vals))) if len(vals) > 0 else 1.0
+            levels = np.linspace(-vmax, vmax, 13)
+
+            tcf = ax.tricontourf(pos_all[:, 0], pos_all[:, 1], vals,
+                                 levels=levels, cmap='turbo',
+                                 vmin=-vmax, vmax=vmax, extend='both')
+            for c in tcf.collections:
+                c.set_edgecolor('face')
+            cbar = plt.colorbar(tcf, ax=ax, shrink=0.6, aspect=20)
+            cbar.set_label(clabel)
+
+            # 内圈实线（Domain1 空洞边界），外圈虚线（Domain2 外边界）
+            if params.get('d1_hole_center') is not None:
+                circle1 = plt.Circle(params['d1_hole_center'], params['d1_hole_radius'],
+                                     fill=False, linestyle='-', linewidth=1.0,
+                                     edgecolor='black', zorder=6)
+                ax.add_patch(circle1)
+            if params.get('d2_boundary_center') is not None:
+                circle2 = plt.Circle(params['d2_boundary_center'], params['d2_boundary_radius'],
+                                     fill=False, linestyle='--', linewidth=1.0,
+                                     edgecolor='black', zorder=6)
+                ax.add_patch(circle2)
+            ax.set_xlim(plot_xmin, plot_xmax)
+            ax.set_ylim(plot_ymin, plot_ymax)
+            ax.set_aspect('equal')
+            ax.set_xlabel(r'$x$ (m)')
+            ax.set_ylabel(r'$y$ (m)')
+            import matplotlib.ticker as ticker
+            raw = plot_span / 4.0
+            mag = 10 ** np.floor(np.log10(raw))
+            tick_interval = round(raw / mag) * mag
+            ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
+            ax.yaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
+            plt.tight_layout()
+            plt.savefig(os.path.join(output_dir, fname))
+            plt.close()
+            print(f"  已保存: {fname}")
 
 
 def generate_comparison_plots(results, output_dir, stress_source='particle',

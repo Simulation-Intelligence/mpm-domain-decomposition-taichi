@@ -1,0 +1,14 @@
+{
+  "dim": 2,
+  "nx": 41,
+  "ny": 41,
+  "offset": [
+    0.0,
+    0.0
+  ],
+  "dx_x": 0.024390243902439025,
+  "dx_y": 0.024390243902439025,
+  "elasticity_model": "linear",
+  "valid_mass_threshold": 1e-10,
+  "valid_grid_count": 1272
+}

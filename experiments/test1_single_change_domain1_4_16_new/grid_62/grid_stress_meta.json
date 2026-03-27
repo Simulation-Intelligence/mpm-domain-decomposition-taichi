@@ -13,6 +13,6 @@
   "lambda": 57692.30769230769,
   "elasticity_model": "linear",
   "valid_mass_threshold": 1e-10,
-  "valid_grid_count": 2601,
+  "valid_grid_count": 2809,
   "invalid_j_count": 0
 }

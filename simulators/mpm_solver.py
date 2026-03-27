@@ -91,6 +91,7 @@ class MPMSolver:
         self.max_iter_history = 10000  # 最多保留 10000 次求解记录，防止无界增长
 
         eta = config.get("eta", 1)
+        newton_tolerance_mode = config.get("newton_tolerance_mode", "absolute")
         if solver_type == "BFGS":
             # 使用材料1的p_mass进行梯度归一化
             avg_p_mass = (self.particles.p_mass_1 + self.particles.p_mass_2) / 2.0
@@ -100,7 +101,7 @@ class MPMSolver:
         elif solver_type == "Newton":
             # 使用材料1的p_mass进行梯度归一化
             avg_p_mass = (self.particles.p_mass_1 + self.particles.p_mass_2) / 2.0
-            self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=None,dim=total_grid_points * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta= eta,float_type=self.float_type)
+            self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=None,dim=total_grid_points * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta=eta,tolerance_mode=newton_tolerance_mode,float_type=self.float_type)
         elif solver_type == "CG":
             # 使用材料1的p_mass进行梯度归一化
             avg_p_mass = (self.particles.p_mass_1 + self.particles.p_mass_2) / 2.0
@@ -118,9 +119,11 @@ class MPMSolver:
         if self.dim == 2:
             self.F_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.nx, self.grid.ny))
             self.m_grid = ti.field(self.float_type, shape=(self.grid.nx, self.grid.ny))
+            self.stress_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.nx, self.grid.ny))
         else:
             self.F_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.nx, self.grid.ny, self.grid.nz))
             self.m_grid = ti.field(self.float_type, shape=(self.grid.nx, self.grid.ny, self.grid.nz))
+            self.stress_grid = ti.Matrix.field(self.dim, self.dim, self.float_type, shape=(self.grid.nx, self.grid.ny, self.grid.nz))
 
     @ti.func
     def get_gravity(self):
@@ -1220,6 +1223,29 @@ class MPMSolver:
                 F_grid[I] /= m_grid[I]
 
     @ti.kernel
+    def p2g_stress_averaging(self, stress_grid: ti.template(), m_grid: ti.template()):
+        """P2G步骤：将粒子应力（已含正确材料参数）质量加权平均到网格"""
+        for I in ti.grouped(stress_grid):
+            stress_grid[I] = ti.Matrix.zero(self.float_type, self.dim, self.dim)
+            m_grid[I] = 0.0
+
+        for p in range(self.particles.n_particles):
+            base, fx = self.grid.particle_to_grid_base_and_fx(self.particles.x[p])
+            for offset in ti.static(ti.grouped(ti.ndrange(*self.neighbor))):
+                grid_idx = self.wrap_grid_idx(base + offset)
+                weight = self.particles.wip[p, offset]
+                p_mass = self.particles.get_particle_mass(p)
+                ti.atomic_add(m_grid[grid_idx], weight * p_mass)
+                for i in ti.static(range(self.dim)):
+                    for j in ti.static(range(self.dim)):
+                        ti.atomic_add(stress_grid[grid_idx][i, j],
+                                      weight * p_mass * self.particles.stress[p][i, j])
+
+        for I in ti.grouped(stress_grid):
+            if m_grid[I] > 1e-10:
+                stress_grid[I] /= m_grid[I]
+
+    @ti.kernel
     def g2p_F_averaging(self, F_grid: ti.template()):
         """G2P步骤：将网格的平均F值传输回粒子"""
         for p in range(self.particles.n_particles):
@@ -1306,43 +1332,12 @@ class MPMSolver:
         self.restore_F()
 
     def get_grid_stress_from_F_grid_numpy(self):
-        """基于当前F_grid/m_grid计算并返回网格Cauchy应力（numpy格式）"""
-        F_grid = self.F_grid.to_numpy()
+        """将粒子应力P2G到网格（质量加权平均），每个粒子已含正确材料参数"""
+        self.p2g_stress_averaging(self.stress_grid, self.m_grid)
+        stress_grid = self.stress_grid.to_numpy()
         m_grid = self.m_grid.to_numpy()
 
-        # 默认使用material_id=0参数
-        mat0 = self.particles.material_params.get(0, {})
-        mu = float(mat0.get("mu", getattr(self.particles, "mu_1", self.mu)))
-        lam = float(mat0.get("lambda", getattr(self.particles, "lam_1", self.lam)))
-
-        stress_grid = np.zeros_like(F_grid)
         valid_mask = m_grid > 1e-10
-        invalid_j_count = 0
-
-        if np.any(valid_mask):
-            F_valid = F_grid[valid_mask]  # (N, dim, dim)
-            I = np.eye(self.dim, dtype=F_valid.dtype)
-
-            if self.elasticity_model == "linear":
-                eps = 0.5 * (F_valid + np.transpose(F_valid, (0, 2, 1))) - I
-                eps_trace = np.trace(eps, axis1=1, axis2=2)
-                sigma_valid = 2.0 * mu * eps + lam * eps_trace[:, None, None] * I
-                stress_grid[valid_mask] = sigma_valid
-            else:
-                det_F = np.linalg.det(F_valid)
-                positive_j_mask = det_F > 0.0
-                invalid_j_count = int(np.count_nonzero(~positive_j_mask))
-
-                sigma_valid = np.zeros_like(F_valid)
-                if np.any(positive_j_mask):
-                    F_pos = F_valid[positive_j_mask]
-                    det_pos = det_F[positive_j_mask]
-                    B = np.matmul(F_pos, np.transpose(F_pos, (0, 2, 1)))
-                    sigma_pos = mu * B + (lam * np.log(det_pos) - mu)[:, None, None] * I
-                    sigma_valid[positive_j_mask] = sigma_pos
-
-                stress_grid[valid_mask] = sigma_valid
-
         offset = self.grid.offset
         offset_meta = [float(offset[d]) for d in range(self.dim)]
 
@@ -1353,13 +1348,9 @@ class MPMSolver:
             "offset": offset_meta,
             "dx_x": float(self.grid.dx_x),
             "dx_y": float(self.grid.dx_y),
-            "material_id_used": 0,
-            "mu": float(mu),
-            "lambda": float(lam),
             "elasticity_model": self.elasticity_model,
             "valid_mass_threshold": 1e-10,
             "valid_grid_count": int(np.count_nonzero(valid_mask)),
-            "invalid_j_count": int(invalid_j_count),
         }
 
         if self.dim == 3:

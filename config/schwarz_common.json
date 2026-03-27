@@ -46,7 +46,8 @@
             ]
         ],
         "implicit_solver": "Newton",
-        "eta": 1e-4
+        "eta": 1e-4,
+        "newton_tolerance_mode": "absolute"
     },
     "Domain2": {
         "arch": "cpu",
@@ -89,6 +90,7 @@
             ]
         ],
         "implicit_solver": "Newton",
-        "eta": 1e-4
+        "eta": 1e-4,
+        "newton_tolerance_mode": "absolute"
     }
 }

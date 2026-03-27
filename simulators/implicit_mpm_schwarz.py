@@ -1136,13 +1136,11 @@ class MPM_Schwarz:
 
         print(
             f"Domain1网格应力已保存: shape={d1_grid_stress.shape}, "
-            f"有效网格数={d1_grid_meta['valid_grid_count']}, "
-            f"invalid_J网格数={d1_grid_meta['invalid_j_count']}"
+            f"有效网格数={d1_grid_meta['valid_grid_count']}"
         )
         print(
             f"Domain2网格应力已保存: shape={d2_grid_stress.shape}, "
-            f"有效网格数={d2_grid_meta['valid_grid_count']}, "
-            f"invalid_J网格数={d2_grid_meta['invalid_j_count']}"
+            f"有效网格数={d2_grid_meta['valid_grid_count']}"
         )
 
         # 保存actual mass信息到该帧的子目录

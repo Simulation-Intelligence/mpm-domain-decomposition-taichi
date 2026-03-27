@@ -796,8 +796,7 @@ class ImplicitMPM:
 
         print(
             f"网格应力已保存: shape={grid_stress.shape}, "
-            f"有效网格数={grid_meta['valid_grid_count']}, "
-            f"invalid_J网格数={grid_meta['invalid_j_count']}"
+            f"有效网格数={grid_meta['valid_grid_count']}"
         )
 
         # 保存统计信息

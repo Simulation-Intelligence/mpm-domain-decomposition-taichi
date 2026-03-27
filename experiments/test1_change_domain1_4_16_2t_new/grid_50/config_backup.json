@@ -1,7 +1,7 @@
 {
     "max_schwarz_iter": 50,
     "schwarz_eta": 0.0001,
-    "max_frames": 150,
+    "max_frames": 5000,
     "velocity_convergence_threshold": 0.0001,
     "velocity_convergence_check_interval": 10,
     "use_record": false,
@@ -18,12 +18,12 @@
         "arch": "cpu",
         "float_type": "f64",
         "dim": 2,
-        "grid_nx": 56,
-        "grid_ny": 56,
+        "grid_nx": 62,
+        "grid_ny": 62,
         "domain_width": 1.0,
         "domain_height": 1.0,
         "particles_per_grid": 4,
-        "sampling_method": "regular",
+        "sampling_method": "gauss",
         "use_mapping": false,
         "elasticity_model": "linear",
         "constrain_x_velocity": false,
@@ -39,7 +39,7 @@
             ]
         ],
         "boundary_size": 0.001,
-        "dt": 0.0027,
+        "dt": 0.016,
         "max_iter": 1,
         "solve_max_iter": 1000,
         "gravity": [
@@ -77,7 +77,7 @@
         "use_auto_diff": false,
         "compare_diff": false,
         "bound": 1,
-        "damping": 50,
+        "damping": 1,
         "particle_damping": 1,
         "initial_velocity_y": 0.0,
         "shapes": [
@@ -132,6 +132,7 @@
         ],
         "implicit_solver": "Newton",
         "eta": 0.0001,
+        "newton_tolerance_mode": "absolute",
         "max_frames": 1000,
         "last_frames_count": 1,
         "use_record": false,
@@ -143,14 +144,14 @@
         "dim": 2,
         "grid_nx": 50,
         "grid_ny": 50,
-        "domain_width": 0.3,
-        "domain_height": 0.3,
+        "domain_width": 0.4,
+        "domain_height": 0.4,
         "offset": [
-            0.35,
-            0.35
+            0.3,
+            0.3
         ],
         "particles_per_grid": 4,
-        "sampling_method": "regular",
+        "sampling_method": "gauss",
         "use_mapping": false,
         "elasticity_model": "linear",
         "constrain_x_velocity": false,
@@ -166,7 +167,7 @@
             ]
         ],
         "boundary_size": 0.001,
-        "dt": 0.0009000000000000001,
+        "dt": 0.008,
         "max_iter": 1,
         "solve_max_iter": 1000,
         "gravity": [
@@ -203,8 +204,8 @@
         "static_solve": false,
         "use_auto_diff": false,
         "compare_diff": false,
-        "bound": 0,
-        "damping": 50,
+        "bound": 1,
+        "damping": 1,
         "particle_damping": 1,
         "initial_velocity_y": 0.0,
         "shapes": [
@@ -212,12 +213,12 @@
                 "type": "ellipse",
                 "params": {
                     "center": [
-                        0.15,
-                        0.15
+                        0.2,
+                        0.2
                     ],
                     "semi_axes": [
-                        0.13,
-                        0.13
+                        0.15,
+                        0.15
                     ]
                 },
                 "operation": "add",
@@ -227,8 +228,8 @@
                 "type": "ellipse",
                 "params": {
                     "center": [
-                        0.15,
-                        0.15
+                        0.2,
+                        0.2
                     ],
                     "semi_axes": [
                         0.05,
@@ -258,6 +259,7 @@
         ],
         "implicit_solver": "Newton",
         "eta": 0.0001,
+        "newton_tolerance_mode": "absolute",
         "max_frames": 1000,
         "last_frames_count": 1,
         "use_record": false,

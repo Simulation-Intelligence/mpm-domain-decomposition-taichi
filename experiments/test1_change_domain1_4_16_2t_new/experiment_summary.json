@@ -1,23 +1,23 @@
 {
     "base_config": "config/schwarz_2d_test1.json",
     "grid_sizes": [
-        30,
-        38,
+        25,
+        33,
         50,
-        75
+        100
     ],
     "successful_runs": [
-        30,
-        38,
+        25,
+        33,
         50,
-        75
+        100
     ],
     "failed_runs": [],
     "result_dirs": {
-        "30": "experiments/test1_change_domain1_4_16_2t_new/grid_30",
-        "38": "experiments/test1_change_domain1_4_16_2t_new/grid_38",
+        "25": "experiments/test1_change_domain1_4_16_2t_new/grid_25",
+        "33": "experiments/test1_change_domain1_4_16_2t_new/grid_33",
         "50": "experiments/test1_change_domain1_4_16_2t_new/grid_50",
-        "75": "experiments/test1_change_domain1_4_16_2t_new/grid_75"
+        "100": "experiments/test1_change_domain1_4_16_2t_new/grid_100"
     },
-    "completed_time": "2026-03-25T15:52:16.701953"
+    "completed_time": "2026-03-26T10:04:42.672363"
 }
