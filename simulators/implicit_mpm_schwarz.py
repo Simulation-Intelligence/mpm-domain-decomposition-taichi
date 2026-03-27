@@ -60,8 +60,10 @@ class MPM_Schwarz:
         self.SmallTimeDomain = self.domain_manager.small_time_domain
         
         # 初始化边界交换器
+        use_p2g_d2_to_d1 = self.main_config.get("use_p2g_d2_to_d1_boundary", False)
         self.boundary_exchanger = BoundaryExchanger(
-            self.BigTimeDomain, self.SmallTimeDomain
+            self.BigTimeDomain, self.SmallTimeDomain,
+            use_p2g_d2_to_d1=use_p2g_d2_to_d1
         )
         
         # 初始化粒子状态管理器

@@ -685,55 +685,57 @@ def extract_material_params(domain_config, config):
 
     return E_in, nu_in, E_out, nu_out, delta
 
+def _get_d2_outer_circle(config):
+    """
+    从配置中提取Domain2外圈椭圆（第一个operation=='add'的ellipse shape）的全局中心和半轴。
+
+    返回:
+        (center, semi_axes) 或 (None, None) 若未找到
+    """
+    domain2_config = config.get('Domain2', {})
+    domain2_offset = np.array(domain2_config.get('offset', [0.0, 0.0]))
+    for shape in domain2_config.get('shapes', []):
+        if shape['type'] == 'ellipse' and shape['operation'] == 'add':
+            center = np.array(shape['params']['center']) + domain2_offset
+            semi_axes = shape['params']['semi_axes']
+            return center, semi_axes
+    return None, None
+
+
 def merge_schwarz_domains(positions1, stresses1, positions2, stresses2, config):
     """
-    合并Schwarz双域数据
-    
+    合并Schwarz双域数据。
+
+    规则：Domain2外圈圆（第一个add椭圆）之内只使用Domain2数据；之外只使用Domain1数据。
+
     参数:
         positions1, stresses1: Domain1的位置和应力
         positions2, stresses2: Domain2的位置和应力
         config: 配置字典
-    
+
     返回:
         tuple: (positions, stresses) 合并后的数据
     """
-    # 获取Domain2的范围
-    domain2_config = config.get('Domain2', {})
-    domain2_offset = np.array(domain2_config.get('offset', [0.35, 0.35]))
-    domain2_width = domain2_config.get('domain_width', 0.3)
-    domain2_height = domain2_config.get('domain_height', 0.3)
+    circle_center, semi_axes = _get_d2_outer_circle(config)
 
-    # Domain2的全局范围
-    d2_xmin, d2_xmax = domain2_offset[0], domain2_offset[0] + domain2_width
-    d2_ymin, d2_ymax = domain2_offset[1], domain2_offset[1] + domain2_height
-
-    # 从Domain1中排除Domain2范围内的粒子（基于KD-tree邻近过滤，保留D2空洞中的D1粒子）
-    mask_inside_d2 = ((positions1[:, 0] >= d2_xmin) & (positions1[:, 0] <= d2_xmax) &
-                      (positions1[:, 1] >= d2_ymin) & (positions1[:, 1] <= d2_ymax))
-
-    positions1_inside = positions1[mask_inside_d2]
-    stresses1_inside = stresses1[mask_inside_d2]
-
-    if len(positions1_inside) > 0 and len(positions2) > 0:
-        # 估计Domain2的格间距
-        grid_nx2 = domain2_config.get('grid_nx', 30)
-        dx2 = domain2_width / grid_nx2
-        # KD-tree：只去掉D2边界附近的D1粒子，保留D2空洞中的D1粒子
-        tree2 = KDTree(positions2)
-        dist, _ = tree2.query(positions1_inside, k=1)
-        keep_in_hole = dist > dx2 * 0.8
-        positions1_filtered = np.vstack([positions1[~mask_inside_d2],
-                                         positions1_inside[keep_in_hole]])
-        stresses1_filtered = np.vstack([stresses1[~mask_inside_d2],
-                                        stresses1_inside[keep_in_hole]])
+    if circle_center is not None:
+        a, b = semi_axes[0], semi_axes[1]
+        dx1 = positions1[:, 0] - circle_center[0]
+        dy1 = positions1[:, 1] - circle_center[1]
+        inside_circle = (dx1 / a) ** 2 + (dy1 / b) ** 2 <= 1.0
+        # 圆内只用Domain2，圆外只用Domain1
+        positions1_filtered = positions1[~inside_circle]
+        stresses1_filtered = stresses1[~inside_circle]
+        print(f"Domain2外圈椭圆过滤: 圆心={circle_center}, 半轴=({a},{b}), "
+              f"排除Domain1粒子 {inside_circle.sum()}/{len(positions1)}")
     else:
-        positions1_filtered = positions1[~mask_inside_d2]
-        stresses1_filtered = stresses1[~mask_inside_d2]
+        # 未找到外圈圆：保留全部Domain1（退化情形）
+        positions1_filtered = positions1
+        stresses1_filtered = stresses1
+        print("警告: 未找到Domain2外圈椭圆，保留全部Domain1数据")
 
-    # 合并Domain1(过滤后) + Domain2
     positions = np.vstack([positions1_filtered, positions2])
     stresses = np.vstack([stresses1_filtered, stresses2])
-
     return positions, stresses
 
 def analyze_and_plot(positions_or_tuple, stresses_or_none, config, output_dir, grid_size=None, use_schwarz=False):

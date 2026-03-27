@@ -17,19 +17,47 @@ def _load_config(path):
         return json.load(f)
 
 
-def _load_grid_data(grid_dir, use_schwarz):
-    """Load positions and stresses for one grid directory."""
+def _get_d2_outer_circle(config):
+    """Extract Domain2's first add-ellipse center and semi-axes (global coords)."""
+    d2_cfg = config.get('Domain2', {})
+    offset = np.array(d2_cfg.get('offset', [0.0, 0.0]))
+    for shape in d2_cfg.get('shapes', []):
+        if shape['type'] == 'ellipse' and shape['operation'] == 'add':
+            center = np.array(shape['params']['center']) + offset
+            semi_axes = shape['params']['semi_axes']
+            return center, semi_axes
+    return None, None
+
+
+def _load_grid_data(grid_dir, use_schwarz, config=None):
+    """Load positions and stresses for one grid directory.
+
+    For Schwarz data, points inside Domain2's outer boundary ellipse come from
+    Domain2 only; points outside come from Domain1 only.
+    If config is None it is loaded from grid_dir/config_backup.json.
+    """
     if use_schwarz:
-        pos = np.concatenate([
-            np.load(os.path.join(grid_dir, 'domain1_positions.npy')),
-            np.load(os.path.join(grid_dir, 'domain2_positions.npy')),
-        ], axis=0)
-        stress = np.concatenate([
-            np.load(os.path.join(grid_dir, 'domain1_stresses.npy')),
-            np.load(os.path.join(grid_dir, 'domain2_stresses.npy')),
-        ], axis=0)
+        pos1 = np.load(os.path.join(grid_dir, 'domain1_positions.npy'))
+        str1 = np.load(os.path.join(grid_dir, 'domain1_stresses.npy'))
+        pos2 = np.load(os.path.join(grid_dir, 'domain2_positions.npy'))
+        str2 = np.load(os.path.join(grid_dir, 'domain2_stresses.npy'))
+
+        if config is None:
+            config = _load_config(os.path.join(grid_dir, 'config_backup.json'))
+
+        circle_center, semi_axes = _get_d2_outer_circle(config)
+        if circle_center is not None:
+            a, b = semi_axes[0], semi_axes[1]
+            dx = pos1[:, 0] - circle_center[0]
+            dy = pos1[:, 1] - circle_center[1]
+            inside = (dx / a) ** 2 + (dy / b) ** 2 <= 1.0
+            pos1 = pos1[~inside]
+            str1 = str1[~inside]
+
+        pos    = np.concatenate([pos1, pos2], axis=0)
+        stress = np.concatenate([str1, str2], axis=0)
     else:
-        pos = np.load(os.path.join(grid_dir, 'positions.npy'))
+        pos    = np.load(os.path.join(grid_dir, 'positions.npy'))
         stress = np.load(os.path.join(grid_dir, 'stresses.npy'))
     return pos, stress
 
@@ -150,15 +178,14 @@ def create_stress_comparison_plots(single_dir, dual_dir, output_dir):
         dual_grid_dir   = os.path.join(dual_dir,   f'grid_{dual_gs}')
         single_grid_dir = os.path.join(single_dir, f'grid_{single_gs}')
 
-        d_pos, d_stress = _load_grid_data(dual_grid_dir,   use_schwarz=True)
+        d_cfg = _load_config(os.path.join(dual_grid_dir,   'config_backup.json'))
+        d_pos, d_stress = _load_grid_data(dual_grid_dir,   use_schwarz=True,  config=d_cfg)
         s_pos, s_stress = _load_grid_data(single_grid_dir, use_schwarz=False)
 
         d_mask = _crop(d_pos)
         s_mask = _crop(s_pos)
         d_pos_c, d_stress_c = d_pos[d_mask], d_stress[d_mask]
         s_pos_c, s_stress_c = s_pos[s_mask], s_stress[s_mask]
-
-        d_cfg = _load_config(os.path.join(dual_grid_dir,   'config_backup.json'))
         s_cfg = _load_config(os.path.join(single_grid_dir, 'config_backup.json'))
         d_params = _extract_circle_params(d_cfg, use_schwarz=True)
         s_params = _extract_circle_params(s_cfg, use_schwarz=False)
@@ -264,8 +291,8 @@ plt.close()
 print('Saved convergence_comparison.pdf')
 
 # ── Plot 2: Stacked CPU time + Error (secondary axis, broken y-axis) ─────────
-BREAK_LOW  = 2100   # lower bound of the removed region
-BREAK_HIGH = 5500   # upper bound of the removed region
+BREAK_LOW  = 3000   # lower bound of the removed region
+BREAK_HIGH = 4500   # upper bound of the removed region
 
 n     = len(dx_values)
 x     = np.arange(n)

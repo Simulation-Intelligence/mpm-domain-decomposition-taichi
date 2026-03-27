@@ -7,6 +7,7 @@
     "use_record": false,
     "visualize_grid": true,
     "visualize_boundary_grid": true,
+    "use_p2g_d2_to_d1_boundary": true,
     "no_gui": false,
     "steps": 1,
     "stress_save_interval": 500,
@@ -57,7 +58,7 @@
             {
                 "id": 1,
                 "name": "inclusion",
-                "E": 5e5,
+                "E": 1e5,
                 "nu": 0.3,
                 "rho": 1e5,
                 "initial_F": [
@@ -185,7 +186,7 @@
             {
                 "id": 1,
                 "name": "inclusion",
-                "E": 5e5,
+                "E": 1e5,
                 "nu": 0.3,
                 "rho": 1e5,
                 "initial_F": [
