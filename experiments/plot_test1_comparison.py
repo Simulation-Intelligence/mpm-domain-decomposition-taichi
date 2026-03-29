@@ -291,7 +291,7 @@ plt.close()
 print('Saved convergence_comparison.pdf')
 
 # ── Plot 2: Stacked CPU time + Error (secondary axis, broken y-axis) ─────────
-BREAK_LOW  = 3000   # lower bound of the removed region
+BREAK_LOW  = 1000   # lower bound of the removed region
 BREAK_HIGH = 4500   # upper bound of the removed region
 
 n     = len(dx_values)

@@ -12,24 +12,24 @@
 
     "arc_boundary": [
         {
-            "start_region": [[0.05, 0.11], [0.48, 0.52]],
+            "start_region": [[0.05, 0.06], [0.48, 0.52]],
             "center": [0.485, 0.5],
             "angle": -1.5708,
             "speed": 0.001
         },
         {
-            "start_region": [[0.89, 0.95], [0.48, 0.52]],
+            "start_region": [[0.94, 0.95], [0.48, 0.52]],
             "center": [0.515, 0.5],
             "angle": 1.5708,
             "speed": 0.001
         }
     ],
-    "boundary_size": 0.01,
+    "boundary_size": 0.00001,
     "material_distribution": {
         "type": "smoothstep_x",
         "nu": 0.4,
         "E_soft": 5e5,
-        "E_hard": 5e8,
+        "E_hard": 5e6,
         "x_soft_lo": 0.41,
         "x_soft_hi": 0.59,
         "x_trans": 0.03
@@ -57,7 +57,7 @@
     "gravity": [0.0, 0.0],
     "bound": 3,
     "eta": 1e-4,
-    "damping": 0.8,
-    "particle_damping": 0.99,
+    "damping": 0.0,
+    "particle_damping": 1,
     "max_frames": 50000
 }

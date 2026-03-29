@@ -60,7 +60,7 @@
                 "name": "inclusion",
                 "E": 1e5,
                 "nu": 0.3,
-                "rho": 1e5,
+                "rho": 5e5,
                 "initial_F": [
                     [
                         0.99,
@@ -188,7 +188,7 @@
                 "name": "inclusion",
                 "E": 1e5,
                 "nu": 0.3,
-                "rho": 1e5,
+                "rho": 5e5,
                 "initial_F": [
                     [
                         0.99,
