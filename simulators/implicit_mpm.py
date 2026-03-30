@@ -952,7 +952,6 @@ if __name__ == "__main__":
         max_frames = mpm.max_frames
         _render_interval = 1.0 / mpm.render_fps
         _last_render_t = 0.0
-        gc.disable()  # 禁用GC以避免render中临时numpy数组触发周期性GC暂停
         try:
             while (i < max_frames) and (mpm._cv2_running or mpm.no_gui):
                mpm.step()

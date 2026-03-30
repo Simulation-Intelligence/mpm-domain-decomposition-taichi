@@ -1332,7 +1332,6 @@ if __name__ == "__main__":
     frame_count = 0
     target_frames = cfg.get("max_frames", 60)
 
-    gc.disable()  # 禁用GC以避免render中临时numpy数组触发周期性GC暂停
     try:
         if args.no_gui:
             # 无GUI模式：直接运行到目标帧数
