@@ -24,12 +24,17 @@ class Newton:
             raise ValueError(f"Unsupported Newton tolerance_mode: {self.tolerance_mode}")
 
         # 参数和梯度存储
-        self.x = ti.field(self.float_type, shape=dim) 
+        self.x = ti.field(self.float_type, shape=dim)
         self.grad = ti.field(self.float_type, shape=dim)
         self.temp_x = ti.field(self.float_type, shape=dim)
         self.d = ti.field(self.float_type, shape=dim)
         self.b = ti.ndarray(self.float_type, shape=dim)
-        self.f0 =0.0
+        self.f0 = 0.0
+
+        # 预分配 SparseMatrixBuilder，避免在 minimize 循环中每步重建导致 kernel 重复编译
+        self.H_builder = ti.linalg.SparseMatrixBuilder(
+            dim, dim, max_num_triplets=int(dim**2 * 0.1), dtype=self.float_type
+        )
 
          # 历史记录
         self.f_his = []
@@ -150,14 +155,8 @@ class Newton:
                 print(f"Final Energy: {self.f0:.4e}")
                 return it
 
-            H_builder = ti.linalg.SparseMatrixBuilder(
-                    self.dim[None], self.dim[None],
-                    max_num_triplets=int(self.dim[None]**2 *0.1),
-                    dtype=self.float_type
-                )
-
-            self.hess_fn(self.x, H_builder)
-            H = H_builder.build()
+            self.hess_fn(self.x, self.H_builder)
+            H = self.H_builder.build()
 
             # 构建右端项（使用预定义的 kernel，避免重复编译）
             self._fill_b(self.b, self.grad)
@@ -172,7 +171,7 @@ class Newton:
                 self.d = self.b
                 print("Solver failed, resetting to gradient descent")
 
-            del H, solver, H_builder
+            del H, solver
 
             # 线搜索
             alpha = self.line_search()

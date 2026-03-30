@@ -27,36 +27,36 @@
         "sampling_method": "regular",
         "elasticity_model": "neohookean",
         "use_mapping": false,
-        "dt": 1e-4,
+        "dt": 1e-5,
         "max_iter": 1,
         "solve_max_iter": 1000,
         "offset": [0.0, 0.0],
         "arc_boundary": [
             {
-                "start_region": [[0.05, 0.11], [0.48, 0.52]],
-                "center": [0.485, 0.5],
+                "start_region": [[0.05, 0.11], [0.45, 0.55]],
+                "center": [0.45, 0.5],
                 "angle": -1.5708,
                 "speed": 0.01
             },
             {
-                "start_region": [[0.89, 0.95], [0.48, 0.52]],
-                "center": [0.515, 0.5],
+                "start_region": [[0.89, 0.95], [0.45, 0.55]],
+                "center": [0.55, 0.5],
                 "angle": 1.5708,
                 "speed": 0.01
             }
         ],
         "boundary_size": 0.0001,
         "boundary_particle_range": [
-            [[0.05, 0.06], [0.48, 0.52]],
-            [[0.385, 0.42], [0.485, 0.515]],
-            [[0.58, 0.615], [0.485, 0.515]],
-            [[0.94, 0.95], [0.48, 0.52]]
+            [[0.05, 0.06], [0.4, 0.6]],
+            [[0.385, 0.42], [0.4, 0.6]],
+            [[0.58, 0.615], [0.4, 0.6]],
+            [[0.94, 0.95], [0.4, 0.6]]
         ],
         "gravity": [0.0, 0.0],
         "damping": 0,
         "particle_damping": 1,
         "material_params": [
-            {"id": 0, "name": "beam", "E": 5e5, "nu": 0.4, "rho": 1200}
+            {"id": 0, "name": "beam", "E": 5e6, "nu": 0.4, "rho": 1200}
         ],
         "implicit": true,
         "implicit_solver": "Newton",
@@ -66,13 +66,13 @@
         "shapes": [
             {
                 "type": "rectangle",
-                "params": {"range": [[0.05, 0.42], [0.485, 0.515]]},
+                "params": {"range": [[0.05, 0.42], [0.45, 0.55]]},
                 "operation": "add",
                 "material_id": 0
             },
             {
                 "type": "rectangle",
-                "params": {"range": [[0.58, 0.95], [0.485, 0.515]]},
+                "params": {"range": [[0.58, 0.95], [0.45, 0.55]]},
                 "operation": "add",
                 "material_id": 0
             }
@@ -91,7 +91,7 @@
         "sampling_method": "regular",
         "elasticity_model": "neohookean",
         "use_mapping": false,
-        "dt": 5e-5,
+        "dt": 1e-5,
         "max_iter": 1,
         "solve_max_iter": 1000,
         "offset": [0.35, 0.36],
@@ -114,8 +114,8 @@
         "material_distribution": {
             "type": "smoothstep_x",
             "nu": 0.4,
-            "E_soft": 5e5,
-            "E_hard": 5e5,
+            "E_soft": 5e4,
+            "E_hard": 5e6,
             "x_soft_lo": 0.1,
             "x_soft_hi": 0.2,
             "x_trans": 0.03
