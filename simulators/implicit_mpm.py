@@ -366,8 +366,79 @@ class ImplicitMPM:
                         if offset[_d] != 1:
                             is_center_offset = False
                     if self.particles.is_move_boundary_particle[p] and is_center_offset:
-                        # 计算当前位置与目标位置的相对位移
+                        # 计算位移：先用直线位移初始化（arc分支会覆盖）
                         relative_displacement = self.particles.target_position[p] - self.particles.x[p]
+                        if ti.static(self.grid.use_arc_motion):
+                            if ti.static(self.dim == 2):
+                                # 2D 圆弧切线位移：Δθ * (-dy, dx)
+                                cx   = self.particles.arc_center[p][0]
+                                cy   = self.particles.arc_center[p][1]
+                                dx_p = self.particles.x[p][0] - cx
+                                dy_p = self.particles.x[p][1] - cy
+                                tdx  = self.particles.target_position[p][0] - cx
+                                tdy  = self.particles.target_position[p][1] - cy
+                                r_sq = dx_p * dx_p + dy_p * dy_p
+                                if r_sq > 1e-20:
+                                    r_cur = ti.sqrt(r_sq)
+                                    delta_theta = ti.atan2(dx_p * tdy - dy_p * tdx,
+                                                           dx_p * tdx + dy_p * tdy)
+                                    # 切线分量（弧长方向）
+                                    tan_x = -dy_p * delta_theta
+                                    tan_y =  dx_p * delta_theta
+                                    # 径向分量（修正半径漂移，确保最终落在目标圆上）
+                                    r_target = ti.sqrt(tdx * tdx + tdy * tdy)
+                                    dr = r_target - r_cur
+                                    rad_x = (dx_p / r_cur) * dr
+                                    rad_y = (dy_p / r_cur) * dr
+                                    relative_displacement = ti.Vector([tan_x + rad_x,
+                                                                        tan_y + rad_y])
+                                else:
+                                    relative_displacement = (self.particles.target_position[p]
+                                                             - self.particles.x[p])
+                            else:
+                                # 3D 圆弧：Δθ * (k × v)
+                                cx  = self.particles.arc_center[p][0]
+                                cy  = self.particles.arc_center[p][1]
+                                cz  = self.particles.arc_center[p][2]
+                                vx  = self.particles.x[p][0] - cx
+                                vy  = self.particles.x[p][1] - cy
+                                vz  = self.particles.x[p][2] - cz
+                                kx  = self.particles.arc_axis[p][0]
+                                ky  = self.particles.arc_axis[p][1]
+                                kz  = self.particles.arc_axis[p][2]
+                                tdx = self.particles.target_position[p][0] - cx
+                                tdy = self.particles.target_position[p][1] - cy
+                                tdz = self.particles.target_position[p][2] - cz
+                                # 投影到旋转平面（去掉轴方向分量）
+                                kdotv = kx * vx  + ky * vy  + kz * vz
+                                kdotd = kx * tdx + ky * tdy + kz * tdz
+                                vp_x = vx  - kdotv * kx;  vp_y = vy  - kdotv * ky;  vp_z = vz  - kdotv * kz
+                                dp_x = tdx - kdotd * kx;  dp_y = tdy - kdotd * ky;  dp_z = tdz - kdotd * kz
+                                dot   = vp_x * dp_x + vp_y * dp_y + vp_z * dp_z
+                                cross = (kx * (vp_y * dp_z - vp_z * dp_y)
+                                       + ky * (vp_z * dp_x - vp_x * dp_z)
+                                       + kz * (vp_x * dp_y - vp_y * dp_x))
+                                delta_theta = ti.atan2(cross, dot)
+                                # 切线分量（弧长方向）
+                                tan_x = delta_theta * (ky * vz - kz * vy)
+                                tan_y = delta_theta * (kz * vx - kx * vz)
+                                tan_z = delta_theta * (kx * vy - ky * vx)
+                                # 径向分量（修正投影平面内的半径漂移）
+                                r_cur_sq = vp_x * vp_x + vp_y * vp_y + vp_z * vp_z
+                                r_tgt_sq = dp_x * dp_x + dp_y * dp_y + dp_z * dp_z
+                                rad_x = 0.0; rad_y = 0.0; rad_z = 0.0
+                                if r_cur_sq > 1e-20:
+                                    r_cur = ti.sqrt(r_cur_sq)
+                                    r_tgt = ti.sqrt(r_tgt_sq)
+                                    dr = r_tgt - r_cur
+                                    rad_x = (vp_x / r_cur) * dr
+                                    rad_y = (vp_y / r_cur) * dr
+                                    rad_z = (vp_z / r_cur) * dr
+                                relative_displacement = ti.Vector([
+                                    tan_x + rad_x,
+                                    tan_y + rad_y,
+                                    tan_z + rad_z,
+                                ])
                         # 按权重和质量插值到网格
                         ti.atomic_add(self.grid.move_displacement_field[grid_idx], weight * p_mass * relative_displacement)
                         ti.atomic_add(self.grid.move_mass_field[grid_idx], weight * p_mass)

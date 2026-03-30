@@ -451,6 +451,9 @@ class Particles:
         # move_boundary相关字段
         self.is_move_boundary_particle = ti.field(ti.i32, self.n_particles)
         self.target_position = ti.Vector.field(self.dim, self.float_type, self.n_particles)
+        # arc_boundary弧线运动：旋转中心（dim维）和旋转轴（3维，3D时使用）
+        self.arc_center = ti.Vector.field(self.dim, self.float_type, self.n_particles)
+        self.arc_axis   = ti.Vector.field(3, self.float_type, self.n_particles)
 
         # 粒子体积力字段
         self.volume_force = ti.Vector.field(self.dim, self.float_type, self.n_particles)
@@ -697,6 +700,7 @@ class Particles:
                         trig[0] * dx - trig[1] * dy + center[0],
                         trig[1] * dx + trig[0] * dy + center[1]
                     ])
+                    self.arc_center[i] = ti.Vector([center[0], center[1]])
             else:
                 self.is_move_boundary_particle[i] = 0
 
@@ -726,6 +730,8 @@ class Particles:
                         vy * cos_a + (kz * vx - kx * vz) * sin_a + ky * kdotv * (1.0 - cos_a) + center[1],
                         vz * cos_a + (kx * vy - ky * vx) * sin_a + kz * kdotv * (1.0 - cos_a) + center[2]
                     ])
+                    self.arc_center[i] = ti.Vector([center[0], center[1], center[2]])
+                    self.arc_axis[i]   = ti.Vector([axis[0],   axis[1],   axis[2]])
             else:
                 self.is_move_boundary_particle[i] = 0
 

@@ -169,6 +169,7 @@ class Grid:
             self.arc_boundary_configs = list(raw_arc)
         self.arc_boundary_config = self.arc_boundary_configs[0] if self.arc_boundary_configs else None
         self.has_arc_boundary = len(self.arc_boundary_configs) > 0
+        self.use_arc_motion = self.has_arc_boundary  # 供 ti.static 使用：切换弧线/直线位移计算
 
         if self.has_arc_boundary:
             if not self.has_move_boundary:
