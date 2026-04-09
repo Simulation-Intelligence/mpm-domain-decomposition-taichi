@@ -96,7 +96,8 @@ def _extract_circle_params(config, use_schwarz):
     return params
 
 
-def _plot_stress_panel(ax, pos, vals, levels, vmin, vmax, clabel, params):
+def _plot_stress_panel(ax, pos, vals, levels, vmin, vmax, params,
+                       draw_xlabel=True, draw_ylabel=True):
     """Draw one stress field subplot."""
     plot_xmin, plot_xmax = 0.3, 0.7
     plot_ymin, plot_ymax = 0.3, 0.7
@@ -106,8 +107,6 @@ def _plot_stress_panel(ax, pos, vals, levels, vmin, vmax, clabel, params):
                          vmin=vmin, vmax=vmax, extend='both')
     for c in tcf.collections:
         c.set_edgecolor('face')
-    cbar = plt.colorbar(tcf, ax=ax, shrink=0.6, aspect=20)
-    cbar.set_label(clabel)
 
     if params.get('center') is not None:
         ax.add_patch(plt.Circle(params['center'], params['radius'],
@@ -125,8 +124,11 @@ def _plot_stress_panel(ax, pos, vals, levels, vmin, vmax, clabel, params):
     ax.set_xlim(plot_xmin, plot_xmax)
     ax.set_ylim(plot_ymin, plot_ymax)
     ax.set_aspect('equal')
-    ax.set_xlabel(r'$x$ (m)')
-    ax.set_ylabel(r'$y$ (m)')
+
+    if draw_xlabel:
+        ax.set_xlabel(r'$x$ (m)', fontsize=13)
+    if draw_ylabel:
+        ax.set_ylabel(r'$y$ (m)', fontsize=13)
 
     plot_span = plot_xmax - plot_xmin
     raw = plot_span / 4.0
@@ -134,14 +136,21 @@ def _plot_stress_panel(ax, pos, vals, levels, vmin, vmax, clabel, params):
     tick_interval = round(raw / mag) * mag
     ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
     ax.yaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
+    ax.tick_params(labelsize=12)
+
+    return tcf
 
 
-def create_stress_comparison_plots(single_dir, dual_dir, output_dir):
+def create_stress_comparison_plots(single_dir, dual_dir, output_dir, stress_vmax=None):
     """Generate 4 groups of 2×3 comparison figures (dual on top, single below).
 
     Each group corresponds to one resolution level (low → high).
     Within each group, each stress component (σ_xx, σ_yy, σ_xy) shares the
     same colour scale: vmin/vmax taken as the global min/max across both domains.
+
+    Args:
+        stress_vmax: Optional max stress value for colormap (±vmax).
+                     If None, auto-compute from data.
     """
     plot_xmin, plot_xmax = 0.3, 0.7
     plot_ymin, plot_ymax = 0.3, 0.7
@@ -190,27 +199,74 @@ def create_stress_comparison_plots(single_dir, dual_dir, output_dir):
         d_params = _extract_circle_params(d_cfg, use_schwarz=True)
         s_params = _extract_circle_params(s_cfg, use_schwarz=False)
 
-        fig, axes = plt.subplots(2, 3, figsize=(14, 9.5))
+        # Compute global vmin/vmax across all stress components, with 0 as center point
+        if stress_vmax is None:
+            # Auto-compute from data
+            all_vals = np.concatenate([
+                d_stress_c[:, 0, 0], d_stress_c[:, 1, 1], d_stress_c[:, 0, 1],
+                s_stress_c[:, 0, 0], s_stress_c[:, 1, 1], s_stress_c[:, 0, 1],
+            ])
+            vmin_raw = float(all_vals.min())
+            vmax_raw = float(all_vals.max())
+            vmax_global = max(abs(vmin_raw), abs(vmax_raw))
+        else:
+            # Use user-specified value
+            vmax_global = float(stress_vmax)
 
-        for col_idx, ((i, j), clabel, sym) in enumerate(components):
+        vmin_global = -vmax_global
+        levels_global = np.linspace(vmin_global, vmax_global, 11)
+
+        fig, axes = plt.subplots(2, 3, figsize=(10, 7))
+        fig.subplots_adjust(left=0.07, right=0.88, top=0.90, bottom=0.10,
+                            wspace=0.1, hspace=0.05)
+
+        last_tcf = None
+        for col_idx, ((i, j), _, sym) in enumerate(components):
             d_vals = d_stress_c[:, i, j]
             s_vals = s_stress_c[:, i, j]
-
-            vmin = float(min(d_vals.min(), s_vals.min()))
-            vmax = float(max(d_vals.max(), s_vals.max()))
-            levels = np.linspace(vmin, vmax, 13)
 
             ax_dual   = axes[0, col_idx]
             ax_single = axes[1, col_idx]
 
-            _plot_stress_panel(ax_dual,   d_pos_c, d_vals, levels, vmin, vmax, clabel, d_params)
-            _plot_stress_panel(ax_single, s_pos_c, s_vals, levels, vmin, vmax, clabel, s_params)
+            # Top row: no x label; Bottom row: has x label
+            # Left column: has y label; Other columns: no y label
+            tcf_dual = _plot_stress_panel(ax_dual, d_pos_c, d_vals, levels_global,
+                                          vmin_global, vmax_global, d_params,
+                                          draw_xlabel=False,
+                                          draw_ylabel=(col_idx == 0))
+            tcf_single = _plot_stress_panel(ax_single, s_pos_c, s_vals, levels_global,
+                                            vmin_global, vmax_global, s_params,
+                                            draw_xlabel=True,
+                                            draw_ylabel=(col_idx == 0))
+            last_tcf = tcf_single  # Keep the last tcf for colorbar
 
-            ax_dual.set_title(f'Dual-domain, {sym}')
-            ax_single.set_title(f'Single-domain, {sym}')
+            # Set column titles only on top row, component symbol only
+            ax_dual.set_title(sym, fontsize=20)
 
-        fig.suptitle(f'Stress distribution (dual grid {dual_gs} / single grid {single_gs})')
-        plt.tight_layout()
+            # Hide top and right spines on all panels for cleaner look
+            for ax in [ax_dual, ax_single]:
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+
+            # Hide tick labels except on bottom row (for x) and left column (for y)
+            if col_idx != 0:
+                # Hide y tick labels on right columns
+                ax_dual.set_yticklabels([])
+                ax_single.set_yticklabels([])
+            if True:  # Both rows - hide x tick labels on top row
+                ax_dual.set_xticklabels([])
+            # Bottom row keeps x tick labels
+
+        # Set row labels on left column
+        axes[0, 0].set_ylabel('Dual-domain', fontsize=13)
+        axes[1, 0].set_ylabel('Single-domain', fontsize=13)
+
+        # Create single shared colorbar on the right
+        cbar_ax = fig.add_axes([0.90, 0.10, 0.02, 0.78])
+        cbar = fig.colorbar(last_tcf, cax=cbar_ax)
+        cbar.set_label(r'Stress (Pa)', fontsize=13)
+        cbar.ax.tick_params(labelsize=12)
+
         fname = f'stress_comparison_grid{dual_gs}_{single_gs}.pdf'
         plt.savefig(os.path.join(output_dir, fname))
         plt.close()
@@ -249,6 +305,8 @@ parser.add_argument('--dual-dir',   default='useful_results/test1_schwarz_2',
                     help='Dual-domain experiment directory')
 parser.add_argument('--output-dir', default='useful_results/test1_comparison',
                     help='Output directory for PDFs')
+parser.add_argument('--stress-vmax', type=float, default=None,
+                    help='Max stress value for colormap (±vmax). If not specified, auto-compute from data')
 args = parser.parse_args()
 
 # ── Load data ────────────────────────────────────────────────────────────────
@@ -263,6 +321,9 @@ dx_values = np.array(single['dx_values'])   # same for both: [0.02, 0.01, 0.0066
 # ── Plot 1: Convergence rate (log-log) comparison ────────────────────────────
 fig, ax = plt.subplots(figsize=(5.5, 4.5))
 
+convergence_legend_handles = []
+convergence_legend_labels = []
+
 for data, color, label in [
     (single, '#b2182b', 'Single domain'),
     (dual,   '#3182bd', 'Dual domain'),
@@ -270,20 +331,26 @@ for data, color, label in [
     dx  = np.array(data['dx_values'])
     err = np.array(data['integrated_errors_total'])
 
-    ax.loglog(dx, err, 'o-', color=color, linewidth=2, markersize=7,
-              markerfacecolor='none', markeredgewidth=1.5, label=label)
+    line1 = ax.loglog(dx, err, 'o-', color=color, linewidth=2, markersize=7,
+                      markerfacecolor='none', markeredgewidth=1.5, label=label)[0]
+    convergence_legend_handles.append(line1)
+    convergence_legend_labels.append(label)
 
     log_dx  = np.log(dx)
     log_err = np.log(err)
     coeffs  = np.polyfit(log_dx, log_err, 1)
     dx_fit  = np.array([dx.min(), dx.max()])
     err_fit = np.exp(coeffs[1]) * dx_fit ** coeffs[0]
-    ax.loglog(dx_fit, err_fit, '--', color=color, linewidth=1.5, alpha=0.6,
-              label=rf'Slope $= {coeffs[0]:.2f}$')
+    line2 = ax.loglog(dx_fit, err_fit, '--', color=color, linewidth=1.5, alpha=0.6,
+                      label=rf'Slope $= {coeffs[0]:.2f}$')[0]
+    convergence_legend_handles.append(line2)
+    convergence_legend_labels.append(rf'Slope $= {coeffs[0]:.2f}$')
 
 ax.set_xlabel(r'Grid spacing $dx$ (m)')
 ax.set_ylabel(r'Normalized integrated error (Pa)')
-ax.legend()
+# Only show slope legends (skip domain labels)
+ax.legend([convergence_legend_handles[1], convergence_legend_handles[3]],
+          [convergence_legend_labels[1], convergence_legend_labels[3]])
 ax.grid(True, alpha=0.3, which='both')
 ax.minorticks_on()
 plt.savefig(os.path.join(output_dir, 'convergence_comparison.pdf'))
@@ -291,7 +358,7 @@ plt.close()
 print('Saved convergence_comparison.pdf')
 
 # ── Plot 2: Stacked CPU time + Error (secondary axis, broken y-axis) ─────────
-BREAK_LOW  = 1000   # lower bound of the removed region
+BREAK_LOW  = 600   # lower bound of the removed region
 BREAK_HIGH = 4500   # upper bound of the removed region
 
 n     = len(dx_values)
@@ -362,15 +429,37 @@ ax2.plot(x + bar_w / 2, err_dual,   's--', color='#4393c3',   linewidth=2,
          label='Dual: L2 error',   zorder=5)
 ax2.set_ylabel(r'Normalized integrated error (Pa)')
 
-# Combined legend
-lines1, labels1 = ax_bot.get_legend_handles_labels()
-lines2, labels2 = ax2.get_legend_handles_labels()
-ax_bot.legend(lines1 + lines2, labels1 + labels2,
-              loc='upper left', bbox_to_anchor=(0.0, 0.95))
+# Save legends for combined output
+time_error_lines1, time_error_labels1 = ax_bot.get_legend_handles_labels()
+time_error_lines2, time_error_labels2 = ax2.get_legend_handles_labels()
 
+# Don't show legend on plot
 plt.savefig(os.path.join(output_dir, 'time_error_comparison.pdf'))
 plt.close()
 print('Saved time_error_comparison.pdf')
 
+# ── Combined Legend PDF ──────────────────────────────────────────────────────
+# Combine removed legends from both plots
+fig_leg = plt.figure(figsize=(10, 6))
+ax_leg = fig_leg.add_subplot(111)
+ax_leg.axis('off')
+
+# Removed legends: domain labels from convergence (indices 0, 2)
+removed_conv_handles = [convergence_legend_handles[0], convergence_legend_handles[2]]
+removed_conv_labels = [convergence_legend_labels[0], convergence_legend_labels[2]]
+
+# All legends from time_error plot (6 total)
+all_removed_handles = removed_conv_handles + time_error_lines1 + time_error_lines2
+all_removed_labels = removed_conv_labels + time_error_labels1 + time_error_labels2
+
+# Create legend
+legend = ax_leg.legend(all_removed_handles, all_removed_labels, loc='center',
+                       fontsize=12, frameon=True, ncol=2)
+
+plt.savefig(os.path.join(output_dir, 'combined_legends.pdf'), bbox_inches='tight')
+plt.close()
+print('Saved combined_legends.pdf')
+
 # ── Plot 3: Stress distribution comparison (dual vs single, per resolution) ──
-create_stress_comparison_plots(args.single_dir, args.dual_dir, output_dir)
+create_stress_comparison_plots(args.single_dir, args.dual_dir, output_dir,
+                               stress_vmax=args.stress_vmax)

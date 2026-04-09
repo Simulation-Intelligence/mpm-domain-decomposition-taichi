@@ -1,0 +1,27 @@
+{
+  "material": {
+    "E": 200000.0,
+    "nu": 0.3,
+    "rho": 1000,
+    "center": [
+      0.5,
+      0.45
+    ],
+    "radius": 0.4,
+    "applied_pressure": 1000.0000000000009,
+    "load_height": 0.010000000000000009,
+    "theoretical_mass": 10.000000000000009,
+    "x_range": [
+      0,
+      1
+    ],
+    "y_range": [
+      0,
+      0.1
+    ],
+    "grid_size": 64,
+    "grid_nx": 64,
+    "grid_ny": 33,
+    "particles_per_grid": 4
+  }
+}

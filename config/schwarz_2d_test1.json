@@ -58,9 +58,9 @@
             {
                 "id": 1,
                 "name": "inclusion",
-                "E": 1e5,
+                "E": 5e5,
                 "nu": 0.3,
-                "rho": 5e5,
+                "rho": 1e5,
                 "initial_F": [
                     [
                         0.99,
@@ -186,9 +186,9 @@
             {
                 "id": 1,
                 "name": "inclusion",
-                "E": 1e5,
+                "E": 5e5,
                 "nu": 0.3,
-                "rho": 5e5,
+                "rho": 1e5,
                 "initial_F": [
                     [
                         0.99,

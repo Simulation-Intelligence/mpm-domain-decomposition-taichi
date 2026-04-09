@@ -1,0 +1,18 @@
+{
+  "dim": 2,
+  "nx": 200,
+  "ny": 200,
+  "offset": [
+    0.0,
+    0.0
+  ],
+  "dx_x": 0.005,
+  "dx_y": 0.005,
+  "material_id_used": 0,
+  "mu": 35714.28571428572,
+  "lambda": 142857.1428571429,
+  "elasticity_model": "neohookean",
+  "valid_mass_threshold": 1e-10,
+  "valid_grid_count": 1271,
+  "invalid_j_count": 0
+}

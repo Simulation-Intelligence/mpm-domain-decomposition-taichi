@@ -16,6 +16,7 @@ import gc
 from datetime import datetime
 import argparse
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -1161,7 +1162,7 @@ def plot_grid_stress_line_summary(all_grid_line_results, output_dir, analytical_
             continue
 
         color = colors[i % len(colors)]
-        label = f"{0.6 / grid_size:.4g}"
+        label = f"h={0.6 / grid_size:.4g}"
         ax.plot(x, pressure, "-o", color=color, linewidth=1.5, markersize=5,
                 markerfacecolor='none', markeredgewidth=1.2, alpha=0.9, label=label)
 
@@ -1182,7 +1183,16 @@ def plot_grid_stress_line_summary(all_grid_line_results, output_dir, analytical_
         if isinstance(center, (list, tuple)) and len(center) > 0 and contact_width is not None:
             center_x = float(center[0])
             contact_width = float(contact_width)
-            ax.set_xlim(center_x - 3.0 * contact_width, center_x + 3.0 * contact_width)
+            x_min = center_x - 3.0 * contact_width
+            x_max = center_x + 3.0 * contact_width
+            ax.set_xlim(x_min, x_max)
+
+            # 调整xlim使其对齐到0.05的倍数
+            tick_interval = 0.05
+            x_min_aligned = np.floor(x_min / tick_interval) * tick_interval
+            x_max_aligned = np.ceil(x_max / tick_interval) * tick_interval
+            ax.set_xlim(x_min_aligned, x_max_aligned)
+            ax.xaxis.set_major_locator(MultipleLocator(tick_interval))
 
     ax.set_xlabel(r"$x$ (m)")
     ax.set_ylabel(r"Contact pressure (kPa)")

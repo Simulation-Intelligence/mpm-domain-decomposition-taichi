@@ -1106,7 +1106,7 @@ def _draw_summary_axes(ax1, ax2, experiment_data, params, analytical,
         mpm_sig_xx = str_s[:, 0, 0]
         mpm_sig_yy = str_s[:, 1, 1]
 
-        label = f'{params["domain_h"]/grid_size:.2g}'
+        label = f'h={params["domain_h"]/grid_size:.2g}'
         idx = np.argsort(mpm_x)
 
         if draw_xx:

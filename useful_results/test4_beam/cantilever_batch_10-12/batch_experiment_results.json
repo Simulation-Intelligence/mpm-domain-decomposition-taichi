@@ -1,0 +1,79 @@
+{
+    "beam_params": {
+        "E": 100000.0,
+        "nu": 0.4,
+        "rho": 1000.0,
+        "L": 0.85,
+        "h": 0.020000000000000018,
+        "fixed_end_x": 0.05,
+        "free_end_x": 0.9,
+        "beam_range": [
+            [
+                0.01,
+                0.9
+            ],
+            [
+                0.94,
+                0.96
+            ]
+        ],
+        "use_schwarz": false
+    },
+    "gamma_range": [
+        123.0,
+        1000.0
+    ],
+    "n_points": 3,
+    "successful_experiments": 3,
+    "use_schwarz": false,
+    "results": [
+        {
+            "gamma": 123.00000000000004,
+            "gravity": 0.7947815804522518,
+            "h_over_w": 8.11178548412195,
+            "w": 0.10096378557503662,
+            "h_displacement": 0.8189965702495833,
+            "initial_pos": [
+                0.9,
+                0.94
+            ],
+            "final_pos": [
+                0.11096378557503661,
+                0.12100342975041666
+            ],
+            "results_dir": "experiment_results/cantilever_batch_20260310_102041/results_gamma_1.23e+02"
+        },
+        {
+            "gamma": 350.71355833500365,
+            "gravity": 2.266184359183147,
+            "h_over_w": 19.492625959089757,
+            "w": 0.04416650236836911,
+            "h_displacement": 0.8609211105878709,
+            "initial_pos": [
+                0.9,
+                0.94
+            ],
+            "final_pos": [
+                0.05416650236836911,
+                0.07907888941212898
+            ],
+            "results_dir": "experiment_results/cantilever_batch_20260310_102041/results_gamma_3.51e+02"
+        },
+        {
+            "gamma": 1000.0,
+            "gravity": 6.461638865465461,
+            "h_over_w": 0.9914908364421307,
+            "w": 0.939524131402566,
+            "h_displacement": 0.9315295669018964,
+            "initial_pos": [
+                0.9,
+                0.94
+            ],
+            "final_pos": [
+                0.949524131402566,
+                0.008470433098103579
+            ],
+            "results_dir": "experiment_results/cantilever_batch_20260310_102041/results_gamma_1.00e+03"
+        }
+    ]
+}
