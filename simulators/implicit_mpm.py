@@ -15,6 +15,17 @@ from Geometry.Particles import Particles
 from simulators.mpm_solver import MPMSolver
 
 from Util.Config import Config
+from Util.CheckpointIO import (
+    CONFIG_BACKUP_FILENAME,
+    get_checkpoint_dir,
+    get_config_backup_path,
+    load_manifest,
+    load_particle_state,
+    load_performance_stats,
+    save_manifest,
+    save_particle_state,
+    save_performance_stats,
+)
 from Util.Visualization import cv2_draw_particles, cv2_draw_particles_colored, FPSCounter
 from Util.ExperimentDir import create_experiment_directory
 from Util.StressIO import is_point_in_regions, compute_von_mises_stress, save_stress_frame, write_stress_stats_json
@@ -55,6 +66,10 @@ class ImplicitMPM:
         self.max_iter = self.cfg.get("max_iter", 1)
         self.dt = self.cfg.get("dt", 2e-3)
         self.auto_boundary = self.cfg.get("auto_boundary", False)
+        self.auto_boundary_use_range_filter = self.cfg.get("auto_boundary_use_range_filter", False)
+        if self.auto_boundary_use_range_filter and self.particles.boundary_particle_ranges is None:
+            print("Warning: auto_boundary_use_range_filter=True 但未配置有效的 boundary_particle_range，已自动关闭该过滤")
+            self.auto_boundary_use_range_filter = False
         
         # 静力学求解配置
         self.static_solve = self.cfg.get("static_solve", False)
@@ -470,21 +485,23 @@ class ImplicitMPM:
 
                 # 自动边界检测：检查是否在boundary_particle_range内，并且检查邻居grid
                 if ti.static(self.auto_boundary):
-                    # 检查当前grid是否在boundary_particle_range内
+                    # 默认不做 boundary_particle_range 限制；仅在配置显式开启时启用
                     in_boundary_range = True
-                    # 计算grid的世界坐标位置
-                    # pos = ti.Vector([
-                    #     I[0] * self.grid.dx_x,
-                    #     I[1] * self.grid.dx_y
-                    # ])
+                    if ti.static(self.auto_boundary_use_range_filter):
+                        in_boundary_range = False
+                        # 计算grid的世界坐标位置
+                        pos = ti.Vector([
+                            I[0] * self.grid.dx_x,
+                            I[1] * self.grid.dx_y
+                        ])
 
-                    # 检查是否在任何一个boundary_particle_range内
-                    # for range_idx in ti.static(range(len(self.particles.boundary_particle_ranges))):
-                    #     range_x = self.particles.boundary_particle_ranges[range_idx][0]
-                    #     range_y = self.particles.boundary_particle_ranges[range_idx][1]
-                    #     if (pos[0] >= range_x[0] and pos[0] <= range_x[1] and
-                    #         pos[1] >= range_y[0] and pos[1] <= range_y[1]):
-                    #         in_boundary_range = True
+                        # 检查是否在任何一个boundary_particle_range内
+                        for range_idx in ti.static(range(len(self.particles.boundary_particle_ranges))):
+                            range_x = self.particles.boundary_particle_ranges[range_idx][0]
+                            range_y = self.particles.boundary_particle_ranges[range_idx][1]
+                            if (pos[0] >= range_x[0] and pos[0] <= range_x[1] and
+                                pos[1] >= range_y[0] and pos[1] <= range_y[1]):
+                                in_boundary_range = True
 
                     if in_boundary_range:
                         # 检查相邻grid是否有质量为0的
@@ -786,6 +803,56 @@ class ImplicitMPM:
         """创建实验目录并备份配置文件（委托给 Util.ExperimentDir）"""
         return create_experiment_directory("single_domain", config_path)
 
+    def attach_experiment_dir(self, experiment_dir):
+        """绑定已有实验目录，恢复运行时继续写回该目录。"""
+        self._experiment_dir = os.fspath(experiment_dir)
+        self._stress_data_dir = os.path.join(self._experiment_dir, "stress_data")
+        os.makedirs(self._experiment_dir, exist_ok=True)
+        os.makedirs(self._stress_data_dir, exist_ok=True)
+
+    def save_checkpoint(self):
+        """保存最新帧边界断点。"""
+        if not hasattr(self, '_experiment_dir') or not hasattr(self, '_stress_data_dir'):
+            self._experiment_dir, self._stress_data_dir = self._create_experiment_directory(self.config_path)
+
+        checkpoint_dir = get_checkpoint_dir(self._experiment_dir)
+        save_particle_state(self.particles, checkpoint_dir / "state")
+
+        manifest = {
+            "simulator_type": "single_domain",
+            "config_path": CONFIG_BACKUP_FILENAME,
+            "checkpoint_frame": int(self.current_frame),
+            "completed_frames": int(self.current_frame),
+            "current_frame": int(self.current_frame),
+            "saved_stress_frames": sorted({int(frame) for frame in self.saved_stress_frames}),
+            "velocity_convergence_consecutive_count": int(self.velocity_convergence_consecutive_count),
+        }
+        save_manifest(self._experiment_dir, manifest)
+        save_performance_stats(self.perf_stats, self._experiment_dir)
+        print(f"断点已保存到: {checkpoint_dir}")
+        return checkpoint_dir
+
+    def load_checkpoint(self, experiment_dir):
+        """从已有实验目录恢复运行态。"""
+        self.attach_experiment_dir(experiment_dir)
+        manifest = load_manifest(self._experiment_dir, expected_simulator_type="single_domain")
+        load_particle_state(self.particles, get_checkpoint_dir(self._experiment_dir) / "state")
+
+        self.current_frame = int(manifest.get("current_frame", 0))
+        self.saved_stress_frames = sorted({int(frame) for frame in manifest.get("saved_stress_frames", [])})
+        self.velocity_convergence_consecutive_count = int(
+            manifest.get("velocity_convergence_consecutive_count", 0)
+        )
+
+        load_performance_stats(self.perf_stats, self._experiment_dir)
+        self.solver.update_frame(self.current_frame)
+
+        print(
+            f"已恢复单域断点: current_frame={self.current_frame}, "
+            f"已保存stress帧={len(self.saved_stress_frames)}"
+        )
+        return manifest
+
     def save_stress_data(self, frame_number):
         """保存指定帧的应力数据"""
         import json
@@ -904,7 +971,9 @@ class ImplicitMPM:
         print("静力学求解完成")
 
         # 保存结果
-        self.save_stress_data(1, self.config_path)
+        self.save_stress_data(1)
+        self.saved_stress_frames = [1]
+        self.save_checkpoint()
 
         # 生成性能统计
         print("\n" + "="*70)
@@ -919,14 +988,22 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description='运行单域隐式MPM模拟')
-    parser.add_argument('--config', default="config/config_2d.json",
-                       help='配置文件路径 (默认: config/config_2d.json)')
+    input_group = parser.add_mutually_exclusive_group()
+    input_group.add_argument('--config', default=None,
+                             help='配置文件路径 (默认: config/config_2d.json)')
+    input_group.add_argument('--dir', default=None,
+                             help='从已有实验目录恢复运行')
     parser.add_argument('--no-gui', action='store_true',
                        help='禁用GUI界面运行')
 
     args = parser.parse_args()
 
-    cfg = Config(args.config)
+    resume_dir = args.dir
+    config_path = args.config or "config/config_2d.json"
+    if resume_dir:
+        config_path = os.fspath(get_config_backup_path(resume_dir))
+
+    cfg = Config(config_path)
     float_type = ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64
     arch = cfg.get("arch", "cpu")
     if arch == "cuda":
@@ -937,49 +1014,57 @@ if __name__ == "__main__":
         arch = ti.cpu
 
     ti.init(arch=arch, default_fp=float_type,  log_level=ti.ERROR)
-    mpm = ImplicitMPM(cfg, no_gui=args.no_gui, config_path=args.config)
+    mpm = ImplicitMPM(cfg, no_gui=args.no_gui, config_path=config_path)
+
+    if resume_dir:
+        if mpm.static_solve:
+            raise ValueError("--dir 恢复暂不支持 static_solve 配置")
+        mpm.load_checkpoint(resume_dir)
 
     if mpm.static_solve:
         mpm.run_static_solve()
         exit()
     else:
         print("开始动态隐式MPM模拟...")
-        # 原有的动态求解模式
-        i = 0
-        # 保存第 0 帧的应力数据（初始状态）
-        print("保存初始状态的应力数据...")
-        mpm.save_stress_data(0)
+
+        if not resume_dir:
+            print("保存初始状态的应力数据...")
+            mpm.save_stress_data(0)
+            mpm.saved_stress_frames.append(0)
+
         max_frames = mpm.max_frames
         _render_interval = 1.0 / mpm.render_fps
         _last_render_t = 0.0
         try:
-            while (i < max_frames) and (mpm._cv2_running or mpm.no_gui):
-               mpm.step()
-               _now = time.perf_counter()
-               if _now - _last_render_t >= _render_interval:
-                   mpm.render()
-                   _last_render_t = _now
-               i += 1
+            while (mpm.current_frame < max_frames) and (mpm._cv2_running or mpm.no_gui):
+                mpm.step()
+                _now = time.perf_counter()
+                if _now - _last_render_t >= _render_interval:
+                    mpm.render()
+                    _last_render_t = _now
 
-               # 间隔保存应力数据
-               if mpm.stress_save_interval > 0 and i % mpm.stress_save_interval == 0:
-                   print(f"保存第 {i} 帧的应力数据...")
-                   mpm.save_stress_data(i)
-                   mpm.saved_stress_frames.append(i)
+                frame = mpm.current_frame
 
-               # 检查速度收敛
-               if mpm.check_velocity_convergence(i):
-                   print(f"在第 {i} 帧达到速度收敛，提前终止模拟")
-                   break
+                if mpm.stress_save_interval > 0 and frame % mpm.stress_save_interval == 0:
+                    print(f"保存第 {frame} 帧的应力数据...")
+                    mpm.save_stress_data(frame)
+                    mpm.saved_stress_frames.append(frame)
+
+                if mpm.check_velocity_convergence(frame):
+                    print(f"在第 {frame} 帧达到速度收敛，提前终止模拟")
+                    break
         finally:
             gc.enable()
             gc.collect()
 
-        # 在最后一帧记录应力数据（如果还没有保存过）
-        if mpm.stress_save_interval == 0 or i not in mpm.saved_stress_frames:
+        final_frame = mpm.current_frame
+        if final_frame not in mpm.saved_stress_frames:
             print("记录最终帧的应力数据...")
-            mpm.save_stress_data(i)
-            mpm.saved_stress_frames.append(i)
+            mpm.save_stress_data(final_frame)
+            mpm.saved_stress_frames.append(final_frame)
+
+        mpm.saved_stress_frames = sorted({int(frame) for frame in mpm.saved_stress_frames})
+        mpm.save_checkpoint()
 
         # 打印保存的应力数据帧信息
         if mpm.saved_stress_frames:
@@ -996,19 +1081,10 @@ if __name__ == "__main__":
 
         # 保存统计图表到实验目录
         try:
-            if hasattr(mpm, '_experiment_dir') and mpm._experiment_dir:
-                stats_dir = os.path.join(mpm._experiment_dir, 'performance_stats')
-                os.makedirs(stats_dir, exist_ok=True)
-                mpm.perf_stats.save_all_plots(stats_dir, show=False)
-                mpm.perf_stats.save_to_file(os.path.join(stats_dir, 'stats_data.json'))
-            else:
-                # 如果没有实验目录，创建一个默认的
-                from datetime import datetime
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                stats_dir = f"experiment_results/single_domain_{timestamp}/performance_stats"
-                os.makedirs(stats_dir, exist_ok=True)
-                mpm.perf_stats.save_all_plots(stats_dir, show=False)
-                mpm.perf_stats.save_to_file(os.path.join(stats_dir, 'stats_data.json'))
+            stats_dir = os.path.join(mpm._experiment_dir, 'performance_stats')
+            os.makedirs(stats_dir, exist_ok=True)
+            mpm.perf_stats.save_all_plots(stats_dir, show=False)
+            mpm.perf_stats.save_to_file(os.path.join(stats_dir, 'stats_data.json'))
         except Exception as e:
             print(f"Warning: Failed to save performance plots: {e}")
             print("Simulation data has been saved successfully despite plotting errors.")

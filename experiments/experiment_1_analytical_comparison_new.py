@@ -17,11 +17,15 @@ from scipy.spatial import KDTree
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.plot_style import apply_cmame_style, COLORS as CMAME_COLORS
+from tools.plot_style import apply_cmame_style, apply_paper_font_style, COLORS as CMAME_COLORS
 apply_cmame_style()
 from simulators.implicit_mpm import ImplicitMPM
 from Util.Config import Config
 import taichi as ti
+
+# 某些被导入模块会重置 matplotlib rc 参数（例如 tools.performance_stats）
+# 这里在所有依赖导入完成后再统一应用目标字号，保证 analyze-only 跑图一致。
+apply_paper_font_style()
 
 def load_config(config_path):
     with open(config_path, 'r') as f:
@@ -1051,7 +1055,7 @@ def run_batch_experiments(args):
 def _save_legend_pdf(handles, labels, path):
     """将 legend 单独保存为 PDF。"""
     fig_leg = plt.figure(figsize=(2.5, max(len(labels) * 0.28 + 0.2, 0.6)))
-    fig_leg.legend(handles, labels, loc='center', frameon=True, fontsize='x-small')
+    fig_leg.legend(handles, labels, loc='center', frameon=True)
     fig_leg.tight_layout()
     plt.savefig(path, bbox_inches='tight')
     plt.close(fig_leg)

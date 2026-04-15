@@ -13,6 +13,7 @@ Or if running from the experiments/ directory:
 """
 
 import matplotlib.pyplot as plt
+from contextlib import contextmanager
 
 # CMAME color palette
 COLORS = [
@@ -61,3 +62,31 @@ def apply_cmame_style():
         "savefig.bbox": "tight",
         "savefig.pad_inches": 0.05,
     })
+
+
+PAPER_TEXT_FONTSIZE = 16
+
+
+def paper_font_rcparams(base_fontsize=PAPER_TEXT_FONTSIZE):
+    """Return rcParams tuned for body-text-matching figure fonts."""
+    return {
+        "font.size": base_fontsize,
+        "axes.titlesize": base_fontsize,
+        "axes.labelsize": base_fontsize,
+        "legend.fontsize": base_fontsize,
+        "xtick.labelsize": base_fontsize,
+        "ytick.labelsize": base_fontsize,
+        "figure.titlesize": base_fontsize,
+        "legend.title_fontsize": base_fontsize,
+    }
+
+
+def apply_paper_font_style(base_fontsize=PAPER_TEXT_FONTSIZE):
+    """Apply CMAME-compatible paper font size settings for all labels/ticks."""
+    plt.rcParams.update(paper_font_rcparams(base_fontsize))
+
+
+@contextmanager
+def paper_font_context(base_fontsize=PAPER_TEXT_FONTSIZE):
+    with plt.rc_context(paper_font_rcparams(base_fontsize)):
+        yield

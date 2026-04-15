@@ -23,6 +23,31 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.plot_style import apply_cmame_style, COLORS as CMAME_COLORS
 apply_cmame_style()
 
+# Keep plot typography aligned with manuscript normal text size.
+_PAPER_TEXT_FONTSIZE = 14
+
+
+def _paper_font_context():
+    """Use paper body-text-sized typography for matplotlib figures."""
+    return plt.rc_context({
+        "font.size": _PAPER_TEXT_FONTSIZE,
+        "axes.titlesize": _PAPER_TEXT_FONTSIZE,
+        "axes.labelsize": _PAPER_TEXT_FONTSIZE,
+        "legend.fontsize": _PAPER_TEXT_FONTSIZE,
+        "xtick.labelsize": _PAPER_TEXT_FONTSIZE,
+        "ytick.labelsize": _PAPER_TEXT_FONTSIZE,
+    })
+
+
+plt.rcParams.update({
+    "font.size": _PAPER_TEXT_FONTSIZE,
+    "axes.titlesize": _PAPER_TEXT_FONTSIZE,
+    "axes.labelsize": _PAPER_TEXT_FONTSIZE,
+    "legend.fontsize": _PAPER_TEXT_FONTSIZE,
+    "xtick.labelsize": _PAPER_TEXT_FONTSIZE,
+    "ytick.labelsize": _PAPER_TEXT_FONTSIZE,
+})
+
 # 不再需要导入质量计算函数，直接使用理论质量
 # try:
 #     from experiments.experiment_3_hertz_contact import get_actual_volume_force_mass
@@ -936,73 +961,74 @@ def compare_stress_with_analytical(analytical_results, mpm_results, grid_size, o
     params = analytical_results['params']
     contact_width = analytical_results['contact_width']
 
-    _, ax = plt.subplots(1, 1, figsize=(5.5, 4.5))
+    with _paper_font_context():
+        _, ax = plt.subplots(1, 1, figsize=(5.5, 4.5))
 
-    x_coords = analytical_results['x_coords']
-    stress_yy = analytical_results['stress_yy']
-    center_x = params['center'][0]
+        x_coords = analytical_results['x_coords']
+        stress_yy = analytical_results['stress_yy']
+        center_x = params['center'][0]
 
-    contact_indices = (x_coords >= center_x - contact_width*2) & (x_coords <= center_x + contact_width*2)
-    x_analytical = x_coords[contact_indices]
-    pressure_analytical = -stress_yy[contact_indices]/1000
+        contact_indices = (x_coords >= center_x - contact_width*2) & (x_coords <= center_x + contact_width*2)
+        x_analytical = x_coords[contact_indices]
+        pressure_analytical = -stress_yy[contact_indices]/1000
 
-    mpm_positions = mpm_results['positions']
-    mpm_stress = mpm_results['stress']
+        mpm_positions = mpm_results['positions']
+        mpm_stress = mpm_results['stress']
 
-    mpm_x = mpm_positions[:, 0]
-    mpm_contact_indices = (mpm_x >= center_x - contact_width*2) & (mpm_x <= center_x + contact_width*2)
-    mpm_positions_contact = mpm_positions[mpm_contact_indices]
-    mpm_stress_contact = mpm_stress[mpm_contact_indices]
+        mpm_x = mpm_positions[:, 0]
+        mpm_contact_indices = (mpm_x >= center_x - contact_width*2) & (mpm_x <= center_x + contact_width*2)
+        mpm_positions_contact = mpm_positions[mpm_contact_indices]
+        mpm_stress_contact = mpm_stress[mpm_contact_indices]
 
-    ax.plot(x_analytical, pressure_analytical, color='#b2182b', linewidth=2.0,
-            label='Analytical (Hertz)', alpha=0.9)
+        ax.plot(x_analytical, pressure_analytical, color='#b2182b', linewidth=2.0,
+                label='Analytical (Hertz)', alpha=0.9)
 
-    # 根据是否使用bin平均来选择绘图方式
-    if n_bins is not None and n_bins > 0:
-        # 使用bin平均
-        bin_centers, bin_avg_stress, bin_counts = bin_average_stress(
-            mpm_positions_contact,
-            mpm_stress_contact,
-            n_bins=n_bins,
-            x_range=[center_x - contact_width*2, center_x + contact_width*2]
-        )
+        # 根据是否使用bin平均来选择绘图方式
+        if n_bins is not None and n_bins > 0:
+            # 使用bin平均
+            bin_centers, bin_avg_stress, bin_counts = bin_average_stress(
+                mpm_positions_contact,
+                mpm_stress_contact,
+                n_bins=n_bins,
+                x_range=[center_x - contact_width*2, center_x + contact_width*2]
+            )
 
-        # 提取σ_yy分量并转换为压力
-        bin_avg_pressure = -bin_avg_stress[:, 1, 1] / 1000  # kPa
+            # 提取σ_yy分量并转换为压力
+            bin_avg_pressure = -bin_avg_stress[:, 1, 1] / 1000  # kPa
 
-        # 只绘制有粒子的bin
-        valid_bins = bin_counts > 0
+            # 只绘制有粒子的bin
+            valid_bins = bin_counts > 0
 
-        particle_type = "all particles" if mpm_results.get('use_all_particles', False) else "boundary only"
-        mpm_label = f'MPM (Grid {grid_size}, {n_bins} bins, {particle_type})'
-        ax.plot(bin_centers[valid_bins], bin_avg_pressure[valid_bins],
-                '-o', color='#3182bd', linewidth=1.5, markersize=5,
-                markerfacecolor='none', markeredgewidth=1.2, alpha=0.9, label=mpm_label)
+            particle_type = "all particles" if mpm_results.get('use_all_particles', False) else "boundary only"
+            mpm_label = f'MPM (Grid {grid_size}, {n_bins} bins, {particle_type})'
+            ax.plot(bin_centers[valid_bins], bin_avg_pressure[valid_bins],
+                    '-o', color='#3182bd', linewidth=1.5, markersize=5,
+                    markerfacecolor='none', markeredgewidth=1.2, alpha=0.9, label=mpm_label)
 
-    else:
-        mpm_stress_yy = mpm_stress_contact[:, 1, 1]
-        mpm_pressure = -mpm_stress_yy / 1000
-        x_mpm_contact = mpm_positions_contact[:, 0]
+        else:
+            mpm_stress_yy = mpm_stress_contact[:, 1, 1]
+            mpm_pressure = -mpm_stress_yy / 1000
+            x_mpm_contact = mpm_positions_contact[:, 0]
 
-        particle_type = "all particles" if mpm_results.get('use_all_particles', False) else "boundary only"
-        mpm_label = f'MPM (Grid {grid_size}, {particle_type})'
-        ax.scatter(x_mpm_contact, mpm_pressure, c='#3182bd', s=15, alpha=0.7, label=mpm_label)
+            particle_type = "all particles" if mpm_results.get('use_all_particles', False) else "boundary only"
+            mpm_label = f'MPM (Grid {grid_size}, {particle_type})'
+            ax.scatter(x_mpm_contact, mpm_pressure, c='#3182bd', s=15, alpha=0.7, label=mpm_label)
 
-    ax.axvline(x=center_x - contact_width, color='#636363', linestyle='--', alpha=0.7,
-               label=rf'Contact boundary ($\pm${contact_width:.4g}\,m)')
-    ax.axvline(x=center_x + contact_width, color='#636363', linestyle='--', alpha=0.7)
+        ax.axvline(x=center_x - contact_width, color='#636363', linestyle='--', alpha=0.7,
+                   label=rf'Contact boundary ($\pm${contact_width:.4g}\,m)')
+        ax.axvline(x=center_x + contact_width, color='#636363', linestyle='--', alpha=0.7)
 
-    ax.set_xlabel(r'$x$ (m)')
-    ax.set_ylabel(r'Contact pressure (kPa)')
-    ax.grid(True, alpha=0.3)
-    ax.legend()
-    ax.set_xlim(center_x - contact_width*2, center_x + contact_width*2)
+        ax.set_xlabel(r'$x$ (m)')
+        ax.set_ylabel(r'Contact pressure (kPa)')
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        ax.set_xlim(center_x - contact_width*2, center_x + contact_width*2)
 
-    plt.tight_layout()
+        plt.tight_layout()
 
-    plot_file = os.path.join(output_dir, f"stress_comparison_grid{grid_size}.pdf")
-    plt.savefig(plot_file)
-    plt.close()
+        plot_file = os.path.join(output_dir, f"stress_comparison_grid{grid_size}.pdf")
+        plt.savefig(plot_file)
+        plt.close()
 
     print(f"应力对比图保存到: {plot_file}")
     return plot_file

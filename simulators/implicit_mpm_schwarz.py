@@ -5,6 +5,17 @@ from tools.particle_state_manager import ParticleStateManager
 from tools.performance_stats import SchwarzPerformanceStats
 
 from Util.Recorder import *
+from Util.CheckpointIO import (
+    CONFIG_BACKUP_FILENAME,
+    get_checkpoint_dir,
+    get_config_backup_path,
+    load_manifest,
+    load_particle_state,
+    load_performance_stats,
+    save_manifest,
+    save_particle_state,
+    save_performance_stats,
+)
 from Util.Visualization import cv2_draw_particles, cv2_draw_particles_colored, FPSCounter
 from Util.ExperimentDir import create_experiment_directory
 from Util.StressIO import is_point_in_regions, compute_von_mises_stress, save_stress_frame, write_stress_stats_json
@@ -121,6 +132,7 @@ class MPM_Schwarz:
 
         # 帧计数器（用于渐进重力）
         self.current_frame = 0
+        self.completed_frames = 0
 
         # 性能统计（限制大小防止内存泄漏）
         self.perf_stats = SchwarzPerformanceStats(max_frames_to_keep=1000000)
@@ -1046,6 +1058,64 @@ class MPM_Schwarz:
         """创建实验目录并备份配置文件（委托给 Util.ExperimentDir）"""
         return create_experiment_directory("schwarz", config_path)
 
+    def attach_experiment_dir(self, experiment_dir):
+        """绑定已有实验目录，恢复运行时继续写回该目录。"""
+        self._experiment_dir = os.fspath(experiment_dir)
+        self._stress_data_dir = os.path.join(self._experiment_dir, "stress_data")
+        os.makedirs(self._experiment_dir, exist_ok=True)
+        os.makedirs(self._stress_data_dir, exist_ok=True)
+
+    def save_checkpoint(self):
+        """保存最新 Schwarz 帧边界断点。"""
+        if not hasattr(self, '_experiment_dir') or not hasattr(self, '_stress_data_dir'):
+            self._experiment_dir, self._stress_data_dir = self._create_experiment_directory(self.config_path)
+
+        checkpoint_dir = get_checkpoint_dir(self._experiment_dir)
+        save_particle_state(self.Domain1.particles, checkpoint_dir / "domain1")
+        save_particle_state(self.Domain2.particles, checkpoint_dir / "domain2")
+
+        manifest = {
+            "simulator_type": "schwarz",
+            "config_path": CONFIG_BACKUP_FILENAME,
+            "checkpoint_frame": int(self.completed_frames),
+            "completed_frames": int(self.completed_frames),
+            "current_frame": int(self.current_frame),
+            "saved_stress_frames": sorted({int(frame) for frame in self.saved_stress_frames}),
+            "velocity_convergence_consecutive_count": int(self.velocity_convergence_consecutive_count),
+        }
+        save_manifest(self._experiment_dir, manifest)
+        if self.enable_perf_stats:
+            save_performance_stats(self.perf_stats, self._experiment_dir)
+        print(f"Schwarz断点已保存到: {checkpoint_dir}")
+        return checkpoint_dir
+
+    def load_checkpoint(self, experiment_dir):
+        """从已有实验目录恢复 Schwarz 运行态。"""
+        self.attach_experiment_dir(experiment_dir)
+        manifest = load_manifest(self._experiment_dir, expected_simulator_type="schwarz")
+        checkpoint_dir = get_checkpoint_dir(self._experiment_dir)
+
+        load_particle_state(self.Domain1.particles, checkpoint_dir / "domain1")
+        load_particle_state(self.Domain2.particles, checkpoint_dir / "domain2")
+
+        self.completed_frames = int(manifest.get("completed_frames", 0))
+        self.current_frame = int(manifest.get("current_frame", 0))
+        self.saved_stress_frames = sorted({int(frame) for frame in manifest.get("saved_stress_frames", [])})
+        self.velocity_convergence_consecutive_count = int(
+            manifest.get("velocity_convergence_consecutive_count", 0)
+        )
+
+        if self.enable_perf_stats:
+            load_performance_stats(self.perf_stats, self._experiment_dir)
+        self.Domain1.solver.update_frame(self.current_frame)
+        self.Domain2.solver.update_frame(self.current_frame)
+
+        print(
+            f"已恢复Schwarz断点: completed_frames={self.completed_frames}, "
+            f"current_frame={self.current_frame}, 已保存stress帧={len(self.saved_stress_frames)}"
+        )
+        return manifest
+
     def save_stress_data(self, frame_number):
         """保存两个域的应力数据"""
         import json
@@ -1300,15 +1370,23 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description='Schwarz Dual Domain MPM Simulator')
-    parser.add_argument('--config', type=str, default='config/schwarz_2d_test3.json',
-                       help='Configuration file path')
+    input_group = parser.add_mutually_exclusive_group()
+    input_group.add_argument('--config', type=str, default=None,
+                             help='Configuration file path')
+    input_group.add_argument('--dir', type=str, default=None,
+                             help='Resume from an existing experiment directory')
     parser.add_argument('--no-gui', action='store_true',
                        help='Run without GUI (headless mode)')
 
     args = parser.parse_args()
 
+    resume_dir = args.dir
+    config_path = args.config or 'config/schwarz_2d_test3.json'
+    if resume_dir:
+        config_path = os.fspath(get_config_backup_path(resume_dir))
+
     # 读取配置文件
-    cfg = Config(path=args.config)
+    cfg = Config(path=config_path)
     float_type=ti.f32 if cfg.get("float_type", "f32") == "f32" else ti.f64
     arch=cfg.get("arch", "cpu")
     print(f"使用浮点类型: {float_type}, 计算架构: {arch}")
@@ -1322,23 +1400,26 @@ if __name__ == "__main__":
     ti.init(arch=arch, default_fp=float_type, log_level=ti.ERROR,enable_fallback=False  )
 
     # 创建Schwarz域分解MPM实例
-    mpm = MPM_Schwarz(cfg, no_gui=args.no_gui, config_path=args.config)
+    mpm = MPM_Schwarz(cfg, no_gui=args.no_gui, config_path=config_path)
 
-    #保存初始状态的应力数据
-    print("保存初始状态的应力数据...")
-    mpm.save_stress_data(frame_number=0)
-    mpm.saved_stress_frames.append(0)
-    
-    frame_count = 0
-    target_frames = cfg.get("max_frames", 60)
+    if resume_dir:
+        mpm.load_checkpoint(resume_dir)
+
+    if not resume_dir:
+        print("保存初始状态的应力数据...")
+        mpm.save_stress_data(frame_number=0)
+        mpm.saved_stress_frames.append(0)
+
+    target_frames = mpm.max_frames
 
     try:
         if args.no_gui:
             # 无GUI模式：直接运行到目标帧数
             print(f"Running simulation in headless mode for {target_frames} frames...")
-            while frame_count < target_frames:
+            while mpm.completed_frames < target_frames:
                 mpm.step()
-                frame_count += 1
+                mpm.completed_frames += 1
+                frame_count = mpm.completed_frames
 
                 # 间隔保存应力数据
                 if mpm.stress_save_interval > 0 and frame_count % mpm.stress_save_interval == 0:
@@ -1354,30 +1435,18 @@ if __name__ == "__main__":
                 if frame_count % 100 == 0:
                     print(f"Progress: {frame_count}/{target_frames} frames")
             print("Simulation completed.")
-
-            # 保存最终帧的应力数据（如果还没保存过）
-            if frame_count not in mpm.saved_stress_frames:
-                print(f"保存最终帧 {frame_count} 的应力数据...")
-                mpm.save_stress_data(frame_count)
-                mpm.saved_stress_frames.append(frame_count)
-
-            # 生成内存分析报告
-            if mpm.mem_profiler:
-                mpm.mem_profiler.checkpoint("simulation_complete")
-                report_path = os.path.join(mpm._experiment_dir, "memory_profile.json")
-                mpm.mem_profiler.save_report(report_path)
-                mpm.mem_profiler.stop()
         else:
             # GUI模式：使用传统的GUI循环
             _render_interval = 1.0 / mpm.render_fps
             _last_render_t = 0.0
-            while mpm._cv2_running:
+            while mpm._cv2_running and mpm.completed_frames < mpm.max_frames:
                 mpm.step()
                 _now = time.perf_counter()
                 if _now - _last_render_t >= _render_interval:
                     mpm.render()
                     _last_render_t = _now
-                frame_count += 1
+                mpm.completed_frames += 1
+                frame_count = mpm.completed_frames
 
                 # 间隔保存应力数据
                 if mpm.stress_save_interval > 0 and frame_count % mpm.stress_save_interval == 0:
@@ -1389,32 +1458,24 @@ if __name__ == "__main__":
                 if mpm.check_velocity_convergence(frame_count):
                     print(f"在第 {frame_count} 帧达到速度收敛，提前终止模拟")
                     break
-
-                # 自动停止条件
-                if frame_count >= mpm.max_frames:
-                    break
-            # 保存最终帧的应力数据（如果还没保存过）
-            if frame_count not in mpm.saved_stress_frames:
-                print(f"保存最终帧 {frame_count} 的应力数据...")
-                mpm.save_stress_data(frame_count)
-                mpm.saved_stress_frames.append(frame_count)
-            # 生成内存分析报告（GUI模式）
-            if mpm.mem_profiler:
-                mpm.mem_profiler.checkpoint("simulation_complete")
-                report_path = os.path.join(mpm._experiment_dir, "memory_profile.json")
-                mpm.mem_profiler.save_report(report_path)
-                mpm.mem_profiler.stop()
     finally:
         gc.enable()
         gc.collect()
 
-
-
-    # 在最后一帧记录应力数据（如果还没有保存过）
-    if mpm.stress_save_interval == 0 or frame_count not in mpm.saved_stress_frames:
+    frame_count = mpm.completed_frames
+    if frame_count not in mpm.saved_stress_frames:
         print("记录最终帧的应力数据...")
         mpm.save_stress_data(frame_count)
         mpm.saved_stress_frames.append(frame_count)
+
+    mpm.saved_stress_frames = sorted({int(frame) for frame in mpm.saved_stress_frames})
+    mpm.save_checkpoint()
+
+    if mpm.mem_profiler:
+        mpm.mem_profiler.checkpoint("simulation_complete")
+        report_path = os.path.join(mpm._experiment_dir, "memory_profile.json")
+        mpm.mem_profiler.save_report(report_path)
+        mpm.mem_profiler.stop()
 
     # 打印保存的应力数据帧信息
     if mpm.saved_stress_frames:
@@ -1429,10 +1490,7 @@ if __name__ == "__main__":
         mpm.perf_stats.generate_summary_report()
 
         # 创建输出目录
-        import os
-        stats_output_dir = "performance_stats"
-        if hasattr(mpm, '_experiment_dir'):
-            stats_output_dir = os.path.join(mpm._experiment_dir, "performance_stats")
+        stats_output_dir = os.path.join(mpm._experiment_dir, "performance_stats")
         os.makedirs(stats_output_dir, exist_ok=True)
 
         # 保存所有图表

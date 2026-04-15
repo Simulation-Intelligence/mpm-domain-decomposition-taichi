@@ -51,6 +51,50 @@ def create_custom_colormap():
 # 创建全局自定义colormap
 CUSTOM_COLORMAP = create_custom_colormap()
 
+NON_INTERACTIVE_BACKEND_KEYWORDS = (
+    'agg',
+    'pdf',
+    'pgf',
+    'ps',
+    'svg',
+    'template',
+)
+
+
+def backend_supports_interactive_show():
+    """Return True when the current matplotlib backend can open a GUI window."""
+    backend = str(matplotlib.get_backend()).lower()
+    return not any(keyword in backend for keyword in NON_INTERACTIVE_BACKEND_KEYWORDS)
+
+
+def build_auto_save_path(frame_number, plot_kind):
+    """Build a default output path when running in a non-GUI environment."""
+    output_dir = Path('visualization_output')
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir / f'{plot_kind}_frame_{frame_number}.png'
+
+
+def render_or_save_figure(fig, frame_number, plot_kind, save_path=None, saved_label='Image'):
+    """Show the figure when possible; otherwise save it to a sensible default path."""
+    if save_path:
+        final_path = Path(save_path)
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(final_path, dpi=300, bbox_inches='tight')
+        print(f"{saved_label} saved to: {final_path}")
+        return
+
+    if backend_supports_interactive_show():
+        try:
+            plt.show()
+            return
+        except Exception as exc:
+            print(f"Figure display failed with backend {matplotlib.get_backend()}: {exc}")
+
+    auto_save_path = build_auto_save_path(frame_number, plot_kind)
+    fig.savefig(auto_save_path, dpi=300, bbox_inches='tight')
+    print(f"Detected non-interactive Matplotlib backend ({matplotlib.get_backend()}); auto-saving instead of showing a window.")
+    print(f"{saved_label} auto-saved to: {auto_save_path}")
+
 def create_discrete_colormap(base_cmap, n_levels=10):
     """创建离散化的colormap"""
     if isinstance(base_cmap, str):
@@ -704,11 +748,7 @@ def visualize_stress_2d(positions, von_mises, frame_number, save_path=None, use_
 
     plt.tight_layout()
 
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"Image saved to: {save_path}")
-    else:
-        plt.show()
+    render_or_save_figure(fig, frame_number, 'single_2d_stress', save_path, 'Image')
     plt.close()  # 显式关闭figure以释放内存
 
 
@@ -822,11 +862,7 @@ def visualize_schwarz_stress_2d(data_dict, save_path=None, use_log=False, stress
     
     plt.tight_layout()
     
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"Dual domain stress image saved to: {save_path}")
-    else:
-        plt.show()
+    render_or_save_figure(fig, frame_number, 'schwarz_dual_2d_stress', save_path, 'Dual domain stress image')
     plt.close()  # 显式关闭figure以释放内存
 
 def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=False, stress_cmap=None, max_stress=None, particle_size=None, averaging_radius=None, use_discrete=True, n_levels=10):
@@ -932,11 +968,7 @@ def visualize_schwarz_stress_combined_2d(data_dict, save_path=None, use_log=Fals
     
     plt.tight_layout()
     
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"Dual domain combined stress image saved to: {save_path}")
-    else:
-        plt.show()
+    render_or_save_figure(fig, frame_number, 'schwarz_combined_2d_stress', save_path, 'Dual domain combined stress image')
     plt.close()  # 显式关闭figure以释放内存
 
 
@@ -994,11 +1026,7 @@ def visualize_stress_3d(positions, von_mises, frame_number, save_path=None, use_
 
     plt.tight_layout()
 
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"Image saved to: {save_path}")
-    else:
-        plt.show()
+    render_or_save_figure(fig, frame_number, 'single_3d_stress', save_path, 'Image')
     plt.close()
 
 
@@ -1096,11 +1124,7 @@ def visualize_schwarz_stress_3d(data_dict, save_path=None, use_log=False, stress
 
     plt.tight_layout()
 
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"Dual domain stress image saved to: {save_path}")
-    else:
-        plt.show()
+    render_or_save_figure(fig, frame_number, 'schwarz_dual_3d_stress', save_path, 'Dual domain stress image')
     plt.close()
 
 
@@ -1193,11 +1217,7 @@ def visualize_schwarz_stress_combined_3d(data_dict, save_path=None, use_log=Fals
 
     plt.tight_layout()
 
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"Dual domain combined stress image saved to: {save_path}")
-    else:
-        plt.show()
+    render_or_save_figure(fig, frame_number, 'schwarz_combined_3d_stress', save_path, 'Dual domain combined stress image')
     plt.close()
 
 

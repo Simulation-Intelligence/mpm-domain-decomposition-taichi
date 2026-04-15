@@ -8,8 +8,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from tools.plot_style import apply_cmame_style
+from tools.plot_style import apply_cmame_style, apply_paper_font_style
 apply_cmame_style()
+apply_paper_font_style()
 
 
 def _load_config(path):
@@ -126,9 +127,9 @@ def _plot_stress_panel(ax, pos, vals, levels, vmin, vmax, params,
     ax.set_aspect('equal')
 
     if draw_xlabel:
-        ax.set_xlabel(r'$x$ (m)', fontsize=13)
+        ax.set_xlabel(r'$x$ (m)')
     if draw_ylabel:
-        ax.set_ylabel(r'$y$ (m)', fontsize=13)
+        ax.set_ylabel(r'$y$ (m)')
 
     plot_span = plot_xmax - plot_xmin
     raw = plot_span / 4.0
@@ -136,7 +137,7 @@ def _plot_stress_panel(ax, pos, vals, levels, vmin, vmax, params,
     tick_interval = round(raw / mag) * mag
     ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
     ax.yaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
-    ax.tick_params(labelsize=12)
+    ax.tick_params()
 
     return tcf
 
@@ -218,7 +219,7 @@ def create_stress_comparison_plots(single_dir, dual_dir, output_dir, stress_vmax
 
         fig, axes = plt.subplots(2, 3, figsize=(10, 7))
         fig.subplots_adjust(left=0.07, right=0.88, top=0.90, bottom=0.10,
-                            wspace=0.1, hspace=0.05)
+                            wspace=0.2, hspace=0.1)
 
         last_tcf = None
         for col_idx, ((i, j), _, sym) in enumerate(components):
@@ -241,7 +242,7 @@ def create_stress_comparison_plots(single_dir, dual_dir, output_dir, stress_vmax
             last_tcf = tcf_single  # Keep the last tcf for colorbar
 
             # Set column titles only on top row, component symbol only
-            ax_dual.set_title(sym, fontsize=20)
+            ax_dual.set_title(sym)
 
             # Hide top and right spines on all panels for cleaner look
             for ax in [ax_dual, ax_single]:
@@ -258,14 +259,13 @@ def create_stress_comparison_plots(single_dir, dual_dir, output_dir, stress_vmax
             # Bottom row keeps x tick labels
 
         # Set row labels on left column
-        axes[0, 0].set_ylabel('Dual-domain', fontsize=13)
-        axes[1, 0].set_ylabel('Single-domain', fontsize=13)
+        axes[0, 0].set_ylabel('Dual-domain')
+        axes[1, 0].set_ylabel('Single-domain')
 
         # Create single shared colorbar on the right
         cbar_ax = fig.add_axes([0.90, 0.10, 0.02, 0.78])
         cbar = fig.colorbar(last_tcf, cax=cbar_ax)
-        cbar.set_label(r'Stress (Pa)', fontsize=13)
-        cbar.ax.tick_params(labelsize=12)
+        cbar.set_label(r'Stress (Pa)')
 
         fname = f'stress_comparison_grid{dual_gs}_{single_gs}.pdf'
         plt.savefig(os.path.join(output_dir, fname))
@@ -358,7 +358,7 @@ plt.close()
 print('Saved convergence_comparison.pdf')
 
 # ── Plot 2: Stacked CPU time + Error (secondary axis, broken y-axis) ─────────
-BREAK_LOW  = 600   # lower bound of the removed region
+BREAK_LOW  = 1400   # lower bound of the removed region
 BREAK_HIGH = 4500   # upper bound of the removed region
 
 n     = len(dx_values)
@@ -454,7 +454,7 @@ all_removed_labels = removed_conv_labels + time_error_labels1 + time_error_label
 
 # Create legend
 legend = ax_leg.legend(all_removed_handles, all_removed_labels, loc='center',
-                       fontsize=12, frameon=True, ncol=2)
+                       frameon=True, ncol=2)
 
 plt.savefig(os.path.join(output_dir, 'combined_legends.pdf'), bbox_inches='tight')
 plt.close()

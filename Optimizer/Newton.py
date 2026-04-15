@@ -6,7 +6,7 @@ import gc
 
 @ti.data_oriented
 class Newton:
-    def __init__(self, energy_fn, grad_fn, hess_fn, DBC_fn=None,dim=3, alpha=0, beta=0.6, eta=1e-3, grad_normalizer=1.0, tolerance_mode="absolute", float_type=ti.f32):
+    def __init__(self, energy_fn, grad_fn, hess_fn, DBC_fn=None,dim=3, alpha=0, beta=0.6, eta=1e-3, grad_normalizer=1.0, tolerance_mode="absolute", absolute_tolerance=None, float_type=ti.f32):
         self.dim = ti.field(ti.i32, shape=())
         self.dim[None] = dim
         self.energy_fn = energy_fn
@@ -18,10 +18,13 @@ class Newton:
         self.eta = eta
         self.grad_normalizer = grad_normalizer
         self.tolerance_mode = tolerance_mode
+        self.absolute_tolerance = absolute_tolerance
         self.float_type = float_type
 
         if self.tolerance_mode not in ("absolute", "relative"):
             raise ValueError(f"Unsupported Newton tolerance_mode: {self.tolerance_mode}")
+        if self.absolute_tolerance is not None and self.absolute_tolerance <= 0:
+            self.absolute_tolerance = None
 
         # 参数和梯度存储
         self.x = ti.field(self.float_type, shape=dim)
@@ -143,14 +146,43 @@ class Newton:
             else:
                 convergence_value = g_norm
 
+            absolute_converged = (
+                self.absolute_tolerance is not None
+                and g_norm < self.absolute_tolerance
+            )
+
             if it % 100 == 0:
                 if self.tolerance_mode == "relative" and relative_reference_norm is not None:
-                    print(f"Iteration {it}, grad norm: {g_norm:.4e}, rel norm: {convergence_value:.4e}, Energy: {self.f0:.4e}")
+                    if self.absolute_tolerance is not None:
+                        print(
+                            f"Iteration {it}, grad norm: {g_norm:.4e}, rel norm: {convergence_value:.4e}, "
+                            f"abs tol: {self.absolute_tolerance:.4e}, Energy: {self.f0:.4e}"
+                        )
+                    else:
+                        print(f"Iteration {it}, grad norm: {g_norm:.4e}, rel norm: {convergence_value:.4e}, Energy: {self.f0:.4e}")
                 else:
                     print(f"Iteration {it}, grad norm: {g_norm:.4e}, Energy: {self.f0:.4e}")
 
-            if convergence_value < self.eta:
-                print(f"Newton Converged at iteration {it}")
+            relative_converged = convergence_value < self.eta
+            if relative_converged or absolute_converged:
+                if relative_converged and absolute_converged:
+                    convergence_reason = (
+                        f"relative and absolute tolerance met "
+                        f"(rel={convergence_value:.4e} < {self.eta:.4e}, "
+                        f"abs={g_norm:.4e} < {self.absolute_tolerance:.4e})"
+                    )
+                elif relative_converged:
+                    convergence_reason = (
+                        f"relative tolerance met "
+                        f"(rel={convergence_value:.4e} < {self.eta:.4e})"
+                    )
+                else:
+                    convergence_reason = (
+                        f"absolute fallback tolerance met "
+                        f"(abs={g_norm:.4e} < {self.absolute_tolerance:.4e})"
+                    )
+
+                print(f"Newton Converged at iteration {it} ({convergence_reason})")
                 print("x_inf_norm:", self._get_inf_norm(self.x))
                 print(f"Final Energy: {self.f0:.4e}")
                 return it

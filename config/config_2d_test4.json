@@ -7,13 +7,13 @@
     "domain_width": 1.0,
     "domain_height": 1.0,
     "stress_save_interval": 5000,
-    "particles_per_grid": 9,
+    "particles_per_grid": 4,
     "sampling_method": "gauss",
     "elasticity_model": "neohookean",
     "use_mapping": false,
-    "dt": 0.002,
+    "dt": 1,
     "max_iter": 1,
-    "solve_max_iter": 2,
+    "solve_max_iter": 10000000,
     "solve_init_iter": 100,
     "offset": [
         0.0,
@@ -43,10 +43,10 @@
     ],
     "gravity": [
         0.0,
-        -6.46
+        -4.24e-03
     ],
-    "damping": 0.8,
-    "particle_damping": 0.99,
+    "damping": 0,
+    "particle_damping": 1,
     "material_params": [
         {
             "id": 0,
@@ -57,7 +57,7 @@
         }
     ],
     "implicit": true,
-    "static_solve": false,
+    "static_solve": true,
     "use_auto_diff": false,
     "compare_diff": false,
     "bound": 2,
@@ -82,9 +82,9 @@
         }
     ],
     "implicit_solver": "Newton",
-    "eta": 1e-5,
+    "eta": 1e-4,
     "max_frames": 200000,
-    "last_frames_count": 1000,
+    "last_frames_count": 10000,
     "use_record": false,
     "no_gui": false,
     "boundary_size": 0.0001,

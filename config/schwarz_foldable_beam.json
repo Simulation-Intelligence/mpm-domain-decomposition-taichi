@@ -1,7 +1,7 @@
 {
     "max_schwarz_iter": 50,
-    "schwarz_eta": 1e-4,
-    "max_frames": 50000,
+    "schwarz_eta": 1e-6,
+    "max_frames": 500000,
     "velocity_convergence_threshold": 1e-10,
     "velocity_convergence_check_interval": 10,
     "use_record": false,
@@ -27,7 +27,7 @@
         "sampling_method": "regular",
         "elasticity_model": "neohookean",
         "use_mapping": false,
-        "dt": 1e-5,
+        "dt": 1e-3,
         "max_iter": 1,
         "solve_max_iter": 1000,
         "offset": [0.0, 0.0],
@@ -55,24 +55,25 @@
         "gravity": [0.0, 0.0],
         "damping": 0,
         "particle_damping": 1,
-        "material_params": [
-            {"id": 0, "name": "beam", "E": 5e6, "nu": 0.4, "rho": 1200}
-        ],
+    "material_params": [
+        {"id": 0, "name": "beam", "E": 1e5, "nu": 0.4, "rho": 1200}
+    ],
         "implicit": true,
         "implicit_solver": "Newton",
         "use_auto_diff": false,
-        "eta": 1e-4,
+        "eta": 1e-3,
+"newton_tolerance_mode": "relative",
         "bound": 0,
         "shapes": [
             {
                 "type": "rectangle",
-                "params": {"range": [[0.05, 0.42], [0.45, 0.55]]},
+                "params": {"range": [[0.05, 0.42], [0.485, 0.515]]},
                 "operation": "add",
                 "material_id": 0
             },
             {
                 "type": "rectangle",
-                "params": {"range": [[0.58, 0.95], [0.45, 0.55]]},
+                "params": {"range": [[0.58, 0.95], [0.485, 0.515]]},
                 "operation": "add",
                 "material_id": 0
             }
@@ -91,7 +92,7 @@
         "sampling_method": "regular",
         "elasticity_model": "neohookean",
         "use_mapping": false,
-        "dt": 1e-5,
+        "dt": 1e-3,
         "max_iter": 1,
         "solve_max_iter": 1000,
         "offset": [0.35, 0.36],
@@ -104,22 +105,23 @@
         "damping": 0,
         "particle_damping": 1,
         "material_params": [
-            {"id": 0, "name": "beam", "E": 5e5, "nu": 0.4, "rho": 1200}
+            {"id": 0, "name": "beam", "E": 1e5, "nu": 0.4, "rho": 1200}
         ],
         "implicit": true,
         "implicit_solver": "Newton",
         "use_auto_diff": false,
-        "eta": 1e-4,
-        "bound": 0,
-        "material_distribution": {
-            "type": "smoothstep_x",
-            "nu": 0.4,
-            "E_soft": 5e4,
-            "E_hard": 5e6,
-            "x_soft_lo": 0.1,
-            "x_soft_hi": 0.2,
-            "x_trans": 0.03
-        },
+        "eta": 1e-3,
+        "newton_tolerance_mode": "relative",
+        "bound": 1,
+    "material_distribution": {
+        "type": "smoothstep_x",
+        "nu": 0.4,
+        "E_soft": 1e3,
+        "E_hard": 1e5,
+        "x_soft_lo": 0.06,
+        "x_soft_hi": 0.24,
+        "x_trans": 0.03
+    },
         "shapes": [
             {
                 "type": "rectangle",

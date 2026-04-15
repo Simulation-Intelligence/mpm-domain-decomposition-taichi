@@ -662,6 +662,19 @@ class SchwarzPerformanceStats:
             json.dump(data, f, indent=2)
         print(f"Statistics saved to {filepath}")
 
+    def load_from_file(self, filepath: str):
+        """从 JSON 文件恢复统计数据"""
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+
+        frame_data = data.get('frame_data', [])
+        if len(frame_data) > self.max_frames_to_keep:
+            frame_data = frame_data[-self.max_frames_to_keep:]
+
+        self.reset()
+        self.frame_data = frame_data
+        print(f"Statistics loaded from {filepath} ({len(self.frame_data)} frames)")
+
     def save_all_plots(self, output_dir: str, show: bool = False):
         """保存所有图表到指定目录"""
         os.makedirs(output_dir, exist_ok=True)
@@ -1020,6 +1033,19 @@ class SingleDomainPerformanceStats:
         with open(filepath, 'w') as f:
             json.dump(data, f, indent=2)
         print(f"Statistics saved to {filepath}")
+
+    def load_from_file(self, filepath: str):
+        """从 JSON 文件恢复统计数据"""
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+
+        frame_data = data.get('frame_data', [])
+        if len(frame_data) > self.max_frames_to_keep:
+            frame_data = frame_data[-self.max_frames_to_keep:]
+
+        self.reset()
+        self.frame_data = frame_data
+        print(f"Statistics loaded from {filepath} ({len(self.frame_data)} frames)")
 
     def save_all_plots(self, output_dir: str, show: bool = False):
         """保存所有图表到指定目录"""

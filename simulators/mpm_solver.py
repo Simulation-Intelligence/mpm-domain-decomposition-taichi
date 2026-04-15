@@ -92,6 +92,10 @@ class MPMSolver:
 
         eta = config.get("eta", 1)
         newton_tolerance_mode = config.get("newton_tolerance_mode", "absolute")
+        newton_absolute_tolerance = config.get(
+            "newton_absolute_tolerance",
+            1e-6 if newton_tolerance_mode == "relative" else eta,
+        )
         if solver_type == "BFGS":
             # 使用材料1的p_mass进行梯度归一化
             avg_p_mass = (self.particles.p_mass_1 + self.particles.p_mass_2) / 2.0
@@ -101,7 +105,7 @@ class MPMSolver:
         elif solver_type == "Newton":
             # 使用材料1的p_mass进行梯度归一化
             avg_p_mass = (self.particles.p_mass_1 + self.particles.p_mass_2) / 2.0
-            self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=None,dim=total_grid_points * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta=eta,tolerance_mode=newton_tolerance_mode,float_type=self.float_type)
+            self.optimizer = Newton(energy_fn=self.compute_energy, grad_fn=self.grad_fn, hess_fn=self.compute_hess, DBC_fn=None,dim=total_grid_points * self.dim,grad_normalizer=self.dt*avg_p_mass*self.particles.particles_per_grid,eta=eta,tolerance_mode=newton_tolerance_mode,absolute_tolerance=newton_absolute_tolerance,float_type=self.float_type)
         elif solver_type == "CG":
             # 使用材料1的p_mass进行梯度归一化
             avg_p_mass = (self.particles.p_mass_1 + self.particles.p_mass_2) / 2.0
