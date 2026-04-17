@@ -321,7 +321,7 @@ class BoundaryExchanger:
                 is_src_boundary = self._p2g_is_src_boundary_small[I] > 0
 
                 small_time_domain_set_boundary = self.small_time_domain.grid.is_particle_boundary_grid[I] and m > 1e-10
-                small_time_domain_set_boundary = small_time_domain_set_boundary and (not is_src_boundary or self.small_time_domain.grid.m[I] < m)
+                # small_time_domain_set_boundary = small_time_domain_set_boundary and (not is_src_boundary or self.small_time_domain.grid.m[I] < m)
 
                 if small_time_domain_set_boundary:
                     self.small_time_domain.grid.is_schwarz_boundary_grid[I] = [1] * self.small_time_domain.grid.dim

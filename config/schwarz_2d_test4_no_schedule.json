@@ -1,6 +1,6 @@
 {
     "max_schwarz_iter": 50,
-    "schwarz_eta": 1e-6,
+    "schwarz_eta": 1e-4,
     "max_frames": 2000000,
     "velocity_convergence_threshold": 1e-10,
     "velocity_convergence_check_interval": 10,
@@ -26,9 +26,9 @@
         "domain_height": 1.0,
         "particles_per_grid": 4,
         "sampling_method": "regular",
-        "elasticity_model": "neohookean",
+        "elasticity_model": "linear",
         "use_mapping": false,
-        "dt": 0.001,
+        "dt": 0.0005,
         "max_iter": 1,
         "solve_max_iter": 20000,
         "solve_init_iter": 100,
@@ -46,11 +46,12 @@
                 1
             ]
         ],
+        "auto_boundary_use_range_filter": true,
         "gravity": [
             0.0,
             -4.24e-03
         ],
-        "damping": 0,
+        "damping": 1,
         "particle_damping": 1,
         "material_params": [
             {
@@ -105,9 +106,9 @@
         "domain_height": 0.5,
         "particles_per_grid": 4,
         "sampling_method": "regular",
-        "elasticity_model": "neohookean",
+        "elasticity_model": "linear",
         "use_mapping": false,
-        "dt": 0.001,
+        "dt": 0.0005,
         "max_iter": 1,
         "solve_max_iter": 20000,
         "solve_init_iter": 100,
@@ -147,7 +148,8 @@
                 1.0
             ]
         ],
-        "damping": 0,
+        "auto_boundary_use_range_filter": true,
+        "damping": 1,
         "particle_damping": 1,
         "material_params": [
             {

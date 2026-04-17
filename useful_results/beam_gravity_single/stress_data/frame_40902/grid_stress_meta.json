@@ -1,0 +1,14 @@
+{
+  "dim": 2,
+  "nx": 200,
+  "ny": 200,
+  "offset": [
+    0.0,
+    0.0
+  ],
+  "dx_x": 0.005,
+  "dx_y": 0.005,
+  "elasticity_model": "neohookean",
+  "valid_mass_threshold": 1e-10,
+  "valid_grid_count": 1208
+}
