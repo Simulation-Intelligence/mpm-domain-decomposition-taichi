@@ -1,0 +1,13 @@
+{
+  "simulator_type": "single_domain",
+  "config_path": "config_backup.json",
+  "checkpoint_frame": 500000,
+  "completed_frames": 500000,
+  "current_frame": 500000,
+  "saved_stress_frames": [
+    0,
+    500000
+  ],
+  "velocity_convergence_consecutive_count": 0,
+  "schema_version": 1
+}

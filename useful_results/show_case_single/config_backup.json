@@ -1,0 +1,103 @@
+{
+    "arch": "cpu",
+    "float_type": "f64",
+    "dim": 2,
+    "grid_nx": 180,
+    "grid_ny": 180,
+    "domain_width": 1.0,
+    "domain_height": 1.0,
+    "particles_per_grid": 4,
+    "sampling_method": "regular",
+    "elasticity_model": "neohookean",
+    "arc_boundary": [
+        {
+            "start_region": [
+                [
+                    0.05,
+                    0.06
+                ],
+                [
+                    0.48,
+                    0.52
+                ]
+            ],
+            "center": [
+                0.44,
+                0.5
+            ],
+            "angle": -1.5708,
+            "speed": 0.01
+        },
+        {
+            "start_region": [
+                [
+                    0.94,
+                    0.95
+                ],
+                [
+                    0.48,
+                    0.52
+                ]
+            ],
+            "center": [
+                0.56,
+                0.5
+            ],
+            "angle": 1.5708,
+            "speed": 0.01
+        }
+    ],
+    "boundary_size": 0.00001,
+    "material_distribution": {
+        "type": "smoothstep_x",
+        "nu": 0.4,
+        "E_soft": 1e3,
+        "E_hard": 1e5,
+        "x_soft_lo": 0.41,
+        "x_soft_hi": 0.59,
+        "x_trans": 0.03
+    },
+    "material_params": [
+        {
+            "id": 0,
+            "name": "beam",
+            "E": 1e5,
+            "nu": 0.4,
+            "rho": 1200
+        }
+    ],
+    "shapes": [
+        {
+            "type": "rectangle",
+            "params": {
+                "range": [
+                    [
+                        0.05,
+                        0.95
+                    ],
+                    [
+                        0.485,
+                        0.515
+                    ]
+                ]
+            },
+            "operation": "add",
+            "material_id": 0
+        }
+    ],
+    "use_auto_diff": false,
+    "implicit": true,
+    "implicit_solver": "Newton",
+    "dt": 5e-5,
+    "max_iter": 1,
+    "solve_max_iter": 1000,
+    "gravity": [
+        0.0,
+        0.0
+    ],
+    "bound": 3,
+    "eta": 1e-4,
+    "damping": 0.0,
+    "particle_damping": 1,
+    "max_frames": 500000
+}
